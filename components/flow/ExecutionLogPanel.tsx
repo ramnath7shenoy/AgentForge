@@ -1,10 +1,49 @@
 "use client";
 
 import React from "react";
+import { CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
 import { useFlowStore } from "@/stores/flowStore";
+import type { ExecutionLogEntry } from "@/types/flowStoreTypes";
+
+const formatDuration = (ms: number) => {
+  if (ms < 1000) return `${ms} ms`;
+  const seconds = ms / 1000;
+  return `${seconds.toFixed(2)} s`;
+};
 
 const ExecutionLogPanel: React.FC = () => {
   const logs = useFlowStore((state) => state.executionLogs);
+  const nodes = useFlowStore((state) => state.nodes);
+
+  const getNodeLabel = (log: ExecutionLogEntry) => {
+    const node = nodes.find((n) => n.id === log.nodeId);
+    return node?.data?.label || log.nodeType || `Node ${log.nodeId}`;
+  };
+
+  const renderStatusIcon = (status: ExecutionLogEntry["status"]) => {
+    if (status === "success") {
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-green-700 dark:text-green-300">
+          <CheckCircle2 className="w-3 h-3" />
+          Success
+        </span>
+      );
+    }
+    if (status === "pending") {
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-700 dark:text-indigo-300">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          Running
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-red-700 dark:text-red-300">
+        <AlertTriangle className="w-3 h-3" />
+        Error
+      </span>
+    );
+  };
 
   return (
     <div className="p-3 text-xs max-h-80 overflow-auto border-t md:border-t-0 md:border-l border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900">
@@ -26,34 +65,35 @@ const ExecutionLogPanel: React.FC = () => {
           {logs.map((log) => (
             <div
               key={log.startedAt + log.nodeId}
-              className="border rounded p-2 bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700"
+              className="border rounded-lg p-2.5 bg-white dark:bg-slate-800/80 border-gray-200 dark:border-slate-700"
             >
-              <div className="flex items-center justify-between">
-                <div className="font-medium text-[11px] text-gray-800 dark:text-slate-100">
-                  {log.nodeType} ({log.nodeId})
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-col">
+                  <span className="font-medium text-[11px] text-gray-900 dark:text-slate-50">
+                    {getNodeLabel(log)}
+                  </span>
+                  <span className="text-[10px] text-gray-500 dark:text-slate-400">
+                    Node ID: {log.nodeId}
+                  </span>
                 </div>
-                <span
-                  className={`px-2 py-0.5 rounded text-[10px] uppercase ${
-                    log.status === "success"
-                      ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300"
-                      : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
-                  }`}
-                >
-                  {log.status}
-                </span>
+                {renderStatusIcon(log.status)}
               </div>
-              <div className="text-[10px] text-gray-500 dark:text-slate-400 mt-1">
-                {log.durationMs} ms
+              <div className="mt-1 text-[10px] text-gray-500 dark:text-slate-400">
+                Execution time: {formatDuration(log.durationMs)}
               </div>
               <details className="mt-1">
-                <summary className="cursor-pointer">Input</summary>
-                <pre className="mt-1 bg-gray-50 dark:bg-slate-900 p-1 rounded overflow-auto">
+                <summary className="cursor-pointer text-[11px] text-gray-700 dark:text-slate-300">
+                  Input
+                </summary>
+                <pre className="mt-1 bg-gray-50 dark:bg-slate-900/80 p-1.5 rounded overflow-auto text-[10px] text-gray-800 dark:text-slate-100">
                   {JSON.stringify(log.inputSnapshot, null, 2)}
                 </pre>
               </details>
               <details className="mt-1">
-                <summary className="cursor-pointer">Output</summary>
-                <pre className="mt-1 bg-gray-50 dark:bg-slate-900 p-1 rounded overflow-auto">
+                <summary className="cursor-pointer text-[11px] text-gray-700 dark:text-slate-300">
+                  Output
+                </summary>
+                <pre className="mt-1 bg-gray-50 dark:bg-slate-900/80 p-1.5 rounded overflow-auto text-[10px] text-gray-800 dark:text-slate-100">
                   {JSON.stringify(log.outputSnapshot, null, 2)}
                 </pre>
               </details>

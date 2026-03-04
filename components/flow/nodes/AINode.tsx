@@ -8,8 +8,8 @@ import { NodeCard } from "@/components/flow/nodes/NodeCard";
 const AINode: React.FC<NodeProps> = ({ id, data }) => {
   return (
     <NodeCard nodeId={id}>
-      <div className="flex items-center gap-2 text-xs font-medium">
-        <Cpu size={16} />
+      <div className="flex items-center gap-2 text-xs font-medium text-slate-900 dark:text-slate-50">
+        <Cpu size={16} className="text-indigo-500" />
         <span>{data.label || "AI"}</span>
       </div>
       <Handle type="target" position={Position.Top} />

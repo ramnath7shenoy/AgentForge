@@ -62,7 +62,7 @@ export interface FlowState {
   selectedNodeId: string | null;
   running: boolean;
   highlightedNodeId: string | null;
-   /**
+  /**
    * Last execution context snapshot (after a run).
    */
   currentContext: ExecutionContext | null;
@@ -70,10 +70,31 @@ export interface FlowState {
    * Ordered execution logs for the last run.
    */
   executionLogs: ExecutionLogEntry[];
+  /**
+   * Last resolved output string from the most recently executed Output node.
+   */
+  finalResult: string | null;
+  /**
+   * The currently traversed edge during execution (for live path highlighting).
+   */
+  activeEdgeId?: string | null;
+  /**
+   * Ordered list of node ids visited during the last run.
+   */
+  executedNodeIds: string[];
+  /**
+   * UI preferences
+   */
+  showMinimap: boolean;
+  showExecutionLogPanel: boolean;
+  showVariablesPanel: boolean;
   setNodes: (nodes: Node<NodeData>[]) => void;
   setEdges: (edges: Edge[]) => void;
   setSelectedNodeId: (id: string | null) => void;
   setRunning: (running: boolean) => void;
   setHighlightedNodeId: (id: string | null) => void;
+  setShowMinimap: (value: boolean) => void;
+  setShowExecutionLogPanel: (value: boolean) => void;
+  setShowVariablesPanel: (value: boolean) => void;
   simulateFlow: (startNodeId: string) => Promise<void>;
 }

@@ -17,11 +17,11 @@ export const NodeCard: React.FC<NodeCardProps> = ({ nodeId, children }) => {
   return (
     <div
       className={cn(
-        "min-w-40 rounded-xl border bg-white shadow-sm px-3 py-2 text-xs flex flex-col gap-1 transition-all",
-        "hover:shadow-md",
+        "min-w-40 rounded-xl border bg-card shadow-sm px-3 py-2 text-xs flex flex-col gap-1 transition-all",
+        "hover:shadow-md hover:-translate-y-0.5",
         isActive
-          ? "border-indigo-500 ring-2 ring-indigo-200"
-          : "border-gray-200",
+          ? "border-primary ring-2 ring-primary/40"
+          : "border-border",
       )}
     >
       {children}

@@ -19,12 +19,17 @@ export type NodeExecutor = (
 export interface ExecutionEngineOptions {
   onNodeStart?: (nodeId: string) => void;
   onNodeEnd?: (nodeId: string, status: ExecutionStatus) => void;
+  /**
+   * Called whenever the engine traverses an edge from one node to the next.
+   */
+  onEdgeTraverse?: (edgeId: string) => void;
 }
 
 function getNextNodeId(
   node: Node<NodeData>,
   edges: Edge[],
   context: ExecutionContext,
+  options?: ExecutionEngineOptions,
 ): string | undefined {
   if (node.type === "decision") {
     const condition = node.data.condition || "";
@@ -44,11 +49,20 @@ function getNextNodeId(
       (e) => e.source === node.id && e.label === (result ? "true" : "false"),
     );
 
-    return labeledEdge?.target as string | undefined;
+    if (labeledEdge) {
+      options?.onEdgeTraverse?.(labeledEdge.id as string);
+      return labeledEdge.target as string | undefined;
+    }
+
+    return undefined;
   }
 
   const nextEdge = edges.find((e) => e.source === node.id);
-  return nextEdge?.target as string | undefined;
+  if (nextEdge) {
+    options?.onEdgeTraverse?.(nextEdge.id as string);
+    return nextEdge.target as string | undefined;
+  }
+  return undefined;
 }
 
 export async function executeFlow(
@@ -128,7 +142,7 @@ export async function executeFlow(
       break;
     }
 
-    currentNodeId = getNextNodeId(node, edges, context);
+    currentNodeId = getNextNodeId(node, edges, context, options);
   }
 
   return { context, logs };

@@ -22,6 +22,12 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   highlightedNodeId: null,
   currentContext: null,
   executionLogs: [],
+  finalResult: null,
+  activeEdgeId: null,
+  executedNodeIds: [],
+  showMinimap: false,
+  showExecutionLogPanel: false,
+  showVariablesPanel: false,
 
   // ======================
   // Basic setters
@@ -31,6 +37,9 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
   setRunning: (running) => set({ running }),
   setHighlightedNodeId: (id) => set({ highlightedNodeId: id }),
+  setShowMinimap: (value) => set({ showMinimap: value }),
+  setShowExecutionLogPanel: (value) => set({ showExecutionLogPanel: value }),
+  setShowVariablesPanel: (value) => set({ showVariablesPanel: value }),
 
   // ======================
   // Flow Execution Engine
@@ -42,7 +51,16 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       return;
     }
 
-    set({ running: true });
+    // Reset run-related state before starting a new execution
+    set((state) => ({
+      running: true,
+      currentContext: null,
+      executionLogs: [],
+      highlightedNodeId: null,
+      activeEdgeId: null,
+      finalResult: null,
+      executedNodeIds: [],
+    }));
 
     const initialContext: ExecutionContext = {
       variables: {},
@@ -269,22 +287,56 @@ export const useFlowStore = create<FlowState>((set, get) => ({
         initialContext,
         {
           onNodeStart: (nodeId) => {
-            set({ highlightedNodeId: nodeId });
+            set((state) => ({
+              highlightedNodeId: nodeId,
+              executedNodeIds: state.executedNodeIds.includes(nodeId)
+                ? state.executedNodeIds
+                : [...state.executedNodeIds, nodeId],
+            }));
           },
           onNodeEnd: () => {
             // keep highlight until the next node starts or execution finishes
           },
+          onEdgeTraverse: (edgeId) => {
+            set({ activeEdgeId: edgeId });
+          },
         },
       );
+
+      // Derive the final result from the last successful output node, if any.
+      const lastOutputLog = [...logs]
+        .reverse()
+        .find(
+          (log) =>
+            log.nodeType === "output" &&
+            log.status === "success" &&
+            log.outputSnapshot !== undefined,
+        );
+
+      let finalResult: string | null = null;
+      if (lastOutputLog) {
+        const value = lastOutputLog.outputSnapshot;
+        if (typeof value === "string") {
+          finalResult = value;
+        } else if (value != null) {
+          try {
+            finalResult = JSON.stringify(value, null, 2);
+          } catch {
+            finalResult = String(value);
+          }
+        }
+      }
 
       set({
         currentContext: context,
         executionLogs: logs,
+        finalResult,
       });
     } finally {
       set({
         highlightedNodeId: null,
         running: false,
+        activeEdgeId: null,
       });
     }
   },

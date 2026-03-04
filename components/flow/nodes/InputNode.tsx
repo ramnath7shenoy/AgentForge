@@ -13,8 +13,8 @@ interface InputNodeData {
 const InputNode: React.FC<NodeProps<InputNodeData>> = ({ id, data }) => {
   return (
     <NodeCard nodeId={id}>
-      <div className="flex items-center gap-2 text-xs font-medium">
-        <FileJson size={16} />
+      <div className="flex items-center gap-2 text-xs font-medium text-slate-900 dark:text-slate-50">
+        <FileJson size={16} className="text-indigo-500" />
         <span>{data.label || "Input"}</span>
       </div>
       <Handle type="source" position={Position.Bottom} />

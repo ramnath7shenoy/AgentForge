@@ -22,6 +22,11 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     if (typeof window !== "undefined") {
       window.localStorage.setItem("agentforge-theme", theme);
       document.documentElement.dataset.theme = theme;
+      if (theme === "dark") {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
     }
   },
   toggleTheme: () => {

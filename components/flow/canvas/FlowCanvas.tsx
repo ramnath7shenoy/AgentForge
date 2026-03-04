@@ -41,6 +41,8 @@ const FlowCanvas: React.FC<FlowCanvasProps> = ({ setSelectedNodeId }) => {
   const setNodes = useFlowStore((state) => state.setNodes);
   const setEdges = useFlowStore((state) => state.setEdges);
   const highlightedNodeId = useFlowStore((state) => state.highlightedNodeId);
+  const activeEdgeId = useFlowStore((state) => state.activeEdgeId);
+  const showMinimap = useFlowStore((state) => state.showMinimap);
 
   const nodeStyle = (node: Node) => ({
     border:
@@ -145,29 +147,23 @@ const FlowCanvas: React.FC<FlowCanvasProps> = ({ setSelectedNodeId }) => {
 
   return (
     <div
-      className="w-full h-full bg-slate-50 dark:bg-slate-900"
+      className="w-full h-full bg-background"
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDropNode}
     >
-      <div className="mb-2">
-        <button
-          className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-slate-600 text-xs bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-700"
-          onClick={() => {
-            const rootNodeId = nodes[0]?.id;
-            if (rootNodeId) {
-              useFlowStore.getState().simulateFlow(rootNodeId);
-            }
-          }}
-        >
-          Run Flow
-        </button>
-      </div>
-
       <ReactFlow
         nodes={nodes.map((node) =>
           node.type === "default" ? { ...node, style: nodeStyle(node) } : node
         )}
-        edges={edges}
+        edges={edges.map((edge) =>
+          edge.id === activeEdgeId
+            ? {
+                ...edge,
+                animated: true,
+                style: { stroke: "#4F46E5", strokeWidth: 2 },
+              }
+            : edge
+        )}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
@@ -175,9 +171,9 @@ const FlowCanvas: React.FC<FlowCanvasProps> = ({ setSelectedNodeId }) => {
         nodeTypes={nodeTypes}
         fitView
       >
-        <MiniMap />
+        {showMinimap && <MiniMap />}
         <Controls />
-        <Background gap={16} size={1} color="#e5e7eb" />
+        <Background gap={16} size={1} color="#1f2937" />
       </ReactFlow>
     </div>
   );
