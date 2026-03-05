@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { 
+  Play, 
+  Map, 
+  Terminal, 
+  Variable, 
+  Moon, 
+  Sun,
+  X,
+  Zap
+} from "lucide-react";
 
 import FlowCanvas from "@/components/flow/canvas/FlowCanvas";
 import NodeSidebar from "@/components/flow/sidebar/NodeSidebar";
@@ -9,161 +19,158 @@ import ExecutionLogPanel from "@/components/flow/ExecutionLogPanel";
 import VariableInspectorPanel from "@/components/flow/VariableInspectorPanel";
 
 import { useFlowStore } from "@/stores/flowStore";
+import { cn } from "@/lib/utils";
 
 export default function EditorPage() {
-  const nodes = useFlowStore((state) => state.nodes);
-  const selectedNodeId = useFlowStore((state) => state.selectedNodeId);
-  const setSelectedNodeId = useFlowStore((state) => state.setSelectedNodeId);
-
-  const simulateFlow = useFlowStore((state) => state.simulateFlow);
-  const finalResult = useFlowStore((state) => state.finalResult);
-
-  const showMinimap = useFlowStore((state) => state.showMinimap);
-  const setShowMinimap = useFlowStore((state) => state.setShowMinimap);
-
-  const showExecutionLogPanel = useFlowStore(
-    (state) => state.showExecutionLogPanel,
-  );
-  const setShowExecutionLogPanel = useFlowStore(
-    (state) => state.setShowExecutionLogPanel,
-  );
-
-  const showVariablesPanel = useFlowStore(
-    (state) => state.showVariablesPanel,
-  );
-  const setShowVariablesPanel = useFlowStore(
-    (state) => state.setShowVariablesPanel,
-  );
+  const {
+    nodes,
+    selectedNodeId,
+    setSelectedNodeId,
+    simulateFlow,
+    finalResult,
+    setFinalResult, // Ensure this action is in your flowStore.ts
+    showMinimap,
+    setShowMinimap,
+    showExecutionLogPanel,
+    setShowExecutionLogPanel,
+    showVariablesPanel,
+    setShowVariablesPanel,
+    theme,
+    setTheme,
+  } = useFlowStore();
 
   const [mounted, setMounted] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
 
+  // 1. Theme Synchronization: Force the root class to match global state
   useEffect(() => {
     setMounted(true);
-
-    const stored = localStorage.getItem("theme") as "light" | "dark" | null;
-
-    if (stored === "dark") {
-      document.documentElement.classList.add("dark");
-      setTheme("dark");
-    }
-  }, []);
-
-  const toggleTheme = () => {
-    const next = theme === "dark" ? "light" : "dark";
-
-    setTheme(next);
-    localStorage.setItem("theme", next);
-
-    if (next === "dark") {
-      document.documentElement.classList.add("dark");
+    const root = window.document.documentElement;
+    if (theme === "dark") {
+      root.classList.add("dark");
     } else {
-      document.documentElement.classList.remove("dark");
+      root.classList.remove("dark");
     }
-  };
+  }, [theme]);
 
   if (!mounted) return null;
 
-  const selectedNode =
-    Array.isArray(nodes) && selectedNodeId
-      ? nodes.find((n) => n.id === selectedNodeId)
-      : null;
-
-  const startNodeId =
-    Array.isArray(nodes) && nodes.length > 0 ? nodes[0].id : "";
+  const startNodeId = Array.isArray(nodes) && nodes.length > 0 ? nodes[0].id : "";
 
   return (
-    <div className="flex flex-col h-screen bg-background text-foreground">
+    <div className={cn(
+      "flex flex-col h-screen w-full transition-colors duration-300",
+      theme === "dark" ? "dark bg-[#0b0e14] text-slate-200" : "bg-slate-50 text-slate-900"
+    )}>
       
-      {/* HEADER */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-2 text-xs">
-
-        <div className="font-semibold">
-          AgentForge
+      {/* HEADER: Balanced UI with high-contrast actions */}
+      <header className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 px-6 py-3 bg-white dark:bg-[#0b0e14] z-50 shadow-sm">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
+              <Zap size={16} className="text-white fill-current" />
+            </div>
+            <span className="font-bold tracking-tight text-sm uppercase">AgentForge</span>
+          </div>
+          <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800 mx-2" />
+          <span className="text-[10px] text-slate-400 font-medium uppercase tracking-widest hidden md:block">
+            Production Environment
+          </span>
         </div>
 
-        <div className="flex items-center gap-2">
-
-          <button
-            onClick={() => simulateFlow(startNodeId)}
-            className="px-3 py-1 rounded border border-border hover:bg-muted"
-          >
-            Run Flow
-          </button>
-
-          <button
-            onClick={() => setShowMinimap(!showMinimap)}
-            className="px-3 py-1 rounded border border-border hover:bg-muted"
-          >
-            Minimap
-          </button>
-
-          <button
-            onClick={() =>
-              setShowExecutionLogPanel(!showExecutionLogPanel)
-            }
-            className="px-3 py-1 rounded border border-border hover:bg-muted"
-          >
-            Logs
-          </button>
-
-          <button
-            onClick={() =>
-              setShowVariablesPanel(!showVariablesPanel)
-            }
-            className="px-3 py-1 rounded border border-border hover:bg-muted"
-          >
-            Variables
-          </button>
-
-          {/* DARK MODE */}
-          <button
-            onClick={toggleTheme}
-            className="px-3 py-1 rounded border border-border hover:bg-muted"
-          >
-            {theme === "dark" ? "Dark" : "Light"}
-          </button>
-
-        </div>
-      </div>
-
-      {/* MAIN EDITOR */}
-      <div className="flex flex-1 overflow-hidden">
-
-        {/* NODE SIDEBAR */}
-        <div className="w-64 border-r border-border p-3">
-          <NodeSidebar />
-        </div>
-
-        {/* CANVAS */}
-        <div className="flex-1 flex flex-col">
-          <div className="flex-1">
-            <FlowCanvas setSelectedNodeId={setSelectedNodeId} />
+        <div className="flex items-center gap-3">
+          <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+            <HeaderButton 
+              onClick={() => simulateFlow(startNodeId)} 
+              icon={<Play size={14} className="fill-current" />} 
+              label="Run Flow" 
+              variant="primary"
+            />
+            <div className="w-[1px] h-4 bg-slate-200 dark:bg-slate-800 mx-1" />
+            <HeaderButton onClick={() => setShowMinimap(!showMinimap)} icon={<Map size={14} />} active={showMinimap} />
+            <HeaderButton onClick={() => setShowExecutionLogPanel(!showExecutionLogPanel)} icon={<Terminal size={14} />} active={showExecutionLogPanel} />
+            <HeaderButton onClick={() => setShowVariablesPanel(!showVariablesPanel)} icon={<Variable size={14} />} active={showVariablesPanel} />
           </div>
 
-          {/* FINAL RESULT */}
+          <button
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 transition-all text-slate-500 dark:text-slate-400 shadow-sm"
+          >
+            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+        </div>
+      </header>
+
+      {/* MAIN CONTENT AREA: Three-column modular layout */}
+      <div className="flex flex-1 overflow-hidden relative">
+        
+        {/* LEFT SIDEBAR: Library */}
+        <aside className="w-64 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0b0e14] overflow-y-auto">
+          <NodeSidebar />
+        </aside>
+
+        {/* CENTRAL CANVAS */}
+        <main className="flex-1 relative bg-slate-50 dark:bg-[#0b0e14]">
+          <FlowCanvas setSelectedNodeId={setSelectedNodeId} />
+          
+          {/* FLOATING FINAL RESULT: Now with Close Button */}
           {finalResult && (
-            <div className="border-t border-border p-3 text-sm bg-muted">
-              <div className="font-semibold mb-1">Final Result</div>
-              <pre className="whitespace-pre-wrap">{finalResult}</pre>
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-2xl bg-white dark:bg-slate-900 border border-indigo-500/30 rounded-2xl shadow-2xl p-5 z-50 animate-in slide-in-from-bottom-4 duration-500">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">Execution Result</span>
+                </div>
+                <button 
+                  onClick={() => setFinalResult(null)} 
+                  className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-white"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <pre className="text-xs font-mono text-slate-600 dark:text-slate-300 overflow-x-auto max-h-40 p-3 bg-slate-50 dark:bg-[#05070a] rounded-xl border border-slate-200 dark:border-slate-800">
+                {finalResult}
+              </pre>
             </div>
           )}
-        </div>
+        </main>
 
-        {/* NODE SETTINGS */}
-        <div className="w-72 border-l border-border p-3 overflow-auto">
-          {selectedNode ? (
-            <NodeSettingsSidebar node={selectedNode} />
-          ) : (
-            <div className="text-xs text-muted-foreground">
-              Select a node to edit settings
-            </div>
-          )}
-        </div>
+        {/* RIGHT SIDEBAR: Settings */}
+        <aside className="w-80 border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0b0e14] overflow-y-auto">
+          <NodeSettingsSidebar />
+        </aside>
+
+        {/* PANELS: Execution & Variables Overlays */}
+        {showExecutionLogPanel && (
+          <div className="absolute bottom-4 right-84 w-[400px] h-[450px] z-40 transition-all drop-shadow-2xl">
+            <ExecutionLogPanel />
+          </div>
+        )}
+        {showVariablesPanel && (
+          <div className="absolute top-4 left-68 w-80 h-[450px] z-40 transition-all drop-shadow-2xl">
+            <VariableInspectorPanel />
+          </div>
+        )}
       </div>
-
-      {showExecutionLogPanel && <ExecutionLogPanel />}
-      {showVariablesPanel && <VariableInspectorPanel />}
     </div>
+  );
+}
+
+/**
+ * Enhanced Button Component for Clean Header actions
+ */
+function HeaderButton({ icon, label, onClick, active, variant = "ghost" }: any) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap",
+        variant === "primary" && "bg-indigo-600 text-white hover:bg-indigo-700 shadow-md shadow-indigo-500/20",
+        variant === "ghost" && !active && "text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800",
+        active && variant === "ghost" && "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm"
+      )}
+    >
+      {icon}
+      {label && <span>{label}</span>}
+    </button>
   );
 }

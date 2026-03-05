@@ -2,47 +2,27 @@
 
 import React from "react";
 import { Handle, Position, NodeProps } from "reactflow";
-import { MessageCircle } from "lucide-react";
-import { NodeCard } from "@/components/flow/nodes/NodeCard";
-import { useFlowStore } from "@/stores/flowStore";
+import { MessageSquare } from "lucide-react";
+import { NodeCard } from "./NodeCard";
 
-interface OutputNodeData {
-  label: string;
-  template?: string;
-}
-
-const OutputNode: React.FC<NodeProps<OutputNodeData>> = ({ id, data }) => {
-  const context = useFlowStore((state) => state.currentContext);
-
-  const preview =
-    (context?.nodes?.[id] as string | undefined) ??
-    (context?.variables?.output as string | undefined);
-
+export default function OutputNode({ id, data }: NodeProps) {
   return (
     <NodeCard nodeId={id}>
-      <Handle
-        type="target"
-        position={Position.Top}
-        style={{
-          top: -6,
-        }}
-      />
-
-      <div className="flex items-center gap-2 text-xs font-medium text-slate-900 dark:text-slate-50">
-        <MessageCircle size={16} className="text-indigo-500" />
-        <span>{data.label || "Output Node"}</span>
+      <div className="flex items-center gap-2 font-bold text-rose-400 uppercase tracking-tighter mb-1">
+        <MessageSquare size={14} />
+        <span>Output</span>
       </div>
+      <p className="text-[10px] opacity-50 font-mono italic">
+        {data.template || "Rendering result..."}
+      </p>
 
-      {preview && (
-        <div className="mt-1 text-[10px] text-gray-400 dark:text-slate-300">
-          <div className="font-semibold">Preview</div>
-          <div className="mt-0.5 rounded bg-gray-50 dark:bg-slate-900/80 px-2 py-1 font-mono whitespace-pre-wrap break-all">
-            {preview}
-          </div>
-        </div>
-      )}
+      {/* FIXED: Mathematically centered handle */}
+      <Handle 
+        type="target" 
+        position={Position.Top} 
+        style={{ left: '50%', transform: 'translateX(-50%)', top: '-6px' }}
+        className="w-3 h-3 !bg-slate-400 border-2 border-[#0b0e14] !opacity-100" 
+      />
     </NodeCard>
   );
-};
-
-export default OutputNode;
+}
