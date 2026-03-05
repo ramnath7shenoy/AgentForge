@@ -4,17 +4,16 @@ import {
   FlowState,
   NodeData,
 } from "@/types/flowStoreTypes";
+
 import {
   executeFlow,
   NodeExecutor,
 } from "@/lib/executionEngine";
+
 import { resolveTemplates } from "@/lib/template";
 import { evaluateBooleanExpression } from "@/lib/expressionEvaluator";
 
 export const useFlowStore = create<FlowState>((set, get) => ({
-  // ======================
-  // State
-  // ======================
   nodes: [],
   edges: [],
   selectedNodeId: null,
@@ -29,9 +28,6 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   showExecutionLogPanel: false,
   showVariablesPanel: false,
 
-  // ======================
-  // Basic setters
-  // ======================
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
@@ -41,18 +37,12 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   setShowExecutionLogPanel: (value) => set({ showExecutionLogPanel: value }),
   setShowVariablesPanel: (value) => set({ showVariablesPanel: value }),
 
-  // ======================
-  // Flow Execution Engine
-  // ======================
   simulateFlow: async (startNodeId: string) => {
     const { nodes, edges } = get();
 
-    if (!startNodeId) {
-      return;
-    }
+    if (!startNodeId) return;
 
-    // Reset run-related state before starting a new execution
-    set((state) => ({
+    set({
       running: true,
       currentContext: null,
       executionLogs: [],
@@ -60,7 +50,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       activeEdgeId: null,
       finalResult: null,
       executedNodeIds: [],
-    }));
+    });
 
     const initialContext: ExecutionContext = {
       variables: {},
@@ -68,17 +58,16 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     };
 
     const executors: Record<string, NodeExecutor> = {
+
       input: async (node, context) => {
         const data = node.data as NodeData;
         const mode = data.inputMode || "text";
 
         let output: unknown = null;
-        let inputSnapshot: unknown = null;
         let error: string | undefined;
 
         if (mode === "json") {
           const raw = data.rawJson || "";
-          inputSnapshot = raw;
           try {
             output = raw ? JSON.parse(raw) : null;
           } catch (e) {
@@ -87,7 +76,6 @@ export const useFlowStore = create<FlowState>((set, get) => ({
           }
         } else {
           const text = data.inputText || "";
-          inputSnapshot = text;
           output = text ? { text } : null;
         }
 
@@ -112,32 +100,26 @@ export const useFlowStore = create<FlowState>((set, get) => ({
             startedAt: Date.now(),
             endedAt: Date.now(),
             durationMs: 0,
-            inputSnapshot,
+            inputSnapshot: data.inputText ?? data.rawJson,
             outputSnapshot: output,
             error,
           },
         };
       },
+
       fetch: async (node, context) => {
         const data = node.data as NodeData;
+
         const resolvedUrl = resolveTemplates(
           data.url || data.apiUrl || "",
           context,
         );
-        const resolvedHeaders = resolveTemplates(data.headers || {}, context);
-        const resolvedBody = resolveTemplates(data.body ?? null, context);
 
         const mockResponse = {
           status: 200,
           data: {
             ok: true,
             url: resolvedUrl,
-          },
-          request: {
-            url: resolvedUrl,
-            method: data.method || "GET",
-            headers: resolvedHeaders,
-            body: resolvedBody,
           },
         };
 
@@ -158,22 +140,19 @@ export const useFlowStore = create<FlowState>((set, get) => ({
             startedAt: Date.now(),
             endedAt: Date.now(),
             durationMs: 0,
-            inputSnapshot: {
-              url: resolvedUrl,
-              headers: resolvedHeaders,
-              body: resolvedBody,
-            },
+            inputSnapshot: resolvedUrl,
             outputSnapshot: mockResponse,
           },
         };
       },
+
       ai: async (node, context) => {
         const data = node.data as NodeData;
+
         const resolvedPrompt = resolveTemplates(data.prompt || "", context);
-        const temperature =
-          data.temperature !== undefined ? data.temperature : 0.7;
 
         let output: unknown;
+
         if (data.jsonMode) {
           output = {
             summary: `Mock summary for: ${resolvedPrompt}`,
@@ -200,13 +179,15 @@ export const useFlowStore = create<FlowState>((set, get) => ({
             startedAt: Date.now(),
             endedAt: Date.now(),
             durationMs: 0,
-            inputSnapshot: { prompt: resolvedPrompt, temperature },
+            inputSnapshot: resolvedPrompt,
             outputSnapshot: output,
           },
         };
       },
+
       decision: async (node, context) => {
         const data = node.data as NodeData;
+
         const rawExpression = data.expression || "";
         const resolvedExpression = resolveTemplates(rawExpression, context);
 
@@ -245,8 +226,10 @@ export const useFlowStore = create<FlowState>((set, get) => ({
           },
         };
       },
+
       output: async (node, context) => {
         const data = node.data as NodeData;
+
         const template = data.template || "";
         const resolved = resolveTemplates(template, context);
 
@@ -294,37 +277,48 @@ export const useFlowStore = create<FlowState>((set, get) => ({
                 : [...state.executedNodeIds, nodeId],
             }));
           },
-          onNodeEnd: () => {
-            // keep highlight until the next node starts or execution finishes
-          },
+
           onEdgeTraverse: (edgeId) => {
             set({ activeEdgeId: edgeId });
           },
         },
       );
 
-      // Derive the final result from the last successful output node, if any.
-      const lastOutputLog = [...logs]
-        .reverse()
-        .find(
-          (log) =>
-            log.nodeType === "output" &&
-            log.status === "success" &&
-            log.outputSnapshot !== undefined,
-        );
-
       let finalResult: string | null = null;
-      if (lastOutputLog) {
-        const value = lastOutputLog.outputSnapshot;
-        if (typeof value === "string") {
-          finalResult = value;
-        } else if (value != null) {
-          try {
-            finalResult = JSON.stringify(value, null, 2);
-          } catch {
-            finalResult = String(value);
+
+      const contextOutput = context?.variables?.output;
+
+      if (typeof contextOutput === "string") {
+        finalResult = contextOutput;
+      }
+
+      if (!finalResult) {
+        const lastOutputLog = [...logs]
+          .reverse()
+          .find(
+            (log) =>
+              log.nodeType === "output" &&
+              log.status === "success" &&
+              log.outputSnapshot !== undefined,
+          );
+
+        if (lastOutputLog) {
+          const value = lastOutputLog.outputSnapshot;
+
+          if (typeof value === "string") {
+            finalResult = value;
+          } else if (value != null) {
+            try {
+              finalResult = JSON.stringify(value, null, 2);
+            } catch {
+              finalResult = String(value);
+            }
           }
         }
+      }
+
+      if (!finalResult) {
+        finalResult = "Workflow finished without producing an output.";
       }
 
       set({
@@ -341,4 +335,3 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     }
   },
 }));
-

@@ -17,8 +17,8 @@ export const NodeCard: React.FC<NodeCardProps> = ({ nodeId, children }) => {
   return (
     <div
       className={cn(
-        "min-w-40 rounded-xl border bg-card shadow-sm px-3 py-2 text-xs flex flex-col gap-1 transition-all",
-        "hover:shadow-md hover:-translate-y-0.5",
+        "relative min-w-[160px] rounded-xl border bg-card shadow-sm px-4 py-3 text-xs flex flex-col gap-1 transition-all",
+        "hover:shadow-md",
         isActive
           ? "border-primary ring-2 ring-primary/40"
           : "border-border",
@@ -28,4 +28,3 @@ export const NodeCard: React.FC<NodeCardProps> = ({ nodeId, children }) => {
     </div>
   );
 };
-

@@ -19,9 +19,6 @@ export type NodeExecutor = (
 export interface ExecutionEngineOptions {
   onNodeStart?: (nodeId: string) => void;
   onNodeEnd?: (nodeId: string, status: ExecutionStatus) => void;
-  /**
-   * Called whenever the engine traverses an edge from one node to the next.
-   */
   onEdgeTraverse?: (edgeId: string) => void;
 }
 
@@ -36,8 +33,6 @@ function getNextNodeId(
     let result = false;
 
     try {
-      // Preserve existing simple numeric `value` behavior for now.
-      // This will be replaced by expression-based routing in a later upgrade.
       const value = (node.data as NodeData).value ?? 0;
       // eslint-disable-next-line no-eval
       result = eval(condition.replace("value", String(value)));
@@ -62,6 +57,7 @@ function getNextNodeId(
     options?.onEdgeTraverse?.(nextEdge.id as string);
     return nextEdge.target as string | undefined;
   }
+
   return undefined;
 }
 
@@ -76,8 +72,6 @@ export async function executeFlow(
   const logs: ExecutionLogEntry[] = [];
   let context = initialContext;
 
-  // Simple edge-based traversal starting from startNodeId.
-  // Topological checks and richer routing will be layered in as we evolve nodes.
   let currentNodeId: string | undefined = startNodeId;
 
   while (currentNodeId) {
@@ -85,9 +79,10 @@ export async function executeFlow(
     if (!node) break;
 
     const executor = executors[node.type];
+
     if (!executor) {
-      // If we have no executor for this node type, skip but log it.
       const now = Date.now();
+
       const logEntry: ExecutionLogEntry = {
         nodeId: node.id,
         nodeType: node.type ?? "unknown",
@@ -99,6 +94,7 @@ export async function executeFlow(
         outputSnapshot: null,
         error: `No executor registered for node type "${node.type}"`,
       };
+
       logs.push(logEntry);
       break;
     }
@@ -106,6 +102,7 @@ export async function executeFlow(
     options.onNodeStart?.(node.id);
 
     const startedAt = Date.now();
+
     try {
       const result = await executor(node, context);
       const endedAt = Date.now();
@@ -120,11 +117,27 @@ export async function executeFlow(
       };
 
       context = result.context;
+
+      /**
+       * NEW: capture final result when Output node executes
+       */
+      if (node.type === "output") {
+        const output =
+          result.logEntry.outputSnapshot ??
+          result.context.nodes?.[node.id] ??
+          null;
+
+        if (!context.variables) context.variables = {};
+
+        context.variables.finalResult = output;
+      }
+
       logs.push(logEntry);
 
       options.onNodeEnd?.(node.id, logEntry.status);
     } catch (error) {
       const endedAt = Date.now();
+
       const logEntry: ExecutionLogEntry = {
         nodeId: node.id,
         nodeType: node.type ?? "unknown",
@@ -137,14 +150,26 @@ export async function executeFlow(
         error:
           error instanceof Error ? error.message : "Unknown execution error",
       };
+
       logs.push(logEntry);
+
       options.onNodeEnd?.(node.id, "error");
+
       break;
     }
 
     currentNodeId = getNextNodeId(node, edges, context, options);
   }
 
+  /**
+   * If execution ended without hitting an output node
+   */
+  if (!context.variables?.finalResult) {
+    context.variables = {
+      ...context.variables,
+      finalResult: "Workflow finished without producing an output.",
+    };
+  }
+
   return { context, logs };
 }
-

@@ -1,7 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useCallback } from "react";
 import ReactFlow, {
+  ReactFlowProvider,
   addEdge,
   applyNodeChanges,
   applyEdgeChanges,
@@ -13,8 +14,11 @@ import ReactFlow, {
   NodeChange,
   EdgeChange,
   OnConnect,
+  useReactFlow,
 } from "reactflow";
+
 import "reactflow/dist/style.css";
+
 import { useFlowStore } from "@/stores/flowStore";
 
 import FetchNode from "@/components/flow/nodes/FetchNode";
@@ -35,69 +39,21 @@ interface FlowCanvasProps {
   setSelectedNodeId: (id: string | null) => void;
 }
 
-const FlowCanvas: React.FC<FlowCanvasProps> = ({ setSelectedNodeId }) => {
-  const nodes = useFlowStore((state) => state.nodes);
-  const edges = useFlowStore((state) => state.edges);
+function FlowCanvasInner({ setSelectedNodeId }: FlowCanvasProps) {
+  const nodesState = useFlowStore((state) => state.nodes);
+  const edgesState = useFlowStore((state) => state.edges);
+
   const setNodes = useFlowStore((state) => state.setNodes);
   const setEdges = useFlowStore((state) => state.setEdges);
-  const highlightedNodeId = useFlowStore((state) => state.highlightedNodeId);
+
   const activeEdgeId = useFlowStore((state) => state.activeEdgeId);
   const showMinimap = useFlowStore((state) => state.showMinimap);
 
-  const nodeStyle = (node: Node) => ({
-    border:
-      node.id === highlightedNodeId ? "2px solid #4F46E5" : "1px solid #ccc",
-    padding: "8px",
-    borderRadius: "6px",
-    background: "#fff",
-  });
+  const { project } = useReactFlow();
 
-  React.useEffect(() => {
-    if (nodes.length === 0) {
-      setNodes([
-        {
-          id: "1",
-          type: "input",
-          data: {
-            label: "Input",
-            inputText: "User 123 requests a credit limit increase.",
-            inputMode: "text",
-          },
-          position: { x: 0, y: 0 },
-        },
-        {
-          id: "2",
-          type: "ai",
-          data: {
-            label: "AI Scorer",
-            prompt: "Score user {{input.userId}} for risk.",
-            value: 75,
-            jsonMode: true,
-          },
-          position: { x: 200, y: 0 },
-        },
-        {
-          id: "3",
-          type: "fetch",
-          data: {
-            label: "Mock API (true)",
-            url: "https://api.example.com/users/{{input.userId}}",
-          },
-          position: { x: 400, y: -50 },
-        },
-        {
-          id: "4",
-          type: "output",
-          data: {
-            label: "Result",
-            template:
-              "User {{input.userId}} has score {{ai.score}} and status OK.",
-          },
-          position: { x: 400, y: 50 },
-        },
-      ]);
-    }
-  }, [nodes, setNodes]);
+  // Ensure arrays
+  const nodes = Array.isArray(nodesState) ? nodesState : [];
+  const edges = Array.isArray(edgesState) ? edgesState : [];
 
   const onNodesChange = (changes: NodeChange[]) => {
     setNodes(applyNodeChanges(changes, nodes));
@@ -111,39 +67,41 @@ const FlowCanvas: React.FC<FlowCanvasProps> = ({ setSelectedNodeId }) => {
     setEdges(addEdge(connection, edges));
   };
 
-  // When a node is clicked → show editor
   const onNodeClick = (_: React.MouseEvent, node: Node) => {
     setSelectedNodeId(node.id);
   };
 
-  // Handle drag-drop nodes from sidebar
-  const onDropNode = (event: React.DragEvent) => {
-    event.preventDefault();
-    const type = event.dataTransfer.getData("application/reactflow");
-    if (!type) return;
+  const onDropNode = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
 
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const position = {
-      x: event.clientX - bounds.left,
-      y: event.clientY - bounds.top,
-    };
+      const type = event.dataTransfer.getData("application/reactflow");
+      if (!type) return;
 
-    const id = (nodes.length + 1).toString();
+      const bounds = event.currentTarget.getBoundingClientRect();
 
-    const newNode: Node = {
-      id,
-      type,
-      position,
-      data: {
-        label: `${type.charAt(0).toUpperCase() + type.slice(1)} Node`,
-        apiUrl: "",
-        prompt: "",
-        condition: false,
-      },
-    };
+      const position = project({
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
+      });
 
-    setNodes([...nodes, newNode]);
-  };
+      const newNode: Node = {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: {
+          label: `${type.charAt(0).toUpperCase() + type.slice(1)} Node`,
+        },
+        style: {
+          background: "transparent",
+          border: "none",
+        },
+      };
+
+      setNodes([...nodes, newNode]);
+    },
+    [project, nodes, setNodes]
+  );
 
   return (
     <div
@@ -152,9 +110,7 @@ const FlowCanvas: React.FC<FlowCanvasProps> = ({ setSelectedNodeId }) => {
       onDrop={onDropNode}
     >
       <ReactFlow
-        nodes={nodes.map((node) =>
-          node.type === "default" ? { ...node, style: nodeStyle(node) } : node
-        )}
+        nodes={nodes}
         edges={edges.map((edge) =>
           edge.id === activeEdgeId
             ? {
@@ -177,6 +133,12 @@ const FlowCanvas: React.FC<FlowCanvasProps> = ({ setSelectedNodeId }) => {
       </ReactFlow>
     </div>
   );
-};
+}
 
-export default FlowCanvas;
+export default function FlowCanvas(props: FlowCanvasProps) {
+  return (
+    <ReactFlowProvider>
+      <FlowCanvasInner {...props} />
+    </ReactFlowProvider>
+  );
+}
