@@ -2,64 +2,53 @@
 
 import React from "react";
 import { Handle, Position, NodeProps } from "reactflow";
-import { Split, Plus } from "lucide-react";
+import { Split } from "lucide-react";
 import { NodeCard } from "./NodeCard";
-import { useFlowStore } from "@/stores/flowStore";
 
 export default function RouterNode({ id, data }: NodeProps) {
-  const routes = data.routes || ["Path A", "Path B"];
-  const { setNodes, nodes } = useFlowStore();
-
-  const addPath = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent selecting the node when clicking button
-    const newPathName = `Path ${String.fromCharCode(65 + routes.length)}`; // A, B, C...
-    
-    // Update the node's data in the global store
-    setNodes(nodes.map((node) => {
-      if (node.id === id) {
-        return {
-          ...node,
-          data: { ...node.data, routes: [...routes, newPathName] }
-        };
-      }
-      return node;
-    }));
-  };
-
   return (
     <NodeCard nodeId={id}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2 font-semibold text-orange-400">
-          <Split size={14} />
-          <span>Router</span>
-        </div>
-        {/* The Magic Button: Adds a new path and handle instantly */}
-        <button 
-          onClick={addPath}
-          className="p-1 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-white"
-        >
-          <Plus size={14} />
-        </button>
+      <div className="flex items-center gap-2 font-bold text-orange-500 uppercase tracking-tighter mb-1">
+        <Split size={14} fill="currentColor" />
+        <span>Decision</span>
       </div>
       
+      <div className="flex flex-col gap-1">
+        {(data.routes || ["Path A", "Path B"]).map((route: string) => (
+          <div key={route} className="flex items-center justify-between text-[10px]">
+            <span className="opacity-50 italic">{route}:</span>
+            <span className="font-bold text-orange-400 line-clamp-1 max-w-[80px]">
+              {data.conditions?.[route] || "No logic"}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* TARGET HANDLE (Top) */}
       <Handle 
         type="target" 
         position={Position.Top} 
-        className="w-3 h-3 !bg-slate-400 border-2 border-slate-900 !top-[-6px] left-1/2 -translate-x-1/2" 
+        className="!w-3 !h-3 !bg-slate-400 !border-2 !border-[#0b0e14] !opacity-100 !left-1/2 !-translate-x-1/2 !top-[-6px]" 
       />
 
-      <div className="flex flex-col gap-5 mt-2">
-        {routes.map((route: string, index: number) => (
-          <div key={index} className="relative flex justify-end items-center h-5">
-            <span className="text-[10px] text-slate-400 mr-3">{route}</span>
+      {/* SOURCE HANDLES (Bottom) */}
+      <div className="absolute bottom-0 left-0 w-full flex justify-around px-4 pointer-events-none">
+        {(data.routes || ["Path A", "Path B"]).map((route: string, idx: number) => {
+          // Spread handles evenly
+          const count = (data.routes || ["Path A", "Path B"]).length;
+          const leftPos = ((idx + 1) / (count + 1)) * 100;
+          
+          return (
             <Handle
+              key={route}
               type="source"
-              position={Position.Right}
+              position={Position.Bottom}
               id={route.toLowerCase()}
-              className="w-3 h-3 !bg-orange-500 border-2 border-slate-900 !right-[-22px] top-1/2 -translate-y-1/2"
+              style={{ left: `${leftPos}%` }}
+              className="!w-3 !h-3 !bg-orange-500 !border-2 !border-[#0b0e14] !opacity-100 pointer-events-auto !-translate-x-1/2 !bottom-[-6px]"
             />
-          </div>
-        ))}
+          );
+        })}
       </div>
     </NodeCard>
   );

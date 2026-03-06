@@ -102,30 +102,17 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     };
 
     /**
-     * Node Executors: The "Brains" for each node type.
-     * Aligned with 'action' and 'router' naming conventions
+     * UNIVERSAL PACKET EXECUTORS
      */
     const executors: Record<string, NodeExecutor> = {
       input: async (node, context) => {
         const data = node.data as NodeData;
-        const mode = data.inputMode || "text";
-        let output: unknown = null;
-        let error: string | undefined;
-
-        if (mode === "json") {
-          try {
-            output = data.rawJson ? JSON.parse(data.rawJson) : null;
-          } catch (e) {
-            error = e instanceof Error ? e.message : "Invalid JSON";
-          }
-        } else {
-          output = data.inputText ? { text: data.inputText } : null;
-        }
+        const packet = data.packet || { type: "text", payload: "" };
 
         const nextContext = {
           ...context,
-          variables: { ...context.variables, input: output },
-          nodes: { ...context.nodes, [node.id]: output },
+          variables: { ...context.variables, input: packet },
+          nodes: { ...context.nodes, [node.id]: packet },
         };
 
         return {
@@ -133,24 +120,29 @@ export const useFlowStore = create<FlowState>((set, get) => ({
           logEntry: {
             nodeId: node.id,
             nodeType: "input",
-            status: error ? "error" : "success",
+            status: "success",
             startedAt: Date.now(),
             endedAt: Date.now(),
             durationMs: 0,
-            inputSnapshot: data.inputText || data.rawJson,
-            outputSnapshot: output,
-            error,
+            inputSnapshot: packet,
+            outputSnapshot: packet,
           },
         };
       },
 
       action: async (node, context) => {
         const data = node.data as NodeData;
-        const url = resolveTemplates(data.apiUrl || data.url || "", context);
-        const mockResponse = { status: 200, data: { ok: true, url, timestamp: new Date().toISOString() } };
+        const packet: FlowPacket = { 
+          type: "data", 
+          payload: { 
+            ok: true, 
+            connection: data.connectionType || "Integration",
+            timestamp: new Date().toISOString() 
+          } 
+        };
 
         return {
-          context: { ...context, nodes: { ...context.nodes, [node.id]: mockResponse } },
+          context: { ...context, nodes: { ...context.nodes, [node.id]: packet } },
           logEntry: {
             nodeId: node.id,
             nodeType: "action",
@@ -158,22 +150,23 @@ export const useFlowStore = create<FlowState>((set, get) => ({
             startedAt: Date.now(),
             endedAt: Date.now(),
             durationMs: 0,
-            inputSnapshot: url,
-            outputSnapshot: mockResponse,
+            inputSnapshot: data.connectionType,
+            outputSnapshot: packet,
           },
         };
       },
-      fetch: async (node, context) => executors.action(node, context), // Fallback for legacy data
 
       ai: async (node, context) => {
         const data = node.data as NodeData;
-        const prompt = resolveTemplates(data.prompt || "", context);
-        const output = data.jsonMode 
-          ? { summary: `Generated insights for: ${prompt}`, score: 0.88 }
-          : `AI Model says: ${prompt}`;
+        const instructions = resolveTemplates(data.instructions || "", context);
+        
+        const packet: FlowPacket = { 
+          type: "text", 
+          payload: `Brain result for: "${instructions.substring(0, 30)}..."` 
+        };
 
         return {
-          context: { ...context, nodes: { ...context.nodes, [node.id]: output } },
+          context: { ...context, nodes: { ...context.nodes, [node.id]: packet } },
           logEntry: {
             nodeId: node.id,
             nodeType: "ai",
@@ -181,16 +174,15 @@ export const useFlowStore = create<FlowState>((set, get) => ({
             startedAt: Date.now(),
             endedAt: Date.now(),
             durationMs: 0,
-            inputSnapshot: prompt,
-            outputSnapshot: output,
+            inputSnapshot: instructions,
+            outputSnapshot: packet,
           },
         };
       },
 
       router: async (node, context) => {
-        const data = node.data as NodeData;
         return {
-          context: context, // Logic branching handled by the engine
+          context,
           logEntry: {
             nodeId: node.id,
             nodeType: "router",
@@ -198,22 +190,28 @@ export const useFlowStore = create<FlowState>((set, get) => ({
             startedAt: Date.now(),
             endedAt: Date.now(),
             durationMs: 0,
-            inputSnapshot: data.conditions,
-            outputSnapshot: "Routed based on conditions",
+            inputSnapshot: node.data.conditions,
+            outputSnapshot: "Routed packet based on N-way logic",
           },
         };
       },
-      decision: async (node, context) => executors.router(node, context), // Fallback for legacy data
 
       output: async (node, context) => {
         const data = node.data as NodeData;
-        const resolved = resolveTemplates(data.template || "", context);
+        // Output can template the text or just pass the previous packet
+        const resolvedText = resolveTemplates(data.resultFormat || "", context);
+        
+        // If it's a simple string template, wrap it in a text packet
+        const packet: FlowPacket = { 
+          type: "text", 
+          payload: resolvedText 
+        };
         
         return {
           context: {
             ...context,
-            variables: { ...context.variables, output: resolved },
-            nodes: { ...context.nodes, [node.id]: resolved },
+            variables: { ...context.variables, output: packet },
+            nodes: { ...context.nodes, [node.id]: packet },
           },
           logEntry: {
             nodeId: node.id,
@@ -222,8 +220,8 @@ export const useFlowStore = create<FlowState>((set, get) => ({
             startedAt: Date.now(),
             endedAt: Date.now(),
             durationMs: 0,
-            inputSnapshot: data.template,
-            outputSnapshot: resolved,
+            inputSnapshot: data.resultFormat,
+            outputSnapshot: packet,
           },
         };
       },
@@ -244,21 +242,22 @@ export const useFlowStore = create<FlowState>((set, get) => ({
                 ? s.executedNodeIds 
                 : [...s.executedNodeIds, nodeId],
             }));
-            await sleep(350); // Visual pulse timing
+            await sleep(350);
           },
           onEdgeTraverse: async (edgeId) => {
             set({ activeEdgeId: edgeId });
-            await sleep(200); // Visual traversal timing
+            await sleep(200);
           },
         }
       );
 
+      // Find the last output packet to display in the gallery
+      const outputPacket = context.variables.output || context.nodes[logs[logs.length-1]?.nodeId];
+
       set({
         currentContext: context,
         executionLogs: logs,
-        finalResult: typeof context.variables?.output === "string" 
-          ? context.variables.output 
-          : "Workflow completed successfully.",
+        finalResult: outputPacket || null,
       });
     } catch (error) {
        console.error("Execution Engine Crash:", error);

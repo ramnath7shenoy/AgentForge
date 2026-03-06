@@ -45,7 +45,11 @@ async function getNextNodeId(
 
       try {
         const resolved = resolveTemplates(expression, context);
-        const isMatch = evaluateBooleanExpression(resolved);
+        
+        // Pass the entire context to help evaluate English conditions
+        // Priority: Use the last executed node's output as the "current data" to evaluate against
+        const lastNodeOutput = context.nodes[node.id]; 
+        const isMatch = evaluateBooleanExpression(resolved, lastNodeOutput);
 
         if (isMatch) {
           // Identify the edge specifically connected to this route handle (e.g. "path a")

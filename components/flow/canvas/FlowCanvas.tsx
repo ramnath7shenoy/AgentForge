@@ -19,12 +19,17 @@ import "reactflow/dist/style.css";
 import { useFlowStore } from "@/stores/flowStore";
 import { cn } from "@/lib/utils";
 
-// Custom node components that must use the centered-handle logic
+// Custom node components
 import InputNode from "../nodes/InputNode";
 import OutputNode from "../nodes/OutputNode";
 import ActionNode from "../nodes/ActionNode"; 
 import AINode from "../nodes/AINode";
 import RouterNode from "../nodes/RouterNode";
+import TriggerNode from "../nodes/TriggerNode";
+import VaultNode from "../nodes/VaultNode";
+import GatekeeperNode from "../nodes/GatekeeperNode";
+import ProcessorNode from "../nodes/ProcessorNode";
+import WebhookNode from "../nodes/WebhookNode";
 
 interface FlowCanvasProps {
   setSelectedNodeId: (id: string | null) => void;
@@ -37,7 +42,6 @@ function FlowCanvasInner({ setSelectedNodeId }: FlowCanvasProps) {
   const { setNodes, setEdges, activeEdgeId, showMinimap } = useFlowStore();
   const { project } = useReactFlow();
 
-  // Mapping string types to custom components to prevent default white box rendering
   const nodeTypes = useMemo(() => ({
     input: InputNode,
     output: OutputNode,
@@ -45,7 +49,12 @@ function FlowCanvasInner({ setSelectedNodeId }: FlowCanvasProps) {
     action: ActionNode, 
     fetch: ActionNode,    
     router: RouterNode,
-    decision: RouterNode, 
+    decision: RouterNode,
+    trigger: TriggerNode,
+    webhook: WebhookNode,
+    vault: VaultNode,
+    gatekeeper: GatekeeperNode,
+    processor: ProcessorNode,
   }), []);
 
   const onNodesChange = (c: NodeChange[]) => setNodes(applyNodeChanges(c, nodes));
@@ -65,11 +74,9 @@ function FlowCanvasInner({ setSelectedNodeId }: FlowCanvasProps) {
       type,
       position,
       data: { 
-        // Label defaults updated to simple strings
         label: `${type.charAt(0).toUpperCase() + type.slice(1)}`,
         routes: type === 'router' ? ["Path A", "Path B"] : undefined 
       },
-      // Forcing transparency on the library's default container
       style: {
         background: "transparent",
         border: "none",
@@ -89,7 +96,6 @@ function FlowCanvasInner({ setSelectedNodeId }: FlowCanvasProps) {
     >
       <ReactFlow
         nodes={nodes}
-        // Active edges use a glow effect for visibility
         edges={edges.map((e) => e.id === activeEdgeId 
           ? { ...e, animated: true, style: { stroke: "#6366f1", strokeWidth: 3 } } 
           : e
@@ -101,7 +107,6 @@ function FlowCanvasInner({ setSelectedNodeId }: FlowCanvasProps) {
         onNodeClick={(_, n) => setSelectedNodeId(n.id)}
         fitView
       >
-        {/* Background dots removed to clean the workspace */}
         <Controls className={cn(
           "transition-colors",
           theme === "dark" ? "dark:bg-slate-900 dark:border-slate-800" : "bg-white border-slate-200"

@@ -1,34 +1,45 @@
 import { Node, Edge } from "reactflow";
 
+export type PacketType = "text" | "file" | "data";
+
+export interface FlowPacket {
+  type: PacketType;
+  payload: any;
+  meta?: {
+    name?: string;
+    size?: number;
+    mimeType?: string;
+  };
+}
+
 export interface NodeData {
   label: string;
-  // Fetch node
-  apiUrl?: string; // legacy
-  url?: string;
-  method?: string;
-  headers?: Record<string, string>;
-  body?: unknown;
+  
+  // UNIVERSAL PACKET SYSTEM
+  packet?: FlowPacket;
+  
+  // 1. INPUT (Dropzone)
+  // Uses 'packet' for storage
+  
+  // 2. ACTION (Natural Integration)
+  // "What are we doing here?"
+  connectionType?: string; 
+  
+  // 3. AI (Brain)
+  // "What should the brain focus on?"
+  instructions?: string;
+  
+  // 4. ROUTER (N-Way)
+  // "Where should we go next?"
+  routes?: string[];
+  conditions?: Record<string, string>;
+  
+  // 5. OUTPUT (Response Gallery)
+  // Uses 'packet' from previous nodes or custom format
+  resultFormat?: string;
 
-  // AI node
-  prompt?: string;
-  temperature?: number;
-  jsonMode?: boolean;
-
-  // Decision / expression
-  condition?: string;
-  expression?: string;
-  value?: any;
-  nextNode?: string;
-  trueOutput?: string;
-  falseOutput?: string;
-
-  // Input node
-  rawJson?: string;
-  inputText?: string;
-  inputMode?: "text" | "json";
-
-  // Output node
-  template?: string;
+  // Internal legacy mapping
+  uploadedFileName?: string;
 }
 
 export type ExecutionStatus = "pending" | "success" | "error";
@@ -46,45 +57,22 @@ export interface ExecutionLogEntry {
 }
 
 export interface ExecutionContext {
-  /**
-   * High-level variables available to templates, e.g. `input`, `output`.
-   */
-  variables: Record<string, unknown>;
-  /**
-   * Per-node outputs, accessed via {{nodeId}} / {{nodeId.property}} in templates.
-   */
-  nodes: Record<string, unknown>;
+  variables: Record<string, FlowPacket>;
+  nodes: Record<string, FlowPacket>;
 }
 
 export interface FlowState {
   nodes: Node<NodeData>[];
   edges: Edge[];
+  theme: string;
   selectedNodeId: string | null;
   running: boolean;
   highlightedNodeId: string | null;
-  /**
-   * Last execution context snapshot (after a run).
-   */
   currentContext: ExecutionContext | null;
-  /**
-   * Ordered execution logs for the last run.
-   */
   executionLogs: ExecutionLogEntry[];
-  /**
-   * Last resolved output string from the most recently executed Output node.
-   */
-  finalResult: string | null;
-  /**
-   * The currently traversed edge during execution (for live path highlighting).
-   */
+  finalResult: FlowPacket | null;
   activeEdgeId?: string | null;
-  /**
-   * Ordered list of node ids visited during the last run.
-   */
   executedNodeIds: string[];
-  /**
-   * UI preferences
-   */
   showMinimap: boolean;
   showExecutionLogPanel: boolean;
   showVariablesPanel: boolean;
@@ -93,6 +81,9 @@ export interface FlowState {
   setSelectedNodeId: (id: string | null) => void;
   setRunning: (running: boolean) => void;
   setHighlightedNodeId: (id: string | null) => void;
+  setTheme: (theme: string) => void;
+  clearCanvas: () => void;
+  setFinalResult: (result: FlowPacket | null) => void;
   setShowMinimap: (value: boolean) => void;
   setShowExecutionLogPanel: (value: boolean) => void;
   setShowVariablesPanel: (value: boolean) => void;
