@@ -4,16 +4,28 @@ import React from "react";
 import { Handle, Position, NodeProps } from "reactflow";
 import { ShieldCheck } from "lucide-react";
 import { NodeCard } from "./NodeCard";
+import { useFlowStore } from "@/stores/flowStore";
 
 export default function GatekeeperNode({ id, data }: NodeProps) {
+  const highlightedNodeId = useFlowStore((s) => s.highlightedNodeId);
+  const executedNodeIds = useFlowStore((s) => s.executedNodeIds);
+  const isActive = highlightedNodeId === id;
+  const isExecuted = executedNodeIds.includes(id) && !isActive;
+
+  const statusClass = isActive 
+    ? "!border-rose-500 !ring-4 !ring-rose-500/30" 
+    : isExecuted 
+      ? "!border-emerald-500 !ring-2 !ring-emerald-500/20" 
+      : "";
+
   return (
-    <NodeCard nodeId={id}>
+    <NodeCard nodeId={id} className={statusClass}>
       <div className="flex items-center gap-2 font-bold text-emerald-500 uppercase tracking-tighter mb-1">
         <ShieldCheck size={14} fill="currentColor" />
         <span>Safety Gatekeeper</span>
       </div>
       <p className="text-[10px] opacity-70 font-medium">
-        {data.verification || "Critic AI"}
+        {isActive ? "Waiting for Approval..." : isExecuted ? "Approved" : (data.verification || "Critic AI")}
       </p>
 
       <Handle 

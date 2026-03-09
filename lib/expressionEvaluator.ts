@@ -56,7 +56,7 @@ export function evaluateNaturalLanguageCondition(
   // 4. Fallback: If it's a valid JS expression (for power users / legacy), try it
   try {
     if (/^[\d\s+\-*/().><=!&|]+$/.test(text)) {
-      // eslint-disable-next-line no-eval
+       
       return !!eval(text);
     }
   } catch {

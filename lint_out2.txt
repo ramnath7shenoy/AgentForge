@@ -1,0 +1,69 @@
+﻿
+E:\agentforge\flowforge-ai\app\publish\page.tsx
+   15:3   warning  'Type' is defined but never used                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+   24:68  warning  'theme' is assigned a value but never used                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+  145:25  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+E:\agentforge\flowforge-ai\components\NodeEditor.tsx
+  33:49  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+E:\agentforge\flowforge-ai\components\flow\FinalResultPanel.tsx
+  11:42  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+E:\agentforge\flowforge-ai\components\flow\VariableInspectorPanel.tsx
+   15:51  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+   82:66  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+   87:62  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+   93:68  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+   98:62  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  142:61  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  149:61  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  152:64  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+E:\agentforge\flowforge-ai\components\flow\canvas\FlowCanvas.tsx
+  13:3  warning  'Edge' is defined but never used                                                                                                                                                               @typescript-eslint/no-unused-vars
+  39:9  warning  The 'nodes' logical expression could make the dependencies of useCallback Hook (at line 86) change on every render. To fix this, wrap the initialization of 'nodes' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+E:\agentforge\flowforge-ai\components\flow\nodes\WebhookNode.tsx
+  8:43  warning  'data' is defined but never used  @typescript-eslint/no-unused-vars
+
+E:\agentforge\flowforge-ai\components\flow\sidebar\NodeSettingsSidebar.tsx
+   7:3   warning  'Info' is defined but never used          @typescript-eslint/no-unused-vars
+  17:3   warning  'Timer' is defined but never used         @typescript-eslint/no-unused-vars
+  32:48  error    Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+E:\agentforge\flowforge-ai\components\flow\sidebar\NodeSidebar.tsx
+  26:10  warning  'cn' is defined but never used               @typescript-eslint/no-unused-vars
+  62:9   warning  'router' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+E:\agentforge\flowforge-ai\lib\expressionEvaluator.ts
+  10:9   error    Unexpected any. Specify a different type                                    @typescript-eslint/no-explicit-any
+  59:7   warning  Unused eslint-disable directive (no problems were reported from 'no-eval')
+  73:36  error    Unexpected any. Specify a different type                                    @typescript-eslint/no-explicit-any
+  98:69  error    Unexpected any. Specify a different type                                    @typescript-eslint/no-explicit-any
+
+E:\agentforge\flowforge-ai\lib\flowCompiler.ts
+  211:13  error  'jsCond' is never reassigned. Use 'const' instead  prefer-const
+
+E:\agentforge\flowforge-ai\lib\template.ts
+  27:16  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  30:25  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+E:\agentforge\flowforge-ai\stores\flowStore.ts
+    5:3   warning  'Node' is defined but never used                   @typescript-eslint/no-unused-vars
+    6:3   warning  'Edge' is defined but never used                   @typescript-eslint/no-unused-vars
+    7:3   warning  'applyNodeChanges' is defined but never used       @typescript-eslint/no-unused-vars
+    8:3   warning  'applyEdgeChanges' is defined but never used       @typescript-eslint/no-unused-vars
+    9:3   warning  'NodeChange' is defined but never used             @typescript-eslint/no-unused-vars
+   10:3   warning  'EdgeChange' is defined but never used             @typescript-eslint/no-unused-vars
+   18:3   warning  'ExecutionStatus' is defined but never used        @typescript-eslint/no-unused-vars
+  187:13  error    'status' is never reassigned. Use 'const' instead  prefer-const
+  188:13  error    'packet' is never reassigned. Use 'const' instead  prefer-const
+  204:31  error    Unexpected any. Specify a different type           @typescript-eslint/no-explicit-any
+
+E:\agentforge\flowforge-ai\types\flowStoreTypes.ts
+  7:12  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+Γ£û 39 problems (21 errors, 18 warnings)
+  3 errors and 1 warning potentially fixable with the `--fix` option.
+

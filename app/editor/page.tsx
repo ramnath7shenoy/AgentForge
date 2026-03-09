@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import ReactConfetti from 'react-confetti';
 import { 
   Play, 
   Map, 
@@ -10,7 +11,8 @@ import {
   Sun,
   X,
   Zap,
-  Rocket
+  Rocket,
+  HelpCircle
 } from "lucide-react";
 
 import FlowCanvas from "@/components/flow/canvas/FlowCanvas";
@@ -18,16 +20,17 @@ import NodeSidebar from "@/components/flow/sidebar/NodeSidebar";
 import NodeSettingsSidebar from "@/components/flow/sidebar/NodeSettingsSidebar";
 import ExecutionLogPanel from "@/components/flow/ExecutionLogPanel";
 import VariableInspectorPanel from "@/components/flow/VariableInspectorPanel";
+import MissionBriefing from "@/components/ui/tutorial/MissionBriefing";
 
 import { useFlowStore } from "@/stores/flowStore";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
+import { ReactFlowProvider } from "reactflow";
 
-export default function EditorPage() {
+function EditorContent() {
   const router = useRouter();
   const {
     nodes,
-    selectedNodeId,
     setSelectedNodeId,
     simulateFlow,
     finalResult,
@@ -40,9 +43,14 @@ export default function EditorPage() {
     setShowVariablesPanel,
     theme,
     setTheme,
+    tutorialStep,
+    setTutorialStep,
+    completeTutorial,
+    running
   } = useFlowStore();
 
   const [mounted, setMounted] = useState(false);
+  const [windowSize, setWindowSize] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
     setMounted(true);
@@ -52,7 +60,26 @@ export default function EditorPage() {
     } else {
       root.classList.remove("dark");
     }
-  }, [theme]);
+
+    const hasSeenTutorial = localStorage.getItem('agentforge_onboarding_complete');
+    if (!hasSeenTutorial && tutorialStep === 0) {
+      setTutorialStep(1);
+    }
+  }, [theme, setTutorialStep, tutorialStep]);
+
+  useEffect(() => {
+    // Advance tutorial if flow is run during step 4
+    if (tutorialStep === 4 && finalResult) {
+      setTutorialStep(5);
+    }
+  }, [finalResult, tutorialStep, setTutorialStep]);
+
+  // Ensure window size updates on resize
+  useEffect(() => {
+    const handleResize = () => setWindowSize({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   if (!mounted) return null;
 
@@ -81,25 +108,41 @@ export default function EditorPage() {
 
         <div className="flex items-center gap-3">
           <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-            <HeaderButton 
-              onClick={() => simulateFlow(startNodeId)} 
-              icon={<Play size={14} className="fill-current" />} 
-              label="Run Flow" 
-              variant="primary"
-            />
-            <div className="w-[1px] h-4 bg-slate-200 dark:bg-slate-800 mx-1" />
             <HeaderButton onClick={() => setShowMinimap(!showMinimap)} icon={<Map size={14} />} active={showMinimap} />
             <HeaderButton onClick={() => setShowExecutionLogPanel(!showExecutionLogPanel)} icon={<Terminal size={14} />} active={showExecutionLogPanel} />
             <HeaderButton onClick={() => setShowVariablesPanel(!showVariablesPanel)} icon={<Variable size={14} />} active={showVariablesPanel} />
           </div>
 
-          <button
-            onClick={() => router.push('/publish')}
-            className="flex items-center gap-2 px-4 py-2 bg-[#10b981] hover:bg-[#0da372] text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-500/20 ml-2"
-          >
-            <Rocket size={14} />
-            Publish & Export
-          </button>
+          <div className="flex items-center gap-2 ml-2">
+            <button
+                onClick={() => simulateFlow(startNodeId)}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all",
+                  tutorialStep === 4 
+                    ? "bg-indigo-600 hover:bg-indigo-500 text-white ring-4 ring-indigo-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(99,102,241,0.5)] z-10" 
+                    : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
+                )}
+            >
+                <Play size={14} className="fill-current" />
+                Run Flow
+            </button>
+
+            <button
+                onClick={() => {
+                  completeTutorial();
+                  router.push('/publish');
+                }}
+                className={cn(
+                "flex items-center gap-2 px-4 py-2 transition-all rounded-xl text-xs font-bold",
+                (tutorialStep === 5 && finalResult)
+                    ? "bg-emerald-500 hover:bg-emerald-400 text-white ring-4 ring-emerald-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(16,185,129,0.5)] z-10" 
+                    : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20"
+                )}
+            >
+                <Rocket size={14} />
+                Publish & Export
+            </button>
+          </div>
 
           <button
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -119,30 +162,64 @@ export default function EditorPage() {
         <main className="flex-1 relative bg-slate-50 dark:bg-[#0b0e14]">
           <FlowCanvas setSelectedNodeId={setSelectedNodeId} />
           
-          {finalResult && (
+          {(finalResult || running) && (
             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-2xl bg-white dark:bg-slate-900 border border-indigo-500/30 rounded-2xl shadow-2xl p-5 z-50 animate-in slide-in-from-bottom-4 duration-500">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">Response Gallery</span>
+                  <div className={cn(
+                    "w-2 h-2 rounded-full",
+                    running ? "bg-amber-500 animate-ping" : "bg-indigo-500 animate-pulse"
+                  )} />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">Agent Output</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className={cn(
-                    "text-[9px] px-2 py-0.5 rounded-full font-bold uppercase",
-                    finalResult.type === 'text' ? "bg-blue-500/10 text-blue-500" :
-                    finalResult.type === 'file' ? "bg-emerald-500/10 text-emerald-500" :
-                    "bg-purple-500/10 text-purple-500"
-                  )}>
-                    {finalResult.type}
-                  </span>
+                  {finalResult && (
+                    <span className={cn(
+                      "text-[9px] px-2 py-0.5 rounded-full font-bold uppercase",
+                      finalResult.type === 'text' ? "bg-blue-500/10 text-blue-500" :
+                      finalResult.type === 'file' ? "bg-emerald-500/10 text-emerald-500" :
+                      "bg-purple-500/10 text-purple-500"
+                    )}>
+                      {finalResult.type}
+                    </span>
+                  )}
+                  {running && (
+                    <span className="text-[9px] px-2 py-0.5 rounded-full font-bold uppercase bg-amber-500/10 text-amber-500">
+                      Processing...
+                    </span>
+                  )}
                   <button onClick={() => setFinalResult(null)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-white">
                     <X size={16} />
                   </button>
                 </div>
               </div>
-              {/* Content Gallery omitted for brevity, same logic as before */}
+              
+              <div className="max-h-48 overflow-y-auto font-mono text-sm p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                {running ? (
+                  <div className="flex items-center gap-3 text-slate-500 italic">
+                    <div className="w-1 h-1 bg-slate-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                    <div className="w-1 h-1 bg-slate-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                    <div className="w-1 h-1 bg-slate-500 rounded-full animate-bounce" />
+                    Engines warming up...
+                  </div>
+                ) : finalResult ? (
+                  typeof finalResult.payload === 'string' ? finalResult.payload : JSON.stringify(finalResult.payload, null, 2)
+                ) : null}
+              </div>
             </div>
           )}
+
+          {/* HELP FAB: Bottom Right of Canvas */}
+          <button 
+            onClick={() => {
+              localStorage.removeItem('agentforge_onboarding_complete');
+              setTutorialStep(1);
+            }}
+            className="fixed bottom-6 right-6 z-50 bg-slate-800/50 backdrop-blur-md p-3 rounded-full border border-slate-700 text-slate-400 hover:text-indigo-400 transition-all shadow-2xl group active:scale-95"
+            title="Restart Mission"
+          >
+            <HelpCircle size={20} className="group-hover:rotate-12 transition-transform" />
+          </button>
         </main>
 
         <aside className="w-80 border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0b0e14] overflow-y-auto">
@@ -160,11 +237,29 @@ export default function EditorPage() {
           </div>
         )}
       </div>
+
+      <MissionBriefing />
     </div>
   );
 }
 
-function HeaderButton({ icon, label, onClick, active, variant = "ghost" }: any) {
+export default function EditorPage() {
+  return (
+    <ReactFlowProvider>
+      <EditorContent />
+    </ReactFlowProvider>
+  );
+}
+
+interface HeaderButtonProps {
+  icon: React.ReactNode;
+  label?: string;
+  onClick: () => void;
+  active?: boolean;
+  variant?: "primary" | "ghost";
+}
+
+function HeaderButton({ icon, label, onClick, active, variant = "ghost" }: HeaderButtonProps) {
   return (
     <button
       onClick={onClick}

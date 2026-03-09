@@ -35,11 +35,11 @@ interface FlowCanvasProps {
   setSelectedNodeId: (id: string | null) => void;
 }
 
-function FlowCanvasInner({ setSelectedNodeId }: FlowCanvasProps) {
+export default function FlowCanvas({ setSelectedNodeId }: FlowCanvasProps) {
   const nodes = useFlowStore((state) => state.nodes) || [];
   const edges = useFlowStore((state) => state.edges) || [];
   const theme = useFlowStore((state) => state.theme);
-  const { setNodes, setEdges, activeEdgeId, showMinimap } = useFlowStore();
+  const { setNodes, setEdges, activeEdgeId, showMinimap, tutorialStep, setTutorialStep } = useFlowStore();
   const { project } = useReactFlow();
 
   const nodeTypes = useMemo(() => ({
@@ -57,9 +57,22 @@ function FlowCanvasInner({ setSelectedNodeId }: FlowCanvasProps) {
     processor: ProcessorNode,
   }), []);
 
-  const onNodesChange = (c: NodeChange[]) => setNodes(applyNodeChanges(c, nodes));
-  const onEdgesChange = (c: EdgeChange[]) => setEdges(applyEdgeChanges(c, edges));
-  const onConnect: OnConnect = (conn) => setEdges(addEdge(conn, edges));
+  const onNodesChange = useCallback((c: NodeChange[]) => {
+    setNodes(applyNodeChanges(c, nodes));
+  }, [nodes, setNodes]);
+  
+  const onEdgesChange = useCallback((c: EdgeChange[]) => setEdges(applyEdgeChanges(c, edges)), [edges, setEdges]);
+  
+  const onConnect: OnConnect = useCallback((conn) => {
+    setEdges(addEdge(conn, edges));
+    if (tutorialStep === 3 && conn.source && conn.target) {
+      const sourceNode = nodes.find(n => n.id === conn.source);
+      const targetNode = nodes.find(n => n.id === conn.target);
+      if (sourceNode?.type === 'trigger' && targetNode?.type === 'ai') {
+        setTutorialStep(4);
+      }
+    }
+  }, [edges, setEdges, tutorialStep, nodes, setTutorialStep]);
 
   const onDrop = useCallback((event: React.DragEvent) => {
     event.preventDefault();
@@ -82,8 +95,23 @@ function FlowCanvasInner({ setSelectedNodeId }: FlowCanvasProps) {
         border: "none",
       },
     };
-    setNodes([...nodes, newNode]);
-  }, [project, nodes, setNodes]);
+    const newNodes = [...nodes, newNode];
+    
+    // Tutorial Step 2 -> 3 transition
+    if (tutorialStep === 2 && type === 'trigger') {
+      const brainNode: Node = {
+        id: crypto.randomUUID(),
+        type: 'ai',
+        position: { x: position.x + 300, y: position.y },
+        data: { label: 'Agent Brain' },
+        style: { background: "transparent", border: "none" }
+      };
+      setNodes([...newNodes, brainNode]);
+      setTutorialStep(3);
+    } else {
+      setNodes(newNodes);
+    }
+  }, [project, nodes, setNodes, tutorialStep, setTutorialStep]);
 
   return (
     <div 
@@ -107,6 +135,36 @@ function FlowCanvasInner({ setSelectedNodeId }: FlowCanvasProps) {
         onNodeClick={(_, n) => setSelectedNodeId(n.id)}
         fitView
       >
+        {/* Ghost Path for Tutorial Step 3 (Establish Uplink) */}
+        {tutorialStep === 3 && (
+          <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
+            {nodes.filter(n => n.type === 'trigger').map(triggerNode => {
+              const brainNode = nodes.find(n => n.type === 'ai');
+              if (!brainNode) return null;
+              
+              const startX = triggerNode.position.x + 150; // Approximating right handle
+              const startY = triggerNode.position.y + 40;
+              const endX = brainNode.position.x - 10;     // Approximating left handle
+              const endY = brainNode.position.y + 40;
+              
+              // Draw a bezier curve
+              const path = `M ${startX} ${startY} C ${startX + 100} ${startY}, ${endX - 100} ${endY}, ${endX} ${endY}`;
+              return (
+                <g key={triggerNode.id}>
+                  <path 
+                    d={path} 
+                    fill="none" 
+                    stroke="#8b5cf6" 
+                    strokeWidth="4" 
+                    strokeDasharray="8 8"
+                    className="animate-[dash_1s_linear_infinite] opacity-50"
+                  />
+                  <circle cx={endX} cy={endY} r="6" fill="#8b5cf6" className="animate-ping" />
+                </g>
+              );
+            })}
+          </svg>
+        )}
         <Controls className={cn(
           "transition-colors",
           theme === "dark" ? "dark:bg-slate-900 dark:border-slate-800" : "bg-white border-slate-200"
@@ -123,8 +181,4 @@ function FlowCanvasInner({ setSelectedNodeId }: FlowCanvasProps) {
       </ReactFlow>
     </div>
   );
-}
-
-export default function FlowCanvas(props: FlowCanvasProps) {
-  return <ReactFlowProvider><FlowCanvasInner {...props} /></ReactFlowProvider>;
 }

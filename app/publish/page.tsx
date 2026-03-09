@@ -3,14 +3,14 @@
 import React, { useState, useEffect } from "react";
 import { useFlowStore } from "@/stores/flowStore";
 import { compileFlow } from "@/lib/flowCompiler";
-import { 
-  Copy, 
-  CheckCircle, 
-  Play, 
-  FileText, 
-  Download, 
-  Code2, 
-  Server, 
+import {
+  Copy,
+  CheckCircle,
+  Play,
+  FileText,
+  Download,
+  Code2,
+  Server,
   ArrowLeft,
   Type,
   X
@@ -22,8 +22,8 @@ import { NodeCard } from "@/components/flow/nodes/NodeCard";
 export default function PublishPage() {
   const router = useRouter();
   const { nodes, edges, simulateFlow, finalResult, setFinalResult, theme } = useFlowStore();
-  
-  const [activeTab, setActiveTab] = useState<'python' | 'javascript'>('python');
+
+  const [activeTab, setActiveTab] = useState<'python' | 'javascript' | 'typescript'>('python');
   const [copied, setCopied] = useState(false);
   const [compiledCode, setCompiledCode] = useState("");
 
@@ -50,7 +50,7 @@ export default function PublishPage() {
       <div className="w-1/2 border-r border-slate-800 flex flex-col h-full bg-[#0b0e14]">
         <header className="p-6 border-b border-slate-800 flex items-center justify-between bg-[#0b0e14]">
           <div className="flex items-center gap-4">
-            <button 
+            <button
               onClick={() => router.back()}
               className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400 hover:text-white border border-slate-800"
             >
@@ -61,7 +61,7 @@ export default function PublishPage() {
               <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-widest">Environment Sandbox</p>
             </div>
           </div>
-          <button 
+          <button
             onClick={handleRunPreview}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg shadow-indigo-500/20"
           >
@@ -75,28 +75,28 @@ export default function PublishPage() {
           <div className="flex flex-col gap-4">
             <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Universal Input</h2>
             <NodeCard nodeId="preview-input" className="min-w-full">
-              <div 
+              <div
                 className={cn(
                   "w-full rounded-xl border-2 border-dashed p-8 flex flex-col items-center justify-center text-center transition-all",
                   "border-slate-800 bg-slate-900/30 hover:border-indigo-500/50 hover:bg-indigo-500/5"
                 )}
               >
                 <div className="w-12 h-12 bg-slate-800/50 rounded-2xl flex items-center justify-center mb-4 border border-slate-700">
-                   <FileText size={20} className="text-slate-400" />
+                  <FileText size={20} className="text-slate-400" />
                 </div>
                 <p className="text-[11px] font-bold text-slate-300 uppercase tracking-widest">Drop files or type data</p>
                 <p className="text-[10px] text-slate-500 mt-1 mb-6">Testing payload for sandbox execution.</p>
-                
-                <textarea 
+
+                <textarea
                   data-nodrag
                   className="w-full h-24 bg-[#05070a] border border-slate-800 rounded-xl p-4 text-xs text-slate-300 resize-none focus:outline-none focus:border-indigo-500/50 transition-colors shadow-inner"
                   placeholder="Enter temporary testing data..."
                   onChange={(e) => {
                     const startNode = nodes.find(n => n.type === 'input') || nodes[0];
                     if (startNode) {
-                      const updatedNodes = nodes.map(n => 
-                        n.id === startNode.id 
-                          ? { ...n, data: { ...n.data, packet: { type: 'text', payload: e.target.value } } }
+                      const updatedNodes = nodes.map(n =>
+                        n.id === startNode.id
+                          ? { ...n, data: { ...n.data, packet: { type: 'text' as const, payload: e.target.value } } }
                           : n
                       );
                       useFlowStore.setState({ nodes: updatedNodes });
@@ -121,8 +121,8 @@ export default function PublishPage() {
                     <span className={cn(
                       "text-[9px] px-2 py-0.5 rounded-full font-bold uppercase",
                       finalResult.type === 'text' ? "bg-blue-500/10 text-blue-500" :
-                      finalResult.type === 'file' ? "bg-emerald-500/10 text-emerald-500" :
-                      "bg-purple-500/10 text-purple-500"
+                        finalResult.type === 'file' ? "bg-emerald-500/10 text-emerald-500" :
+                          "bg-purple-500/10 text-purple-500"
                     )}>
                       {finalResult.type}
                     </span>
@@ -152,8 +152,8 @@ export default function PublishPage() {
                         <p className="text-xs font-bold text-slate-200 uppercase tracking-widest">{finalResult.meta?.name}</p>
                         <p className="text-[10px] text-slate-500 mt-1 uppercase font-medium">{(finalResult.meta?.size || 0) / 1000} KB</p>
                       </div>
-                      <a 
-                        href={finalResult.payload} 
+                      <a
+                        href={finalResult.payload}
                         download={finalResult.meta?.name}
                         className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-2 border border-slate-700 shadow-lg shadow-black/20"
                       >
@@ -211,6 +211,15 @@ export default function PublishPage() {
             >
               Node.js
             </button>
+            <button
+              onClick={() => setActiveTab('typescript')}
+              className={cn(
+                "px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                activeTab === 'typescript' ? "bg-slate-800 text-white shadow-lg" : "text-slate-500 hover:text-slate-300"
+              )}
+            >
+              TypeScript
+            </button>
           </div>
         </header>
 
@@ -222,17 +231,17 @@ export default function PublishPage() {
             {copied ? <CheckCircle size={14} /> : <Copy size={14} />}
             {copied ? "Copied" : "Copy Source"}
           </button>
-          
+
           <div className="flex-1 bg-[#0b0e14] border border-slate-800 rounded-2xl p-8 overflow-hidden flex flex-col shadow-2xl">
-             <div className="flex items-center gap-2 mb-6 opacity-40">
-                <div className="w-2.5 h-2.5 rounded-full bg-rose-500" />
-                <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                <span className="ml-2 text-[9px] font-mono text-slate-500">agentforge_compiled_{activeTab}.{activeTab === 'python' ? 'py' : 'js'}</span>
-             </div>
-             <pre className="flex-1 overflow-y-auto w-full text-[11px] font-mono text-slate-300 scrollbar-hide selection:bg-indigo-500/30">
-                <code>{compiledCode}</code>
-             </pre>
+            <div className="flex items-center gap-2 mb-6 opacity-40">
+              <div className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+              <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+              <span className="ml-2 text-[9px] font-mono text-slate-500">agentforge_compiled_{activeTab}.{activeTab === 'python' ? 'py' : activeTab === 'javascript' ? 'js' : 'ts'}</span>
+            </div>
+            <pre className="flex-1 overflow-y-auto w-full text-[11px] font-mono text-slate-300 scrollbar-hide selection:bg-indigo-500/30">
+              <code>{compiledCode}</code>
+            </pre>
           </div>
         </div>
       </div>

@@ -8,13 +8,13 @@ const FinalResultPanel: React.FC = () => {
   const running = useFlowStore((state) => state.running);
 
   const [animate, setAnimate] = React.useState(false);
-  const previousResultRef = React.useRef<string | null>(null);
+  const previousResultRef = React.useRef<any>(null);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
-    if (finalResult && finalResult !== previousResultRef.current) {
+    if (finalResult && finalResult.payload !== previousResultRef.current) {
       setAnimate(true);
-      previousResultRef.current = finalResult;
+      previousResultRef.current = finalResult.payload;
       const timeout = setTimeout(() => setAnimate(false), 450);
       return () => clearTimeout(timeout);
     }
@@ -59,7 +59,7 @@ const FinalResultPanel: React.FC = () => {
           )}
           {finalResult && (
             <pre className="whitespace-pre-wrap break-all font-sans text-sm md:text-base text-foreground">
-              {finalResult}
+              {typeof finalResult.payload === 'object' ? JSON.stringify(finalResult.payload, null, 2) : String(finalResult.payload)}
             </pre>
           )}
         </div>

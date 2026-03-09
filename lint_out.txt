@@ -1,0 +1,35 @@
+﻿
+E:\agentforge\flowforge-ai\app\publish\page.tsx
+   15:3   warning  'Type' is defined but never used                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+   24:68  warning  'theme' is assigned a value but never used                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+  145:25  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+E:\agentforge\flowforge-ai\components\flow\canvas\FlowCanvas.tsx
+  13:3  warning  'Edge' is defined but never used                                                                                                                                                               @typescript-eslint/no-unused-vars
+  39:9  warning  The 'nodes' logical expression could make the dependencies of useCallback Hook (at line 86) change on every render. To fix this, wrap the initialization of 'nodes' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+E:\agentforge\flowforge-ai\components\flow\nodes\WebhookNode.tsx
+  8:43  warning  'data' is defined but never used  @typescript-eslint/no-unused-vars
+
+E:\agentforge\flowforge-ai\components\flow\sidebar\NodeSettingsSidebar.tsx
+   7:3   warning  'Info' is defined but never used                                 @typescript-eslint/no-unused-vars
+  17:3   warning  'Timer' is defined but never used                                @typescript-eslint/no-unused-vars
+  98:15  error    `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`  react/no-unescaped-entities
+  98:75  error    `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`  react/no-unescaped-entities
+
+E:\agentforge\flowforge-ai\components\flow\sidebar\NodeSidebar.tsx
+  26:10  warning  'cn' is defined but never used               @typescript-eslint/no-unused-vars
+  62:9   warning  'router' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+E:\agentforge\flowforge-ai\stores\flowStore.ts
+    5:3   warning  'Node' is defined but never used                   @typescript-eslint/no-unused-vars
+    6:3   warning  'Edge' is defined but never used                   @typescript-eslint/no-unused-vars
+    7:3   warning  'applyNodeChanges' is defined but never used       @typescript-eslint/no-unused-vars
+    8:3   warning  'applyEdgeChanges' is defined but never used       @typescript-eslint/no-unused-vars
+    9:3   warning  'NodeChange' is defined but never used             @typescript-eslint/no-unused-vars
+   10:3   warning  'EdgeChange' is defined but never used             @typescript-eslint/no-unused-vars
+  115:13  error    'status' is never reassigned. Use 'const' instead  prefer-const
+
+Γ£û 19 problems (3 errors, 16 warnings)
+  1 error and 0 warnings potentially fixable with the `--fix` option.
+

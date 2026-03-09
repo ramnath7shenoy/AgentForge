@@ -61,7 +61,7 @@ const categories = [
 const NodeSidebar: React.FC = () => {
   const router = useRouter();
   const [search, setSearch] = useState("");
-  const { nodes, edges, setNodes, setEdges, clearCanvas } = useFlowStore();
+  const { nodes, edges, setNodes, setEdges, clearCanvas, tutorialStep } = useFlowStore();
 
   const onDragStart = (event: React.DragEvent, nodeType: string) => {
     event.dataTransfer.setData("application/reactflow", nodeType);
@@ -95,28 +95,40 @@ const NodeSidebar: React.FC = () => {
               {cat.name}
             </h3>
             <div className="grid grid-cols-2 gap-2">
-              {cat.nodes.map((node) => (
-                <div
-                  key={node.type}
-                  draggable
-                  onDragStart={(e) => onDragStart(e, node.type)}
-                  className="flex flex-col items-center justify-center gap-2 p-3 cursor-grab bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl hover:border-indigo-500/50 hover:bg-indigo-500/5 transition-all group text-center"
-                >
-                  <div className="p-2 bg-white dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 shadow-sm group-hover:scale-110 transition-transform">
-                    {node.icon}
+              {cat.nodes.map((node) => {
+                const isTutorialTarget = tutorialStep === 2 && node.type === "trigger";
+                return (
+                  <div
+                    key={node.type}
+                    id={node.type === "trigger" ? "node-trigger" : undefined}
+                    draggable
+                    onDragStart={(e) => onDragStart(e, node.type)}
+                    className={cn(
+                      "flex flex-col items-center justify-center gap-2 p-3 cursor-grab bg-slate-50 dark:bg-slate-900/50 border rounded-xl hover:border-indigo-500/50 hover:bg-indigo-500/5 transition-all group text-center",
+                      isTutorialTarget 
+                        ? "border-amber-500 bg-amber-500/10 ring-4 ring-amber-500/30 animate-pulse z-10" 
+                        : "border-slate-200 dark:border-slate-800"
+                    )}
+                  >
+                    <div className="p-2 bg-white dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 shadow-sm group-hover:scale-110 transition-transform">
+                      {node.icon}
+                    </div>
+                    <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-tighter leading-none">
+                      {node.label}
+                    </span>
                   </div>
-                  <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-tighter leading-none">
-                    {node.label}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}
       </div>
 
       {/* FOOTER ACTIONS RESTORED */}
-      <div className="mt-auto pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2">
+      <div className={cn(
+        "mt-auto pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2 transition-all",
+        tutorialStep > 0 && tutorialStep < 6 && "opacity-30 pointer-events-none grayscale"
+      )}>
         <button
           className="w-full flex items-center justify-center gap-2 bg-indigo-600/10 hover:bg-indigo-600 border border-indigo-500/20 text-indigo-500 hover:text-white text-xs font-bold py-2.5 rounded-xl transition-all shadow-lg shadow-indigo-500/5"
           type="button"

@@ -38,6 +38,17 @@ export interface NodeData {
   // Uses 'packet' from previous nodes or custom format
   resultFormat?: string;
 
+  // Master Nodes Additional Config
+  schedule?: string;
+  persistence?: string;
+  verification?: string;
+  batchLogic?: string;
+  webhookID?: string;
+  cron?: string;
+  time?: string;
+  days?: string[];
+  timezone?: string;
+
   // Internal legacy mapping
   uploadedFileName?: string;
 }
@@ -88,4 +99,8 @@ export interface FlowState {
   setShowExecutionLogPanel: (value: boolean) => void;
   setShowVariablesPanel: (value: boolean) => void;
   simulateFlow: (startNodeId: string) => Promise<void>;
+  // Immersive Tutorial States
+  tutorialStep: number;
+  setTutorialStep: (step: number) => void;
+  completeTutorial: () => void;
 }

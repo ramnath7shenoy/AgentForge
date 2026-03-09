@@ -14,6 +14,8 @@ import {
   ExecutionContext,
   FlowState,
   NodeData,
+  FlowPacket,
+  ExecutionStatus,
 } from "@/types/flowStoreTypes";
 
 import {
@@ -41,6 +43,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   showMinimap: true,
   showExecutionLogPanel: false,
   showVariablesPanel: false,
+  tutorialStep: 0,
 
   // --- STANDARD ACTIONS ---
   setNodes: (nodes) => set({ nodes }),
@@ -79,6 +82,11 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   setShowMinimap: (value) => set({ showMinimap: value }),
   setShowExecutionLogPanel: (value) => set({ showExecutionLogPanel: value }),
   setShowVariablesPanel: (value) => set({ showVariablesPanel: value }),
+  setTutorialStep: (step) => set({ tutorialStep: step }),
+  completeTutorial: () => {
+    localStorage.setItem('agentforge_onboarding_complete', 'true');
+    set({ tutorialStep: 0 });
+  },
 
   // --- FLOW EXECUTION LOGIC ---
   simulateFlow: async (startNodeId: string) => {
@@ -105,6 +113,153 @@ export const useFlowStore = create<FlowState>((set, get) => ({
      * UNIVERSAL PACKET EXECUTORS
      */
     const executors: Record<string, NodeExecutor> = {
+      trigger: async (node, context) => {
+        const data = node.data as NodeData;
+        const schedule = data.schedule || "Manual";
+        let packet: FlowPacket = { type: "text", payload: `Triggered by ${schedule} Action` };
+        
+        const status: ExecutionStatus = "success";
+
+        if (schedule === "Webhook") {
+          // Simulate the engine setting status to "listening" and waiting for a POST request
+          packet = { type: "data", payload: { webhookReceived: true, endpoint: `/api/webhook/${node.id}`, timestamp: Date.now() } };
+          await sleep(2000); // Highlight listening state visually longer for demo purposes
+        } else if (schedule === "Schedule") {
+          // Simulate the engine reading the cron frequency and wrapping this flow in an interval
+          const frequency = data.cron || "Every Minute";
+          packet = { type: "text", payload: `Automated Execution: ${frequency}` };
+          await sleep(1000); // Simulate schedule initializing delay
+        } else {
+          // Manual Execution (fires exactly once)
+          packet = { type: "text", payload: `Manual Execution Triggered` };
+        }
+
+        return {
+          context: { ...context, nodes: { ...context.nodes, [node.id]: packet } },
+          logEntry: {
+            nodeId: node.id,
+            nodeType: "trigger",
+            status,
+            startedAt: Date.now(),
+            endedAt: Date.now(),
+            durationMs: 0,
+            inputSnapshot: schedule,
+            outputSnapshot: packet,
+          },
+        };
+      },
+
+      webhook: async (node, context) => {
+        const packet: FlowPacket = { type: "data", payload: { webhookObtained: true } };
+        await sleep(1000); // Simulate waiting
+        return {
+          context: { ...context, nodes: { ...context.nodes, [node.id]: packet } },
+          logEntry: {
+            nodeId: node.id,
+            nodeType: "webhook",
+            status: "success",
+            startedAt: Date.now(),
+            endedAt: Date.now(),
+            durationMs: 0,
+            inputSnapshot: "Waiting for payload...",
+            outputSnapshot: packet,
+          },
+        };
+      },
+
+      vault: async (node, context) => {
+        const data = node.data as NodeData;
+        const instruction = resolveTemplates(data.instructions || "Search documents", context);
+        
+        const packet: FlowPacket = {
+          type: "data",
+          payload: {
+            matches: [
+              { id: 1, text: `Match 1 for: ${instruction}`, score: 0.95 },
+              { id: 2, text: `Match 2 for: ${instruction}`, score: 0.82 },
+              { id: 3, text: `Match 3 for: ${instruction}`, score: 0.74 }
+            ]
+          }
+        };
+
+        return {
+          context: { ...context, nodes: { ...context.nodes, [node.id]: packet } },
+          logEntry: {
+            nodeId: node.id,
+            nodeType: "vault",
+            status: "success",
+            startedAt: Date.now(),
+            endedAt: Date.now(),
+            durationMs: 0,
+            inputSnapshot: instruction,
+            outputSnapshot: packet,
+          },
+        };
+      },
+
+      gatekeeper: async (node, context) => {
+        const data = node.data as NodeData;
+        const verification = data.verification || "Critic AI";
+        
+        const status = "success";
+        const packet: FlowPacket = {
+          type: "text",
+          payload: `Gatekeeper checked via: ${verification}`
+        };
+
+        if (verification === "Human") {
+            packet.payload = "Waiting for human approval...";
+            await sleep(1500); // Simulate waiting for user approval
+            packet.payload = "Human approved.";
+        }
+
+        return {
+          context: { ...context, nodes: { ...context.nodes, [node.id]: packet } },
+          logEntry: {
+            nodeId: node.id,
+            nodeType: "gatekeeper",
+            status: status as any,
+            startedAt: Date.now(),
+            endedAt: Date.now(),
+            durationMs: 0,
+            inputSnapshot: verification,
+            outputSnapshot: packet,
+          },
+        };
+      },
+
+      processor: async (node, context) => {
+        const data = node.data as NodeData;
+        const batchLogic = data.batchLogic || "Loop";
+        
+        // Find previous node output if possible, simulated here by looking at last node
+        const nodeKeys = Object.keys(context.nodes);
+        const lastOutput = nodeKeys.length > 0 ? context.nodes[nodeKeys[nodeKeys.length - 1]] : null;
+
+        const packet: FlowPacket = {
+          type: "data",
+          payload: {
+            processed: true,
+            method: batchLogic,
+            itemsProcessed: lastOutput ? 1 : 0
+          }
+        };
+
+        return {
+          context: { ...context, nodes: { ...context.nodes, [node.id]: packet } },
+          logEntry: {
+            nodeId: node.id,
+            nodeType: "processor",
+            status: "success",
+            startedAt: Date.now(),
+            endedAt: Date.now(),
+            durationMs: 0,
+            inputSnapshot: batchLogic,
+            outputSnapshot: packet,
+          },
+        };
+      },
+
       input: async (node, context) => {
         const data = node.data as NodeData;
         const packet = data.packet || { type: "text", payload: "" };
