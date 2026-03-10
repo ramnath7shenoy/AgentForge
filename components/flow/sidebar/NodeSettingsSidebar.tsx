@@ -84,10 +84,16 @@ const NodeSettingsSidebar: React.FC = () => {
           <select
             className={cn(
               "rounded-lg p-2 text-sm focus:ring-2 focus:ring-amber-500/20 outline-none transition-all border",
-              theme === "dark" ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+              theme === "dark" ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-900",
+              tutorialStep === 3 && "ring-4 ring-amber-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(245,158,11,0.5)]"
             )}
             value={selectedNode.data.schedule || "Manual"}
-            onChange={(e) => updateNodeData(selectedNode.id, { schedule: e.target.value })}
+            onChange={(e) => {
+              updateNodeData(selectedNode.id, { schedule: e.target.value });
+              if (tutorialStep === 3) {
+                setTutorialStep(4);
+              }
+            }}
           >
             <option value="Manual">Manual</option>
             <option value="Schedule">Schedule</option>

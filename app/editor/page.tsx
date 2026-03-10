@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import ReactConfetti from 'react-confetti';
 import { 
   Play, 
   Map, 
@@ -68,9 +67,9 @@ function EditorContent() {
   }, [theme, setTutorialStep, tutorialStep]);
 
   useEffect(() => {
-    // Advance tutorial if flow is run during step 4
-    if (tutorialStep === 4 && finalResult) {
-      setTutorialStep(5);
+    // Advance tutorial if flow is run during step 6 (The Test)
+    if (tutorialStep === 6 && finalResult) {
+      setTutorialStep(7);
     }
   }, [finalResult, tutorialStep, setTutorialStep]);
 
@@ -118,7 +117,7 @@ function EditorContent() {
                 onClick={() => simulateFlow(startNodeId)}
                 className={cn(
                   "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all",
-                  tutorialStep === 4 
+                  tutorialStep === 6 
                     ? "bg-indigo-600 hover:bg-indigo-500 text-white ring-4 ring-indigo-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(99,102,241,0.5)] z-10" 
                     : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
                 )}
@@ -134,7 +133,7 @@ function EditorContent() {
                 }}
                 className={cn(
                 "flex items-center gap-2 px-4 py-2 transition-all rounded-xl text-xs font-bold",
-                (tutorialStep === 5 && finalResult)
+                (tutorialStep === 7 && finalResult)
                     ? "bg-emerald-500 hover:bg-emerald-400 text-white ring-4 ring-emerald-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(16,185,129,0.5)] z-10" 
                     : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20"
                 )}

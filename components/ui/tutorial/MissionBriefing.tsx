@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useFlowStore } from "@/stores/flowStore";
-import { Terminal, X, SkipForward, Zap, Target } from "lucide-react";
+import { Terminal, X, SkipForward, Zap, Target, Brain } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const missions = [
@@ -16,27 +16,41 @@ const missions = [
   },
   {
     step: 2,
-    title: "Tactical Deployment",
-    brief: "Every agent needs a trigger. Locate the 'Smart Trigger' in the sidebar.",
+    title: "Deploy the Trigger",
+    brief: "Every agent needs a trigger. Locate the 'Smart Trigger' in the sidebar and drag it onto the canvas.",
     task: "Drag 'Smart Trigger' onto the canvas",
     spotlight: "sidebar"
   },
   {
     step: 3,
+    title: "Configure Trigger",
+    brief: "Good drop, Architect. Now configure the trigger's execution schedule in the sidebar.",
+    task: "Select an Execution Schedule from the dropdown",
+    spotlight: "settings"
+  },
+  {
+    step: 4,
+    title: "Deploy the Brain",
+    brief: "Your trigger is ready. Now drag an 'Agent Brain' from the Intelligence category onto the canvas.",
+    task: "Drag 'Agent Brain' onto the canvas",
+    spotlight: "sidebar"
+  },
+  {
+    step: 5,
     title: "Establish Uplink",
-    brief: "Excellent. Now, connect the Trigger to the Brain to establish the logical flow.",
+    brief: "Now, establish the logical flow by dragging a connection from the Amber Trigger to the Purple Brain.",
     task: "Connect the Amber Trigger to the Purple Brain",
     spotlight: "canvas"
   },
   {
-    step: 4,
+    step: 6,
     title: "Test your Logic",
     brief: "Let's verify the agent's behavior. Click 'Run Flow' in the header to execute the sequence.",
-    task: "Click the 'Run Flow' button",
+    task: "Click the 'Run Flow' button and check the Response Gallery",
     spotlight: "header"
   },
   {
-    step: 5,
+    step: 7,
     title: "Deploy as Plugin",
     brief: "Your agent is functional. Deploy it to the network as a universal plugin.",
     task: "Click 'Publish & Export' after the output appears",
@@ -61,7 +75,7 @@ export default function MissionBriefing() {
       setEdges(edges.map(e => ({ ...e, selected: false })));
     }
     
-    // Auto-select trigger node after drop (transition from 2 to 3)
+    // Auto-select trigger node after drop (transition to step 3 - Configure)
     if (tutorialStep === 3) {
       const triggerNode = nodes.find(n => n.type === 'trigger');
       if (triggerNode) {
@@ -99,6 +113,9 @@ export default function MissionBriefing() {
 
   if (!currentMission || tutorialStep === 0) return null;
 
+  // Display mission number (steps 2-7 map to missions 01-06)
+  const missionNumber = tutorialStep <= 1 ? tutorialStep : tutorialStep - 1;
+
   return (
     <AnimatePresence>
       <div className="fixed inset-0 z-[999] pointer-events-none">
@@ -126,14 +143,15 @@ export default function MissionBriefing() {
                     width="100%" 
                     height="100%" 
                     fill="black" 
-                    fillOpacity="0.4" 
+                    fillOpacity="0.35" 
                     mask="url(#spotlight-mask)" 
-                    className="backdrop-blur-[4px] transition-all duration-500"
+                    style={{ filter: 'blur(2px)' }}
+                    className="transition-all duration-500"
                 />
             </svg>
         </div>
 
-        {/* GHOST DRAG SIMULATION for Step 2 */}
+        {/* GHOST DRAG HINT for Step 2 (Trigger) */}
         {tutorialStep === 2 && (
             <motion.div
                 initial={{ x: 128, y: 300, opacity: 0, scale: 0.8 }}
@@ -152,7 +170,7 @@ export default function MissionBriefing() {
                 className="absolute z-[1000] pointer-events-none"
             >
                 <div 
-                    id="ghost-node-trigger"
+                    id="ghost-node-trigger-1"
                     className="flex flex-col items-center justify-center gap-2 p-3 bg-amber-500/20 border-2 border-amber-500 border-dashed rounded-xl backdrop-blur-sm w-32 shadow-2xl shadow-amber-500/40"
                 >
                     <div className="p-2 bg-slate-900 rounded-lg border border-amber-500/30">
@@ -163,6 +181,45 @@ export default function MissionBriefing() {
                     </span>
                 </div>
                 {/* Simulated Mouse Cursor */}
+                <motion.div 
+                    animate={{ x: [0, 10, 0], y: [0, 10, 0] }}
+                    transition={{ duration: 1, repeat: Infinity }}
+                    className="absolute -bottom-4 -right-4 text-white drop-shadow-lg"
+                >
+                    <Target size={24} className="text-white fill-white/20" />
+                </motion.div>
+            </motion.div>
+        )}
+
+        {/* GHOST DRAG HINT for Step 4 (Agent Brain) */}
+        {tutorialStep === 4 && (
+            <motion.div
+                initial={{ x: 128, y: 200, opacity: 0, scale: 0.8 }}
+                animate={{ 
+                    x: [128, 700, 700], 
+                    y: [200, 300, 300], 
+                    opacity: [0, 1, 1, 0],
+                    scale: [0.8, 1, 1, 0.8] 
+                }}
+                transition={{ 
+                    duration: 3, 
+                    repeat: Infinity, 
+                    times: [0, 0.4, 0.8, 1],
+                    ease: "easeInOut"
+                }}
+                className="absolute z-[1000] pointer-events-none"
+            >
+                <div 
+                    id="ghost-node-brain-1"
+                    className="flex flex-col items-center justify-center gap-2 p-3 bg-blue-500/20 border-2 border-blue-500 border-dashed rounded-xl backdrop-blur-sm w-32 shadow-2xl shadow-blue-500/40"
+                >
+                    <div className="p-2 bg-slate-900 rounded-lg border border-blue-500/30">
+                        <Brain size={20} className="text-blue-400 fill-current" />
+                    </div>
+                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-tighter">
+                        Agent Brain
+                    </span>
+                </div>
                 <motion.div 
                     animate={{ x: [0, 10, 0], y: [0, 10, 0] }}
                     transition={{ duration: 1, repeat: Infinity }}
@@ -190,7 +247,7 @@ export default function MissionBriefing() {
                 <div className="flex items-center gap-2">
                     <Terminal size={14} className="text-indigo-400" />
                     <span className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest">
-                        System Interface / Mission 0{tutorialStep}
+                        System Interface / Mission {String(missionNumber).padStart(2, '0')}
                     </span>
                 </div>
                 <button 

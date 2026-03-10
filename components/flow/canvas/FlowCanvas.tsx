@@ -65,11 +65,12 @@ export default function FlowCanvas({ setSelectedNodeId }: FlowCanvasProps) {
   
   const onConnect: OnConnect = useCallback((conn) => {
     setEdges(addEdge(conn, edges));
-    if (tutorialStep === 3 && conn.source && conn.target) {
+    // Tutorial Step 5 (Connect) -> 6 (Run Flow)
+    if (tutorialStep === 5 && conn.source && conn.target) {
       const sourceNode = nodes.find(n => n.id === conn.source);
       const targetNode = nodes.find(n => n.id === conn.target);
       if (sourceNode?.type === 'trigger' && targetNode?.type === 'ai') {
-        setTutorialStep(4);
+        setTutorialStep(6);
       }
     }
   }, [edges, setEdges, tutorialStep, nodes, setTutorialStep]);
@@ -96,20 +97,24 @@ export default function FlowCanvas({ setSelectedNodeId }: FlowCanvasProps) {
       },
     };
     const newNodes = [...nodes, newNode];
+    setNodes(newNodes);
     
-    // Tutorial Step 2 -> 3 transition
+    // Tutorial Step 2 -> 3: Trigger dropped, advance to Configure
     if (tutorialStep === 2 && type === 'trigger') {
-      const brainNode: Node = {
-        id: crypto.randomUUID(),
-        type: 'ai',
-        position: { x: position.x + 300, y: position.y },
-        data: { label: 'Agent Brain' },
-        style: { background: "transparent", border: "none" }
-      };
-      setNodes([...newNodes, brainNode]);
+      setTimeout(() => {
+        const currentNodes = useFlowStore.getState().nodes;
+        setNodes(currentNodes.map(n => ({ ...n, selected: false })));
+      }, 50);
       setTutorialStep(3);
-    } else {
-      setNodes(newNodes);
+    }
+
+    // Tutorial Step 4 -> 5: Agent Brain dropped, advance to Connect
+    if (tutorialStep === 4 && type === 'ai') {
+      setTimeout(() => {
+        const currentNodes = useFlowStore.getState().nodes;
+        setNodes(currentNodes.map(n => ({ ...n, selected: false })));
+      }, 50);
+      setTutorialStep(5);
     }
   }, [project, nodes, setNodes, tutorialStep, setTutorialStep]);
 
@@ -135,36 +140,6 @@ export default function FlowCanvas({ setSelectedNodeId }: FlowCanvasProps) {
         onNodeClick={(_, n) => setSelectedNodeId(n.id)}
         fitView
       >
-        {/* Ghost Path for Tutorial Step 3 (Establish Uplink) */}
-        {tutorialStep === 3 && (
-          <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-            {nodes.filter(n => n.type === 'trigger').map(triggerNode => {
-              const brainNode = nodes.find(n => n.type === 'ai');
-              if (!brainNode) return null;
-              
-              const startX = triggerNode.position.x + 150; // Approximating right handle
-              const startY = triggerNode.position.y + 40;
-              const endX = brainNode.position.x - 10;     // Approximating left handle
-              const endY = brainNode.position.y + 40;
-              
-              // Draw a bezier curve
-              const path = `M ${startX} ${startY} C ${startX + 100} ${startY}, ${endX - 100} ${endY}, ${endX} ${endY}`;
-              return (
-                <g key={triggerNode.id}>
-                  <path 
-                    d={path} 
-                    fill="none" 
-                    stroke="#8b5cf6" 
-                    strokeWidth="4" 
-                    strokeDasharray="8 8"
-                    className="animate-[dash_1s_linear_infinite] opacity-50"
-                  />
-                  <circle cx={endX} cy={endY} r="6" fill="#8b5cf6" className="animate-ping" />
-                </g>
-              );
-            })}
-          </svg>
-        )}
         <Controls className={cn(
           "transition-colors",
           theme === "dark" ? "dark:bg-slate-900 dark:border-slate-800" : "bg-white border-slate-200"
