@@ -5,8 +5,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   Play, 
   Map, 
-  Terminal, 
-  Variable, 
   Moon, 
   Sun,
   X,
@@ -17,14 +15,13 @@ import {
   ChevronRight,
   Clock,
   RotateCcw,
-  Trash2
+  Trash2,
+  Terminal
 } from "lucide-react";
 
 import FlowCanvas from "@/components/flow/canvas/FlowCanvas";
 import NodeSidebar from "@/components/flow/sidebar/NodeSidebar";
 import NodeSettingsSidebar from "@/components/flow/sidebar/NodeSettingsSidebar";
-import ExecutionLogPanel from "@/components/flow/ExecutionLogPanel";
-import VariableInspectorPanel from "@/components/flow/VariableInspectorPanel";
 import MissionBriefing from "@/components/ui/tutorial/MissionBriefing";
 import ResponseGallery from "@/components/flow/ResponseGallery";
 import ApprovalBanner from "@/components/flow/ApprovalBanner";
@@ -48,10 +45,6 @@ function EditorContent() {
     setFinalResult,
     showMinimap,
     setShowMinimap,
-    showExecutionLogPanel,
-    setShowExecutionLogPanel,
-    showVariablesPanel,
-    setShowVariablesPanel,
     theme,
     setTheme,
     tutorialStep,
@@ -165,13 +158,6 @@ function EditorContent() {
         <div className="flex items-center gap-3">
           <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
             <HeaderButton onClick={() => setShowMinimap(!showMinimap)} icon={<Map size={14} />} active={showMinimap} />
-            <HeaderButton 
-              onClick={() => setShowExecutionLogPanel(!showExecutionLogPanel)} 
-              icon={<Terminal size={14} />} 
-              active={showExecutionLogPanel}
-              flash={isPaused}
-            />
-            <HeaderButton onClick={() => setShowVariablesPanel(!showVariablesPanel)} icon={<Variable size={14} />} active={showVariablesPanel} />
           </div>
 
           {/* VERSION HISTORY */}
@@ -396,16 +382,6 @@ function EditorContent() {
           )}
         </AnimatePresence>
 
-        {showExecutionLogPanel && (
-          <div className="absolute bottom-4 right-84 w-[400px] h-[450px] z-40 transition-all drop-shadow-2xl">
-            <ExecutionLogPanel />
-          </div>
-        )}
-        {showVariablesPanel && (
-          <div className="absolute top-4 left-68 w-80 h-[450px] z-40 transition-all drop-shadow-2xl">
-            <VariableInspectorPanel />
-          </div>
-        )}
       </div>
 
       <MissionBriefing />

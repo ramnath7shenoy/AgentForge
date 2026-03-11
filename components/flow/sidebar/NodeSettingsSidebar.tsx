@@ -31,8 +31,11 @@ const NodeSettingsSidebar: React.FC = () => {
   const theme = useFlowStore((state) => state.theme);
   const tutorialStep = useFlowStore((state) => state.tutorialStep);
   const setTutorialStep = useFlowStore((state) => state.setTutorialStep);
+  const currentContext = useFlowStore((state) => state.currentContext);
+  const executionLogs = useFlowStore((state) => state.executionLogs);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
+  const [sidebarTab, setSidebarTab] = React.useState<"settings" | "data">("settings");
 
   const updateNodeData = (id: string, newData: Partial<NodeData>) => {
     setNodes(
@@ -613,34 +616,140 @@ const NodeSettingsSidebar: React.FC = () => {
     </div>
   );
 
+
+  const logEntry = executionLogs?.find((l: any) => l.nodeId === selectedNode.id);
+  const nodeOutput = currentContext?.nodes?.[selectedNode.id];
+  const hasData = logEntry || nodeOutput;
+
   return (
     <div className={cn(
-      "w-full h-full p-6 overflow-y-auto border-l transition-colors duration-300",
+      "w-full h-full flex flex-col border-l transition-colors duration-300",
       theme === "dark" ? "bg-[#0b0e14] border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"
     )}>
+      {/* Tab header */}
       <div className={cn(
-        "flex items-center justify-between mb-8 border-b pb-4",
+        "flex items-center border-b px-6 pt-4 pb-0 gap-0",
         theme === "dark" ? "border-slate-800" : "border-slate-200"
       )}>
-        <div className="flex flex-col">
-          <span className="text-[10px] uppercase tracking-widest text-indigo-500 font-bold">Tool Configuration</span>
-          <h2 className="text-lg font-bold capitalize">{selectedNode.type} Node</h2>
-        </div>
+        <button
+          onClick={() => setSidebarTab("settings")}
+          className={cn(
+            "px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 -mb-px",
+            sidebarTab === "settings"
+              ? "text-indigo-400 border-indigo-500"
+              : theme === "dark" ? "text-slate-500 border-transparent hover:text-slate-300" : "text-slate-400 border-transparent hover:text-slate-600"
+          )}
+        >
+          Settings
+        </button>
+        <button
+          onClick={() => setSidebarTab("data")}
+          className={cn(
+            "flex items-center gap-1.5 px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 -mb-px",
+            sidebarTab === "data"
+              ? "text-purple-400 border-purple-500"
+              : theme === "dark" ? "text-slate-500 border-transparent hover:text-slate-300" : "text-slate-400 border-transparent hover:text-slate-600"
+          )}
+        >
+          Data
+          {hasData && <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />}
+        </button>
       </div>
 
-      <div className="mb-12">
-        {selectedNode.type === "input" && renderInputNodeSettings()}
-        {selectedNode.type === "trigger" && renderTriggerNodeSettings()}
-        {selectedNode.type === "webhook" && renderWebhookNodeSettings()}
-        {selectedNode.type === "vault" && renderVaultNodeSettings()}
-        {selectedNode.type === "gatekeeper" && renderGatekeeperNodeSettings()}
-        {selectedNode.type === "processor" && renderProcessorNodeSettings()}
-        {selectedNode.type === "action" && renderActionNodeSettings()}
-        {selectedNode.type === "ai" && renderAINodeSettings()}
-        {selectedNode.type === "router" && renderRouterNodeSettings()}
-        {selectedNode.type === "output" && renderOutputNodeSettings()}
-        {selectedNode.type === "subflow" && renderSubflowNodeSettings()}
-        {selectedNode.type === "approval" && renderApprovalNodeSettings()}
+      <div className="flex-1 overflow-y-auto p-6">
+        {sidebarTab === "settings" && (
+          <>
+            <div className={cn(
+              "flex items-center justify-between mb-8 border-b pb-4",
+              theme === "dark" ? "border-slate-800" : "border-slate-200"
+            )}>
+              <div className="flex flex-col">
+                <span className="text-[10px] uppercase tracking-widest text-indigo-500 font-bold">Tool Configuration</span>
+                <h2 className="text-lg font-bold capitalize">{selectedNode.type} Node</h2>
+              </div>
+            </div>
+
+            <div className="mb-12">
+              {selectedNode.type === "input" && renderInputNodeSettings()}
+              {selectedNode.type === "trigger" && renderTriggerNodeSettings()}
+              {selectedNode.type === "webhook" && renderWebhookNodeSettings()}
+              {selectedNode.type === "vault" && renderVaultNodeSettings()}
+              {selectedNode.type === "gatekeeper" && renderGatekeeperNodeSettings()}
+              {selectedNode.type === "processor" && renderProcessorNodeSettings()}
+              {selectedNode.type === "action" && renderActionNodeSettings()}
+              {selectedNode.type === "ai" && renderAINodeSettings()}
+              {selectedNode.type === "router" && renderRouterNodeSettings()}
+              {selectedNode.type === "output" && renderOutputNodeSettings()}
+              {selectedNode.type === "subflow" && renderSubflowNodeSettings()}
+              {selectedNode.type === "approval" && renderApprovalNodeSettings()}
+            </div>
+          </>
+        )}
+
+        {sidebarTab === "data" && (
+          <div className="space-y-4">
+            <div className="flex flex-col mb-4">
+              <span className="text-[10px] uppercase tracking-widest text-purple-400 font-bold">Execution Data</span>
+              <h2 className="text-lg font-bold capitalize">{selectedNode.data.label || selectedNode.type}</h2>
+            </div>
+
+            {!hasData ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <span className="text-[10px] text-slate-600 italic">Run the flow to see this node&apos;s data</span>
+              </div>
+            ) : (
+              <>
+                {logEntry && (
+                  <>
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className={cn("w-2 h-2 rounded-full", logEntry.status === "success" ? "bg-emerald-400" : "bg-rose-400")} />
+                      <span className={cn("text-[10px] font-bold uppercase", logEntry.status === "success" ? "text-emerald-400" : "text-rose-400")}>
+                        {logEntry.status}
+                      </span>
+                      {logEntry.durationMs > 0 && <span className="text-[9px] text-slate-500 ml-auto">{logEntry.durationMs}ms</span>}
+                    </div>
+
+                    {logEntry.inputSnapshot != null && (
+                      <div className="mb-3">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Input</span>
+                        <pre className={cn(
+                          "text-[10px] font-mono p-3 rounded-xl border overflow-auto max-h-32",
+                          theme === "dark" ? "bg-slate-900/50 border-slate-800 text-slate-400" : "bg-slate-50 border-slate-200 text-slate-600"
+                        )}>
+                          {typeof logEntry.inputSnapshot === "string" ? String(logEntry.inputSnapshot) : JSON.stringify(logEntry.inputSnapshot, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+
+                    {logEntry.outputSnapshot != null && (
+                      <div className="mb-3">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Output</span>
+                        <pre className={cn(
+                          "text-[10px] font-mono p-3 rounded-xl border overflow-auto max-h-32",
+                          theme === "dark" ? "bg-slate-900/50 border-slate-800 text-slate-400" : "bg-slate-50 border-slate-200 text-slate-600"
+                        )}>
+                          {typeof logEntry.outputSnapshot === "string" ? String(logEntry.outputSnapshot) : JSON.stringify(logEntry.outputSnapshot, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {nodeOutput && !logEntry && (
+                  <div>
+                    <span className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Node Output</span>
+                    <pre className={cn(
+                      "text-[10px] font-mono p-3 rounded-xl border overflow-auto max-h-40",
+                      theme === "dark" ? "bg-slate-900/50 border-slate-800 text-slate-400" : "bg-slate-50 border-slate-200 text-slate-600"
+                    )}>
+                      {typeof nodeOutput === "string" ? nodeOutput : JSON.stringify(nodeOutput, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
