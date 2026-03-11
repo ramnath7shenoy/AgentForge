@@ -24,9 +24,21 @@ import {
 } from "@/lib/executionEngine";
 
 import { resolveTemplates } from "@/lib/template";
+import { getSavedAgents } from "@/lib/savedAgents";
+import { useLogStore } from "@/stores/useLogStore";
 
 // Helper for visual execution feedback
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Global approval signal for the Safety Gatekeeper
+let approvalResolve: ((approved: boolean) => void) | null = null;
+export function sendApprovalSignal(approved: boolean) {
+  if (approvalResolve) {
+    approvalResolve(approved);
+    approvalResolve = null;
+  }
+}
+export function isAwaitingApproval() { return approvalResolve !== null; }
 
 export const useFlowStore = create<FlowState>((set, get) => ({
   nodes: [],
@@ -380,9 +392,94 @@ export const useFlowStore = create<FlowState>((set, get) => ({
           },
         };
       },
+
+      subflow: async (node, context) => {
+        const data = node.data as NodeData;
+        const agents = getSavedAgents();
+        const agent = agents.find(a => a.id === data.subflowId);
+
+        if (!agent || agent.nodes.length === 0) {
+          return {
+            context: { ...context, nodes: { ...context.nodes, [node.id]: { type: "text", payload: "Sub-agent not found" } } },
+            logEntry: {
+              nodeId: node.id,
+              nodeType: "subflow",
+              status: "error",
+              startedAt: Date.now(),
+              endedAt: Date.now(),
+              durationMs: 0,
+              inputSnapshot: data.subflowId,
+              outputSnapshot: "Sub-agent not found",
+              error: `No saved agent found with ID: ${data.subflowId}`,
+            },
+          };
+        }
+
+        // Execute the sub-flow with the current context as input
+        const subStartNodeId = agent.nodes[0].id;
+        const { context: subContext, logs: subLogs } = await executeFlow(
+          subStartNodeId,
+          agent.nodes,
+          agent.edges,
+          executors,
+          context,
+        );
+
+        // Extract the sub-flow's final output
+        const subOutput = subContext.variables.output 
+          || subContext.nodes[subLogs[subLogs.length - 1]?.nodeId]
+          || { type: "text" as const, payload: "Sub-agent completed (no output)" };
+
+        return {
+          context: { ...subContext, nodes: { ...subContext.nodes, [node.id]: subOutput } },
+          logEntry: {
+            nodeId: node.id,
+            nodeType: "subflow",
+            status: "success",
+            startedAt: Date.now(),
+            endedAt: Date.now(),
+            durationMs: 0,
+            inputSnapshot: data.subflowName || data.subflowId,
+            outputSnapshot: subOutput,
+          },
+        };
+      },
+
+      approval: async (node, context) => {
+        const addLog = useLogStore.getState().addLog;
+        addLog("WARN", `⏸ Paused at Safety Gate: ${node.data.label || "Approval"}`, node.id);
+
+        // Wait for global approval signal
+        const approved = await new Promise<boolean>((resolve) => {
+          approvalResolve = resolve;
+        });
+
+        if (!approved) {
+          addLog("ERROR", `✗ Flow aborted by user at: ${node.data.label || "Approval"}`, node.id);
+          throw new Error("Flow aborted by user");
+        }
+
+        addLog("SUCCESS", `✓ Approved: ${node.data.label || "Approval Gate"}`, node.id);
+        return {
+          context: { ...context, nodes: { ...context.nodes, [node.id]: { type: "text", payload: "Approved" } } },
+          logEntry: {
+            nodeId: node.id,
+            nodeType: "approval",
+            status: "success" as const,
+            startedAt: Date.now(),
+            endedAt: Date.now(),
+            durationMs: 0,
+            inputSnapshot: "Awaiting approval",
+            outputSnapshot: "Approved",
+          },
+        };
+      },
     };
 
     try {
+      const addLog = useLogStore.getState().addLog;
+      addLog("INFO", `▶ Flow execution started (${nodes.length} nodes)`);
+
       const { context, logs } = await executeFlow(
         startNodeId,
         nodes,
@@ -391,6 +488,9 @@ export const useFlowStore = create<FlowState>((set, get) => ({
         initialContext,
         {
           onNodeStart: async (nodeId) => {
+            const node = nodes.find(n => n.id === nodeId);
+            const label = node?.data?.label || node?.type || nodeId;
+            addLog("INFO", `⚡ Executing: ${label}`, nodeId);
             set((s) => ({
               highlightedNodeId: nodeId,
               executedNodeIds: s.executedNodeIds.includes(nodeId) 
@@ -399,8 +499,18 @@ export const useFlowStore = create<FlowState>((set, get) => ({
             }));
             await sleep(350);
           },
+          onNodeEnd: async (nodeId, status) => {
+            const node = nodes.find(n => n.id === nodeId);
+            const label = node?.data?.label || node?.type || nodeId;
+            if (status === "success") {
+              addLog("SUCCESS", `✓ Completed: ${label}`, nodeId);
+            } else {
+              addLog("ERROR", `✗ Failed: ${label}`, nodeId);
+            }
+          },
           onEdgeTraverse: async (edgeId) => {
             set({ activeEdgeId: edgeId });
+            addLog("INFO", `→ Traversing edge ${edgeId.slice(0, 8)}...`);
             await sleep(200);
           },
         }
@@ -409,15 +519,18 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       // Find the last output packet to display in the gallery
       const outputPacket = context.variables.output || context.nodes[logs[logs.length-1]?.nodeId];
 
+      addLog("SUCCESS", `✦ Flow complete — ${logs.length} nodes executed`);
+
       set({
         currentContext: context,
         executionLogs: logs,
         finalResult: outputPacket || null,
       });
     } catch (error) {
-       console.error("Execution Engine Crash:", error);
+      const addLog = useLogStore.getState().addLog;
+      addLog("ERROR", `Flow execution failed: ${error}`);
+      console.error("Flow execution failed:", error);
     } finally {
-      await sleep(500); 
       set({ running: false, highlightedNodeId: null, activeEdgeId: null });
     }
   },

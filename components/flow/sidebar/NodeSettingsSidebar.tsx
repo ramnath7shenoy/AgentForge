@@ -17,9 +17,12 @@ import {
   Clock,
   Code,
   Upload,
-  Globe
+  Globe,
+  Briefcase,
+  ShieldAlert
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import VaultInput from "@/components/ui/VaultInput";
 
 const NodeSettingsSidebar: React.FC = () => {
   const nodes = useFlowStore((state) => state.nodes);
@@ -237,6 +240,15 @@ const NodeSettingsSidebar: React.FC = () => {
               </button>
           </div>
         </div>
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Webhook Secret</label>
+          <VaultInput
+            value={selectedNode.data.webhookID || ""}
+            onChange={(val) => updateNodeData(selectedNode.id, { webhookID: val })}
+            placeholder="Webhook signing secret..."
+            theme={theme}
+          />
+        </div>
       </div>
     );
   };
@@ -375,6 +387,17 @@ const NodeSettingsSidebar: React.FC = () => {
           <option value="Fetch Data">Fetch Data</option>
         </select>
       </div>
+      {selectedNode.data.connectionType === "Post to API" && (
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Authorization Token</label>
+          <VaultInput
+            value={selectedNode.data.persistence || ""}
+            onChange={(val) => updateNodeData(selectedNode.id, { persistence: val })}
+            placeholder="Bearer token or vault key..."
+            theme={theme}
+          />
+        </div>
+      )}
     </div>
   );
 
@@ -397,6 +420,15 @@ const NodeSettingsSidebar: React.FC = () => {
           onChange={(e) => {
             updateNodeData(selectedNode.id, { instructions: e.target.value });
           }}
+        />
+      </div>
+      <div className="flex flex-col gap-2">
+        <label className="text-[10px] font-bold uppercase text-slate-500">API Key</label>
+        <VaultInput
+          value={selectedNode.data.persistence || ""}
+          onChange={(val) => updateNodeData(selectedNode.id, { persistence: val })}
+          placeholder="Model API key..."
+          theme={theme}
         />
       </div>
     </div>
@@ -496,6 +528,91 @@ const NodeSettingsSidebar: React.FC = () => {
     </div>
   );
 
+  const renderApprovalNodeSettings = () => (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-2 text-amber-400">
+        <ShieldAlert size={16} />
+        <h3 className="text-sm font-bold uppercase tracking-tight">Safety Gatekeeper</h3>
+      </div>
+      <div className="flex flex-col gap-2">
+        <label className="text-[10px] font-bold uppercase text-slate-500">Gatekeeper Message</label>
+        <input
+          type="text"
+          placeholder="e.g. Verify email content before sending..."
+          value={selectedNode.data.gatekeeperMessage || ""}
+          onChange={(e) => updateNodeData(selectedNode.id, { gatekeeperMessage: e.target.value })}
+          className={cn(
+            "rounded-lg p-2 text-sm outline-none transition-all border focus:ring-2",
+            theme === "dark"
+              ? "bg-slate-900 border-slate-700 text-white focus:ring-amber-500/20 focus:border-amber-500"
+              : "bg-slate-50 border-slate-200 text-slate-900 focus:ring-amber-500/20 focus:border-amber-500"
+          )}
+        />
+        <p className="text-[10px] text-slate-400 italic">Displayed in the approval banner when flow pauses.</p>
+      </div>
+      <div className="flex flex-col gap-2">
+        <label className="text-[10px] font-bold uppercase text-slate-500">Timeout (minutes)</label>
+        <input
+          type="number"
+          min={0}
+          placeholder="0 = no timeout"
+          value={selectedNode.data.timeoutMinutes || ""}
+          onChange={(e) => updateNodeData(selectedNode.id, { timeoutMinutes: parseInt(e.target.value) || 0 })}
+          className={cn(
+            "rounded-lg p-2 text-sm outline-none transition-all border focus:ring-2 w-24",
+            theme === "dark"
+              ? "bg-slate-900 border-slate-700 text-white focus:ring-amber-500/20"
+              : "bg-slate-50 border-slate-200 text-slate-900 focus:ring-amber-500/20"
+          )}
+        />
+      </div>
+      <div className="flex flex-col gap-2">
+        <label className="text-[10px] font-bold uppercase text-slate-500">Timeout Action</label>
+        <select
+          value={selectedNode.data.timeoutAction || "abort"}
+          onChange={(e) => updateNodeData(selectedNode.id, { timeoutAction: e.target.value })}
+          className={cn(
+            "rounded-lg p-2 text-sm outline-none transition-all border focus:ring-2",
+            theme === "dark"
+              ? "bg-slate-900 border-slate-700 text-white focus:ring-amber-500/20"
+              : "bg-slate-50 border-slate-200 text-slate-900 focus:ring-amber-500/20"
+          )}
+        >
+          <option value="abort">Abort Flow</option>
+          <option value="continue">Continue Execution</option>
+        </select>
+      </div>
+    </div>
+  );
+
+  const renderSubflowNodeSettings = () => (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-2 text-indigo-400">
+        <Briefcase size={16} />
+        <h3 className="text-sm font-bold uppercase tracking-tight">Nested Agent</h3>
+      </div>
+      <div className="flex flex-col gap-2">
+        <label className="text-[10px] font-bold uppercase text-slate-500">Linked Agent</label>
+        <div className={cn(
+          "p-3 rounded-lg border text-sm",
+          theme === "dark" ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+        )}>
+          {selectedNode.data.subflowName || "Sub-Agent"}
+        </div>
+        <p className="text-[10px] text-slate-400 italic leading-relaxed mt-1">
+          This node runs the saved agent&apos;s full flow as a nested sub-flow within your pipeline.
+        </p>
+        <label className="text-[10px] font-bold uppercase text-slate-500 mt-2">Agent ID</label>
+        <div className={cn(
+          "p-2 rounded-lg border text-[10px] font-mono break-all",
+          theme === "dark" ? "bg-slate-900/50 border-slate-800 text-slate-500" : "bg-slate-50 border-slate-200 text-slate-400"
+        )}>
+          {selectedNode.data.subflowId || "N/A"}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className={cn(
       "w-full h-full p-6 overflow-y-auto border-l transition-colors duration-300",
@@ -522,6 +639,8 @@ const NodeSettingsSidebar: React.FC = () => {
         {selectedNode.type === "ai" && renderAINodeSettings()}
         {selectedNode.type === "router" && renderRouterNodeSettings()}
         {selectedNode.type === "output" && renderOutputNodeSettings()}
+        {selectedNode.type === "subflow" && renderSubflowNodeSettings()}
+        {selectedNode.type === "approval" && renderApprovalNodeSettings()}
       </div>
     </div>
   );

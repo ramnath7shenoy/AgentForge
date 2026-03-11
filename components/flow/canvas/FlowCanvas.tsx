@@ -30,6 +30,8 @@ import VaultNode from "../nodes/VaultNode";
 import GatekeeperNode from "../nodes/GatekeeperNode";
 import ProcessorNode from "../nodes/ProcessorNode";
 import WebhookNode from "../nodes/WebhookNode";
+import SubflowNode from "../nodes/SubflowNode";
+import ApprovalNode from "../nodes/ApprovalNode";
 
 interface FlowCanvasProps {
   setSelectedNodeId: (id: string | null) => void;
@@ -55,6 +57,8 @@ export default function FlowCanvas({ setSelectedNodeId }: FlowCanvasProps) {
     vault: VaultNode,
     gatekeeper: GatekeeperNode,
     processor: ProcessorNode,
+    subflow: SubflowNode,
+    approval: ApprovalNode,
   }), []);
 
   const onNodesChange = useCallback((c: NodeChange[]) => {
@@ -89,7 +93,12 @@ export default function FlowCanvas({ setSelectedNodeId }: FlowCanvasProps) {
       position,
       data: { 
         label: `${type.charAt(0).toUpperCase() + type.slice(1)}`,
-        routes: type === 'router' ? ["Path A", "Path B"] : undefined 
+        routes: type === 'router' ? ["Path A", "Path B"] : undefined,
+        // Subflow metadata from drag data
+        ...(type === 'subflow' ? {
+          subflowId: event.dataTransfer.getData("application/subflowId") || undefined,
+          subflowName: event.dataTransfer.getData("application/subflowName") || "Sub-Agent",
+        } : {})
       },
       style: {
         background: "transparent",

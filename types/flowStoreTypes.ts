@@ -51,6 +51,15 @@ export interface NodeData {
 
   // Internal legacy mapping
   uploadedFileName?: string;
+
+  // Sub-flow (Nested Agent)
+  subflowId?: string;
+  subflowName?: string;
+
+  // Approval Gate
+  gatekeeperMessage?: string;
+  timeoutMinutes?: number;
+  timeoutAction?: string;
 }
 
 export type ExecutionStatus = "pending" | "success" | "error";

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { 
   Play, 
   Map, 
@@ -11,7 +12,12 @@ import {
   X,
   Zap,
   Rocket,
-  HelpCircle
+  HelpCircle,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  RotateCcw,
+  Trash2
 } from "lucide-react";
 
 import FlowCanvas from "@/components/flow/canvas/FlowCanvas";
@@ -20,8 +26,11 @@ import NodeSettingsSidebar from "@/components/flow/sidebar/NodeSettingsSidebar";
 import ExecutionLogPanel from "@/components/flow/ExecutionLogPanel";
 import VariableInspectorPanel from "@/components/flow/VariableInspectorPanel";
 import MissionBriefing from "@/components/ui/tutorial/MissionBriefing";
+import ResponseGallery from "@/components/flow/ResponseGallery";
+import ApprovalBanner from "@/components/flow/ApprovalBanner";
 
-import { useFlowStore } from "@/stores/flowStore";
+import { useFlowStore, isAwaitingApproval } from "@/stores/flowStore";
+import { getSnapshots, saveSnapshot, deleteSnapshot, FlowSnapshot } from "@/lib/versionSnapshots";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { ReactFlowProvider } from "reactflow";
@@ -30,6 +39,9 @@ function EditorContent() {
   const router = useRouter();
   const {
     nodes,
+    edges,
+    setNodes,
+    setEdges,
     setSelectedNodeId,
     simulateFlow,
     finalResult,
@@ -49,7 +61,13 @@ function EditorContent() {
   } = useFlowStore();
 
   const [mounted, setMounted] = useState(false);
-  const [windowSize, setWindowSize] = useState({ width: 0, height: 0 });
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
+  const [showVersionMenu, setShowVersionMenu] = useState(false);
+  const [snapshots, setSnapshots] = useState<FlowSnapshot[]>([]);
+  const [showTerminal, setShowTerminal] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const versionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -67,22 +85,61 @@ function EditorContent() {
   }, [theme, setTutorialStep, tutorialStep]);
 
   useEffect(() => {
-    // Advance tutorial if flow is run during step 6 (The Test)
     if (tutorialStep === 6 && finalResult) {
       setTutorialStep(7);
     }
   }, [finalResult, tutorialStep, setTutorialStep]);
 
-  // Ensure window size updates on resize
+  // Show terminal when running
   useEffect(() => {
-    const handleResize = () => setWindowSize({ width: window.innerWidth, height: window.innerHeight });
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    if (running) setShowTerminal(true);
+  }, [running]);
+
+  // Poll for approval state (flash safety alert)
+  useEffect(() => {
+    if (!running) { setIsPaused(false); return; }
+    const interval = setInterval(() => {
+      setIsPaused(isAwaitingApproval());
+    }, 200);
+    return () => clearInterval(interval);
+  }, [running]);
+
+  // Close version menu on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (versionRef.current && !versionRef.current.contains(e.target as Node)) {
+        setShowVersionMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, []);
 
   if (!mounted) return null;
 
   const startNodeId = Array.isArray(nodes) && nodes.length > 0 ? nodes[0].id : "";
+
+  const handleSaveSnapshot = () => {
+    const name = `v${snapshots.length + 1} — ${new Date().toLocaleTimeString()}`;
+    const snap = saveSnapshot(name, nodes, edges);
+    setSnapshots(prev => [snap, ...prev].slice(0, 10));
+  };
+
+  const handleRestoreSnapshot = (snap: FlowSnapshot) => {
+    setNodes(snap.nodes);
+    setEdges(snap.edges);
+    setShowVersionMenu(false);
+  };
+
+  const handleOpenVersionMenu = () => {
+    setSnapshots(getSnapshots());
+    setShowVersionMenu(!showVersionMenu);
+  };
+
+  const formatTs = (ts: number) => {
+    const d = new Date(ts);
+    return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  };
 
   return (
     <div className={cn(
@@ -90,7 +147,7 @@ function EditorContent() {
       theme === "dark" ? "dark bg-[#0b0e14] text-slate-200" : "bg-slate-50 text-slate-900"
     )}>
       
-      {/* HEADER: Balanced UI with high-contrast actions */}
+      {/* HEADER */}
       <header className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 px-6 py-3 bg-white dark:bg-[#0b0e14] z-50 shadow-sm">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
@@ -108,8 +165,78 @@ function EditorContent() {
         <div className="flex items-center gap-3">
           <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
             <HeaderButton onClick={() => setShowMinimap(!showMinimap)} icon={<Map size={14} />} active={showMinimap} />
-            <HeaderButton onClick={() => setShowExecutionLogPanel(!showExecutionLogPanel)} icon={<Terminal size={14} />} active={showExecutionLogPanel} />
+            <HeaderButton 
+              onClick={() => setShowExecutionLogPanel(!showExecutionLogPanel)} 
+              icon={<Terminal size={14} />} 
+              active={showExecutionLogPanel}
+              flash={isPaused}
+            />
             <HeaderButton onClick={() => setShowVariablesPanel(!showVariablesPanel)} icon={<Variable size={14} />} active={showVariablesPanel} />
+          </div>
+
+          {/* VERSION HISTORY */}
+          <div className="relative" ref={versionRef}>
+            <button
+              onClick={handleOpenVersionMenu}
+              className={cn(
+                "p-2.5 rounded-xl border transition-all shadow-sm",
+                showVersionMenu
+                  ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-400"
+                  : "border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-500 dark:text-slate-400"
+              )}
+              title="Version History"
+            >
+              <Clock size={16} />
+            </button>
+
+            {showVersionMenu && (
+              <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-[#0b0e14] border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Snapshots</span>
+                  <button
+                    onClick={handleSaveSnapshot}
+                    className="text-[10px] font-bold text-indigo-500 hover:text-indigo-400 transition-colors"
+                  >
+                    + Save Now
+                  </button>
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  {snapshots.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-[10px] text-slate-500 italic">
+                      No snapshots yet
+                    </div>
+                  ) : (
+                    snapshots.map((snap) => (
+                      <div
+                        key={snap.id}
+                        className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group cursor-pointer border-b border-slate-100 dark:border-slate-800 last:border-0"
+                      >
+                        <div onClick={() => handleRestoreSnapshot(snap)} className="flex-1 flex flex-col">
+                          <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{snap.name}</span>
+                          <span className="text-[9px] text-slate-400">{formatTs(snap.timestamp)} · {snap.nodes.length} nodes</span>
+                        </div>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => handleRestoreSnapshot(snap)}
+                            className="p-1 text-indigo-400 hover:text-indigo-300"
+                            title="Restore"
+                          >
+                            <RotateCcw size={12} />
+                          </button>
+                          <button
+                            onClick={() => { deleteSnapshot(snap.id); setSnapshots(prev => prev.filter(s => s.id !== snap.id)); }}
+                            className="p-1 text-slate-500 hover:text-rose-400"
+                            title="Delete"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2 ml-2">
@@ -154,58 +281,76 @@ function EditorContent() {
 
       {/* MAIN CONTENT AREA */}
       <div className="flex flex-1 overflow-hidden relative">
-        <aside className="w-64 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0b0e14] overflow-y-auto">
-          <NodeSidebar />
-        </aside>
 
+        {/* LEFT SIDEBAR TOGGLE */}
+        <button
+          onClick={() => setIsLeftSidebarOpen(!isLeftSidebarOpen)}
+          className={cn(
+            "absolute top-1/2 -translate-y-1/2 z-50 p-2 rounded-full border transition-all shadow-lg backdrop-blur-sm",
+            "bg-slate-800/80 border-slate-700/50 text-white hover:bg-slate-700",
+            isLeftSidebarOpen ? "left-[252px]" : "left-2"
+          )}
+          title={isLeftSidebarOpen ? "Collapse Nodes" : "Expand Nodes"}
+        >
+          {isLeftSidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+        </button>
+
+        {/* LEFT SIDEBAR */}
+        <AnimatePresence initial={false}>
+          {isLeftSidebarOpen && (
+            <motion.aside
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 256, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              className="overflow-hidden border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0b0e14] flex-shrink-0"
+            >
+              <div className="w-64 h-full">
+                <NodeSidebar />
+              </div>
+            </motion.aside>
+          )}
+        </AnimatePresence>
+
+        {/* CANVAS */}
         <main className="flex-1 relative bg-slate-50 dark:bg-[#0b0e14]">
           <FlowCanvas setSelectedNodeId={setSelectedNodeId} />
           
-          {(finalResult || running) && (
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-2xl bg-white dark:bg-slate-900 border border-indigo-500/30 rounded-2xl shadow-2xl p-5 z-50 animate-in slide-in-from-bottom-4 duration-500">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <div className={cn(
-                    "w-2 h-2 rounded-full",
-                    running ? "bg-amber-500 animate-ping" : "bg-indigo-500 animate-pulse"
-                  )} />
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">Agent Output</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {finalResult && (
-                    <span className={cn(
-                      "text-[9px] px-2 py-0.5 rounded-full font-bold uppercase",
-                      finalResult.type === 'text' ? "bg-blue-500/10 text-blue-500" :
-                      finalResult.type === 'file' ? "bg-emerald-500/10 text-emerald-500" :
-                      "bg-purple-500/10 text-purple-500"
-                    )}>
-                      {finalResult.type}
-                    </span>
-                  )}
-                  {running && (
-                    <span className="text-[9px] px-2 py-0.5 rounded-full font-bold uppercase bg-amber-500/10 text-amber-500">
-                      Processing...
-                    </span>
-                  )}
-                  <button onClick={() => setFinalResult(null)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-white">
-                    <X size={16} />
+          {/* APPROVAL BANNER */}
+          <ApprovalBanner />
+
+          {/* LIVE TERMINAL (bottom of canvas) */}
+          <AnimatePresence>
+            {showTerminal && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 220, opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                className="absolute bottom-0 left-0 right-0 z-40"
+              >
+                <div className="relative h-full">
+                  <button
+                    onClick={() => setShowTerminal(false)}
+                    className="absolute -top-3 right-4 z-50 p-1 bg-slate-900 border border-slate-700 rounded-full text-slate-400 hover:text-white transition-colors shadow-lg"
+                  >
+                    <X size={12} />
                   </button>
+                  <ResponseGallery />
                 </div>
-              </div>
-              
-              <div className="max-h-48 overflow-y-auto font-mono text-sm p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
-                {running ? (
-                  <div className="flex items-center gap-3 text-slate-500 italic">
-                    <div className="w-1 h-1 bg-slate-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                    <div className="w-1 h-1 bg-slate-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                    <div className="w-1 h-1 bg-slate-500 rounded-full animate-bounce" />
-                    Engines warming up...
-                  </div>
-                ) : finalResult ? (
-                  typeof finalResult.payload === 'string' ? finalResult.payload : JSON.stringify(finalResult.payload, null, 2)
-                ) : null}
-              </div>
-            </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Terminal Toggle (if hidden) */}
+          {!showTerminal && (
+            <button
+              onClick={() => setShowTerminal(true)}
+              className="absolute bottom-4 left-4 z-40 flex items-center gap-2 px-3 py-1.5 bg-slate-900/80 backdrop-blur-sm border border-slate-700/50 rounded-xl text-[10px] font-bold text-slate-400 hover:text-white transition-all shadow-lg uppercase tracking-wider"
+            >
+              <Terminal size={12} />
+              Terminal
+            </button>
           )}
 
           {/* HELP FAB: Bottom Right of Canvas */}
@@ -221,9 +366,35 @@ function EditorContent() {
           </button>
         </main>
 
-        <aside className="w-80 border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0b0e14] overflow-y-auto">
-          <NodeSettingsSidebar />
-        </aside>
+        {/* RIGHT SIDEBAR TOGGLE */}
+        <button
+          onClick={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
+          className={cn(
+            "absolute top-1/2 -translate-y-1/2 z-50 p-2 rounded-full border transition-all shadow-lg backdrop-blur-sm",
+            "bg-slate-800/80 border-slate-700/50 text-white hover:bg-slate-700",
+            isRightSidebarOpen ? "right-[308px]" : "right-2"
+          )}
+          title={isRightSidebarOpen ? "Collapse Settings" : "Expand Settings"}
+        >
+          {isRightSidebarOpen ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        </button>
+
+        {/* RIGHT SIDEBAR */}
+        <AnimatePresence initial={false}>
+          {isRightSidebarOpen && (
+            <motion.aside
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 320, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              className="overflow-hidden border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0b0e14] flex-shrink-0"
+            >
+              <div className="w-80 h-full overflow-y-auto">
+                <NodeSettingsSidebar />
+              </div>
+            </motion.aside>
+          )}
+        </AnimatePresence>
 
         {showExecutionLogPanel && (
           <div className="absolute bottom-4 right-84 w-[400px] h-[450px] z-40 transition-all drop-shadow-2xl">
@@ -256,21 +427,24 @@ interface HeaderButtonProps {
   onClick: () => void;
   active?: boolean;
   variant?: "primary" | "ghost";
+  flash?: boolean;
 }
 
-function HeaderButton({ icon, label, onClick, active, variant = "ghost" }: HeaderButtonProps) {
+function HeaderButton({ icon, label, onClick, active, variant = "ghost", flash }: HeaderButtonProps) {
   return (
     <button
       onClick={onClick}
       className={cn(
-        "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap",
+        "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap relative",
         variant === "primary" && "bg-indigo-600 text-white hover:bg-indigo-700 shadow-md shadow-indigo-500/20",
         variant === "ghost" && !active && "text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800",
-        active && variant === "ghost" && "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm"
+        active && variant === "ghost" && "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm",
+        flash && "!text-amber-400 animate-pulse ring-2 ring-amber-500/40 !bg-amber-500/10"
       )}
     >
       {icon}
       {label && <span>{label}</span>}
+      {flash && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-400 rounded-full animate-ping" />}
     </button>
   );
 }

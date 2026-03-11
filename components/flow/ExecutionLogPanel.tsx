@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
+import { CheckCircle2, Loader2, AlertTriangle, Trash2 } from "lucide-react";
 import { useFlowStore } from "@/stores/flowStore";
 import type { ExecutionLogEntry } from "@/types/flowStoreTypes";
 
@@ -18,6 +18,10 @@ const ExecutionLogPanel: React.FC = () => {
   const getNodeLabel = (log: ExecutionLogEntry) => {
     const node = nodes.find((n) => n.id === log.nodeId);
     return node?.data?.label || log.nodeType || `Node ${log.nodeId}`;
+  };
+
+  const handleClearLogs = () => {
+    useFlowStore.setState({ executionLogs: [] });
   };
 
   const renderStatusIcon = (status: ExecutionLogEntry["status"]) => {
@@ -50,9 +54,21 @@ const ExecutionLogPanel: React.FC = () => {
       <details open>
         <summary className="cursor-pointer flex items-center justify-between text-sm font-semibold text-gray-800 dark:text-slate-100">
           <span>Execution Log</span>
-          <span className="text-[10px] text-gray-500 dark:text-slate-400">
-            {logs.length ? `${logs.length} steps` : "No runs yet"}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-gray-500 dark:text-slate-400">
+              {logs.length ? `${logs.length} steps` : "No runs yet"}
+            </span>
+            {logs.length > 0 && (
+              <button
+                onClick={(e) => { e.preventDefault(); handleClearLogs(); }}
+                className="flex items-center gap-1 text-[10px] text-rose-500 hover:text-rose-400 transition-colors px-2 py-0.5 rounded-md hover:bg-rose-500/10"
+                title="Clear all logs"
+              >
+                <Trash2 size={10} />
+                Clear
+              </button>
+            )}
+          </div>
         </summary>
 
         <div className="mt-2 space-y-2">
@@ -111,4 +127,3 @@ const ExecutionLogPanel: React.FC = () => {
 };
 
 export default ExecutionLogPanel;
-
