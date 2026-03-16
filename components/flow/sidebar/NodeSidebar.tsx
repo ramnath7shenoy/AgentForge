@@ -24,11 +24,7 @@ import {
 } from "lucide-react";
 import { useFlowStore } from "@/stores/flowStore";
 import { useRouter } from "next/navigation";
-import {
-  downloadFlowJson,
-  parseFlowJson,
-  serializeFlow,
-} from "@/lib/flowPersistence";
+import { parseFlowJson } from "@/lib/flowPersistence";
 import { getSavedAgents, saveAgent, deleteSavedAgent, SavedAgent } from "@/lib/savedAgents";
 import { useVaultStore } from "@/stores/vaultStore";
 import { cn } from "@/lib/utils";
@@ -68,7 +64,6 @@ const categories = [
 ];
 
 const NodeSidebar: React.FC = () => {
-  const router = useRouter();
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"nodes" | "vault">("nodes");
   const { nodes, edges, setNodes, setEdges, clearCanvas, tutorialStep } = useFlowStore();

@@ -6,7 +6,7 @@ import { Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFlowStore } from "@/stores/flowStore";
 
-const TriggerNode = ({ id, data, selected }: NodeProps) => {
+const TriggerNode = ({ data, selected }: NodeProps) => {
   const theme = useFlowStore((state) => state.theme);
   const tutorialStep = useFlowStore((state) => state.tutorialStep);
   

@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import Navbar from "@/components/ui/Navbar";
 import { useRegistryStore, PublishedAgent } from "@/stores/registryStore";
-import { useLogStore, LogEntry } from "@/stores/useLogStore";
+import { useLogStore } from "@/stores/useLogStore";
 import { useVaultStore } from "@/stores/vaultStore";
 import { compileFlow } from "@/lib/flowCompiler";
 import { cn } from "@/lib/utils";

@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -12,7 +13,6 @@ import {
   Code2,
   Server,
   ArrowLeft,
-  Type,
   X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -21,7 +21,7 @@ import { NodeCard } from "@/components/flow/nodes/NodeCard";
 
 export default function PublishPage() {
   const router = useRouter();
-  const { nodes, edges, simulateFlow, finalResult, setFinalResult, theme } = useFlowStore();
+  const { nodes, edges, simulateFlow, finalResult, setFinalResult } = useFlowStore();
 
   const [activeTab, setActiveTab] = useState<'python' | 'javascript' | 'typescript'>('python');
   const [copied, setCopied] = useState(false);

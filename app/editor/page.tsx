@@ -42,7 +42,7 @@ function EditorContent() {
     setSelectedNodeId,
     simulateFlow,
     finalResult,
-    setFinalResult,
+
     showMinimap,
     setShowMinimap,
     theme,
@@ -59,7 +59,6 @@ function EditorContent() {
   const [showVersionMenu, setShowVersionMenu] = useState(false);
   const [snapshots, setSnapshots] = useState<FlowSnapshot[]>([]);
   const [showTerminal, setShowTerminal] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
   const versionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -90,9 +89,10 @@ function EditorContent() {
 
   // Poll for approval state (flash safety alert)
   useEffect(() => {
-    if (!running) { setIsPaused(false); return; }
+    if (!running) { return; }
     const interval = setInterval(() => {
-      setIsPaused(isAwaitingApproval());
+      // isPaused state removed to fix linting
+      isAwaitingApproval();
     }, 200);
     return () => clearInterval(interval);
   }, [running]);

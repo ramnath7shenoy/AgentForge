@@ -15,11 +15,7 @@ interface VaultState {
 }
 
 export const useVaultStore = create<VaultState>((set, get) => ({
-  entries: [
-    { key: "OPENAI_API_KEY", value: "sk-***" },
-    { key: "SLACK_TOKEN", value: "xoxb-***" },
-    { key: "WEBHOOK_SECRET", value: "whsec_***" },
-  ],
+  entries: [],
 
   addEntry: (key, value) => {
     set((s) => ({

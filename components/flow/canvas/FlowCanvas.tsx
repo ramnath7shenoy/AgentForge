@@ -1,19 +1,19 @@
 "use client";
 
 import React, { useCallback, useMemo } from "react";
-import ReactFlow, { 
-  ReactFlowProvider, 
-  Controls, 
-  MiniMap, 
-  useReactFlow, 
-  applyNodeChanges, 
-  applyEdgeChanges, 
-  addEdge, 
-  Node, 
-  Edge, 
-  NodeChange, 
-  EdgeChange, 
-  OnConnect 
+
+import ReactFlow, {
+  Controls,
+  MiniMap,
+  useReactFlow,
+  applyNodeChanges,
+  applyEdgeChanges,
+  addEdge,
+  Node,
+  Edge,
+  NodeChange,
+  EdgeChange,
+  OnConnect
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { useFlowStore } from "@/stores/flowStore";
@@ -38,8 +38,10 @@ interface FlowCanvasProps {
 }
 
 export default function FlowCanvas({ setSelectedNodeId }: FlowCanvasProps) {
-  const nodes = useFlowStore((state) => state.nodes) || [];
-  const edges = useFlowStore((state) => state.edges) || [];
+  const nodesFromStore = useFlowStore((state) => state.nodes);
+  const nodes = useMemo(() => nodesFromStore || [], [nodesFromStore]);
+  const edgesFromStore = useFlowStore((state) => state.edges);
+  const edges = useMemo(() => edgesFromStore || [], [edgesFromStore]);
   const theme = useFlowStore((state) => state.theme);
   const { setNodes, setEdges, activeEdgeId, showMinimap, tutorialStep, setTutorialStep } = useFlowStore();
   const { project } = useReactFlow();

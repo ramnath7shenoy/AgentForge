@@ -6,7 +6,7 @@ import { Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFlowStore } from "@/stores/flowStore";
 
-const WebhookNode = ({ id, data, selected }: NodeProps) => {
+const WebhookNode = ({ data, selected }: NodeProps) => {
   const theme = useFlowStore((state) => state.theme);
 
   return (
