@@ -326,10 +326,43 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       ai: async (node, context) => {
         const data = node.data as NodeData;
         const instructions = resolveTemplates(data.instructions || "", context);
+        const addLog = useLogStore.getState().addLog;
+        const appendLogMessage = useLogStore.getState().appendLogMessage;
         
+        // Initial log to display the start of streaming
+        addLog("INFO", "Streaming result: ", node.id);
+
+        let fullResult = "";
+
+        try {
+          const res = await fetch('/api/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: instructions, instructions, userId: 'default-user' })
+          });
+
+          if (res.body) {
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              const chunkValue = decoder.decode(value);
+              if (chunkValue) {
+                 fullResult += chunkValue;
+                 appendLogMessage(node.id, chunkValue);
+              }
+            }
+          } else {
+             fullResult = "No response stream received.";
+          }
+        } catch(e: any) {
+           fullResult = "Error requesting API: " + e.message;
+        }
+
         const packet: FlowPacket = { 
           type: "text", 
-          payload: `Brain result for: "${instructions.substring(0, 30)}..."` 
+          payload: fullResult
         };
 
         return {

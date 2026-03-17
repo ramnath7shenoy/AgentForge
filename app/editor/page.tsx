@@ -27,6 +27,7 @@ import ResponseGallery from "@/components/flow/ResponseGallery";
 import ApprovalBanner from "@/components/flow/ApprovalBanner";
 
 import { useFlowStore, isAwaitingApproval } from "@/stores/flowStore";
+import { saveFlow } from "@/app/actions/flow";
 import { getSnapshots, saveSnapshot, deleteSnapshot, FlowSnapshot } from "@/lib/versionSnapshots";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
@@ -60,6 +61,30 @@ function EditorContent() {
   const [snapshots, setSnapshots] = useState<FlowSnapshot[]>([]);
   const [showTerminal, setShowTerminal] = useState(false);
   const versionRef = useRef<HTMLDivElement>(null);
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error" | "">("");
+
+  // Auto-save logic
+  useEffect(() => {
+    if (!mounted || nodes.length === 0) return;
+    
+    setSaveStatus("saving");
+    const timeoutId = setTimeout(async () => {
+      try {
+        const userId = "current-user-id"; // Placeholder until actual auth is hooked up
+        const flowId = "default-flow-id"; // Ensure a single flow gets upserted for now
+        const result = await saveFlow(userId, "My Flow", nodes, edges, flowId);
+        if (result.success) {
+          setSaveStatus("saved");
+        } else {
+          setSaveStatus("error");
+        }
+      } catch (err) {
+        setSaveStatus("error");
+      }
+    }, 2000);
+
+    return () => clearTimeout(timeoutId);
+  }, [nodes, edges, mounted]);
 
   useEffect(() => {
     setMounted(true);
@@ -153,6 +178,16 @@ function EditorContent() {
           <span className="text-[10px] text-slate-400 font-medium uppercase tracking-widest hidden md:block">
             Production Environment
           </span>
+          {saveStatus && (
+            <span className={cn(
+              "text-[10px] uppercase font-bold tracking-wider px-2 py-1 rounded-md",
+              saveStatus === "saving" ? "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400" :
+              saveStatus === "saved" ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400" :
+              "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400"
+            )}>
+              {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save Error"}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
