@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Play, 
-  Map, 
-  Moon, 
+import {
+  Play,
+  Map,
+  Moon,
   Sun,
   X,
   Zap,
@@ -27,7 +27,7 @@ import ResponseGallery from "@/components/flow/ResponseGallery";
 import ApprovalBanner from "@/components/flow/ApprovalBanner";
 
 import { useFlowStore, isAwaitingApproval } from "@/stores/flowStore";
-import { saveFlow } from "@/app/actions/flow";
+import { saveFlow, getLatestFlow } from "@/app/actions/flow";
 import { getSnapshots, saveSnapshot, deleteSnapshot, FlowSnapshot } from "@/lib/versionSnapshots";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
@@ -62,17 +62,42 @@ function EditorContent() {
   const [showTerminal, setShowTerminal] = useState(false);
   const versionRef = useRef<HTMLDivElement>(null);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error" | "">("");
+  const [hasHydrated, setHasHydrated] = useState(false);
+
+  // Initial Fetch on Load
+  useEffect(() => {
+    async function fetchInitialFlow() {
+      const result = await getLatestFlow();
+      if (result.success && result.flow) {
+        // Hydrate from DB
+        const dbNodes = typeof result.flow.nodes === "string" ? JSON.parse(result.flow.nodes) : result.flow.nodes;
+        const dbEdges = typeof result.flow.edges === "string" ? JSON.parse(result.flow.edges) : result.flow.edges;
+
+        if (Array.isArray(dbNodes) && dbNodes.length > 0) {
+          setNodes(dbNodes);
+        }
+        if (Array.isArray(dbEdges) && dbEdges.length > 0) {
+          setEdges(dbEdges);
+        }
+      }
+      setHasHydrated(true);
+    }
+    fetchInitialFlow();
+  }, [setNodes, setEdges]);
 
   // Auto-save logic
   useEffect(() => {
-    if (!mounted || nodes.length === 0) return;
-    
+    if (!mounted || !hasHydrated || nodes.length === 0) return;
+
     setSaveStatus("saving");
     const timeoutId = setTimeout(async () => {
       try {
         const userId = "current-user-id"; // Placeholder until actual auth is hooked up
         const flowId = "default-flow-id"; // Ensure a single flow gets upserted for now
-        const result = await saveFlow(userId, "My Flow", nodes, edges, flowId);
+        // Stringify nodes and edges to bypass Next.js Server Action serialization drops
+        const serializedNodes = JSON.stringify(nodes);
+        const serializedEdges = JSON.stringify(edges);
+        const result = await saveFlow(userId, "My Flow", serializedNodes, serializedEdges, flowId);
         if (result.success) {
           setSaveStatus("saved");
         } else {
@@ -84,7 +109,7 @@ function EditorContent() {
     }, 2000);
 
     return () => clearTimeout(timeoutId);
-  }, [nodes, edges, mounted]);
+  }, [nodes, edges, mounted, hasHydrated]);
 
   useEffect(() => {
     setMounted(true);
@@ -164,7 +189,7 @@ function EditorContent() {
       "flex flex-col h-screen w-full transition-colors duration-300",
       theme === "dark" ? "dark bg-[#0b0e14] text-slate-200" : "bg-slate-50 text-slate-900"
     )}>
-      
+
       {/* HEADER */}
       <header className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 px-6 py-3 bg-white dark:bg-[#0b0e14] z-50 shadow-sm">
         <div className="flex items-center gap-4">
@@ -182,8 +207,8 @@ function EditorContent() {
             <span className={cn(
               "text-[10px] uppercase font-bold tracking-wider px-2 py-1 rounded-md",
               saveStatus === "saving" ? "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400" :
-              saveStatus === "saved" ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400" :
-              "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400"
+                saveStatus === "saved" ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400" :
+                  "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400"
             )}>
               {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save Error"}
             </span>
@@ -262,32 +287,32 @@ function EditorContent() {
 
           <div className="flex items-center gap-2 ml-2">
             <button
-                onClick={() => simulateFlow(startNodeId)}
-                className={cn(
-                  "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all",
-                  tutorialStep === 6 
-                    ? "bg-indigo-600 hover:bg-indigo-500 text-white ring-4 ring-indigo-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(99,102,241,0.5)] z-10" 
-                    : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
-                )}
+              onClick={() => simulateFlow(startNodeId)}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all",
+                tutorialStep === 6
+                  ? "bg-indigo-600 hover:bg-indigo-500 text-white ring-4 ring-indigo-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(99,102,241,0.5)] z-10"
+                  : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
+              )}
             >
-                <Play size={14} className="fill-current" />
-                Run Flow
+              <Play size={14} className="fill-current" />
+              Run Flow
             </button>
 
             <button
-                onClick={() => {
-                  completeTutorial();
-                  router.push('/publish');
-                }}
-                className={cn(
+              onClick={() => {
+                completeTutorial();
+                router.push('/publish');
+              }}
+              className={cn(
                 "flex items-center gap-2 px-4 py-2 transition-all rounded-xl text-xs font-bold",
                 (tutorialStep === 7 && finalResult)
-                    ? "bg-emerald-500 hover:bg-emerald-400 text-white ring-4 ring-emerald-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(16,185,129,0.5)] z-10" 
-                    : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20"
-                )}
+                  ? "bg-emerald-500 hover:bg-emerald-400 text-white ring-4 ring-emerald-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(16,185,129,0.5)] z-10"
+                  : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20"
+              )}
             >
-                <Rocket size={14} />
-                Publish & Export
+              <Rocket size={14} />
+              Publish & Export
             </button>
           </div>
 
@@ -336,7 +361,7 @@ function EditorContent() {
         {/* CANVAS */}
         <main className="flex-1 relative bg-slate-50 dark:bg-[#0b0e14]">
           <FlowCanvas setSelectedNodeId={setSelectedNodeId} />
-          
+
           {/* APPROVAL BANNER */}
           <ApprovalBanner />
 
@@ -375,7 +400,7 @@ function EditorContent() {
           )}
 
           {/* HELP FAB: Bottom Right of Canvas */}
-          <button 
+          <button
             onClick={() => {
               localStorage.removeItem('agentforge_onboarding_complete');
               setTutorialStep(1);
