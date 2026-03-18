@@ -52,7 +52,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   finalResult: null,
   activeEdgeId: null,
   executedNodeIds: [],
-  showMinimap: true,
+  showMinimap: false,
   showExecutionLogPanel: false,
   showVariablesPanel: false,
   tutorialStep: 0,
@@ -65,18 +65,16 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   
   // NEW ACTION: Clear all nodes for a fresh start
   clearCanvas: () => {
-    if (confirm("Are you sure you want to clear the entire canvas? This cannot be undone.")) {
-      set({ 
-        nodes: [], 
-        edges: [], 
-        selectedNodeId: null, 
-        finalResult: null,
-        executionLogs: [],
-        executedNodeIds: [],
-        highlightedNodeId: null,
-        activeEdgeId: null
-      });
-    }
+    set({ 
+      nodes: [], 
+      edges: [], 
+      selectedNodeId: null, 
+      finalResult: null,
+      executionLogs: [],
+      executedNodeIds: [],
+      highlightedNodeId: null,
+      activeEdgeId: null
+    });
   },
 
   // FIXED: Implementation of setFinalResult for blocking banner dismissal

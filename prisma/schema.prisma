@@ -18,13 +18,15 @@ model User {
 
 model Flow {
   id         String   @id @default(uuid())
-  userId     String
+  userId     String?
   name       String
   nodes      Json
-  edges      Json
-  updated_at DateTime @updatedAt
+  edges          Json
+  isPublic       Boolean  @default(false)
+  publicEditable Boolean  @default(false)
+  updated_at     DateTime @updatedAt
 
-  user       User     @relation(fields: [userId], references: [id])
+  user       User?    @relation(fields: [userId], references: [id])
 }
 
 model Vault {

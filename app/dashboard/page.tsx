@@ -4,11 +4,9 @@ import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Cpu,
-  Play,
   Edit3,
   Trash2,
   Lock,
-  Download,
   Activity,
   CheckCircle2,
   AlertTriangle,
@@ -16,56 +14,67 @@ import {
   Plus,
   BarChart3,
   Shield,
-  Zap
+  Zap,
+  Share2,
+  Check,
+  Eye,
 } from "lucide-react";
 import Navbar from "@/components/ui/Navbar";
-import { useRegistryStore, PublishedAgent } from "@/stores/registryStore";
 import { useLogStore } from "@/stores/useLogStore";
 import { useVaultStore } from "@/stores/vaultStore";
-import { compileFlow } from "@/lib/flowCompiler";
 import { cn } from "@/lib/utils";
+import { getUserFlows, publishFlow } from "@/app/actions/flow";
+
+interface FlowRecord {
+  id: string;
+  name: string;
+  isPublic: boolean;
+  updated_at: Date;
+  nodes: object;
+  edges: object;
+}
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { agents, loadAgents, deleteAgent } = useRegistryStore();
   const logs = useLogStore((s) => s.logs);
   const vaultEntries = useVaultStore((s) => s.entries);
   const [mounted, setMounted] = useState(false);
+  const [flows, setFlows] = useState<FlowRecord[]>([]);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
-    loadAgents();
-  }, [loadAgents]);
+    getUserFlows().then((result) => {
+      if (result.success && result.flows) {
+        setFlows(result.flows as FlowRecord[]);
+      }
+    });
+  }, []);
 
   if (!mounted) return null;
 
-  // Analytics
-  const totalExecutions = agents.reduce((sum, a) => sum + a.totalRuns, 0);
-  const totalSuccess = agents.reduce((sum, a) => sum + a.successRuns, 0);
-  const successRate = totalExecutions > 0 ? Math.round((totalSuccess / totalExecutions) * 100) : 0;
   const recentLogs = logs.slice(-10).reverse();
+  const totalFlows = flows.length;
+  const publicFlows = flows.filter((f) => f.isPublic).length;
 
-  const handleExport = (agent: PublishedAgent, lang: "typescript" | "python") => {
-    const code = compileFlow(agent.nodes, agent.edges, lang);
-    const ext = lang === "typescript" ? "ts" : "py";
-    const blob = new Blob([code], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${agent.name.replace(/\s+/g, "_").toLowerCase()}_agent.${ext}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  const handleShare = async (flow: FlowRecord) => {
+    const result = await publishFlow(flow.id);
+    if (result.success) {
+      setFlows((prev) => prev.map((f) => f.id === flow.id ? { ...f, isPublic: true } : f));
+      const url = `${window.location.origin}/view/${flow.id}`;
+      await navigator.clipboard.writeText(url);
+      setCopiedId(flow.id);
+      setTimeout(() => setCopiedId(null), 2500);
+    }
+  };
+
+  const formatDate = (ts: Date) => {
+    return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   };
 
   const formatTime = (ts: number) => {
     const d = new Date(ts);
     return d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  };
-
-  const formatDate = (ts: number) => {
-    return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   };
 
   const logColorMap: Record<string, string> = {
@@ -97,32 +106,32 @@ export default function DashboardPage() {
 
         {/* STATS ROW */}
         <div className="grid grid-cols-4 gap-4 mb-8">
-          <StatCard icon={<Cpu size={16} />} label="Published Agents" value={agents.length} color="indigo" />
-          <StatCard icon={<Activity size={16} />} label="Total Executions" value={totalExecutions} color="blue" />
-          <StatCard icon={<BarChart3 size={16} />} label="Success Rate" value={`${successRate}%`} color="emerald" />
+          <StatCard icon={<Cpu size={16} />} label="Saved Flows" value={totalFlows} color="indigo" />
+          <StatCard icon={<Activity size={16} />} label="Recent Events" value={recentLogs.length} color="blue" />
+          <StatCard icon={<BarChart3 size={16} />} label="Public Flows" value={publicFlows} color="emerald" />
           <StatCard icon={<Lock size={16} />} label="Vault Keys" value={vaultEntries.length} color="cyan" />
         </div>
 
         {/* BENTO GRID */}
         <div className="grid grid-cols-3 gap-6">
 
-          {/* COLUMN 1: Published Agents */}
+          {/* COLUMN 1: Saved Flows */}
           <div className="col-span-1 flex flex-col gap-4">
             <div className="flex items-center gap-2 mb-2">
               <Cpu size={14} className="text-indigo-400" />
-              <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">Published Agents</h2>
+              <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">My Saved Flows</h2>
             </div>
 
-            {agents.length === 0 ? (
+            {flows.length === 0 ? (
               <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-8 text-center">
                 <Zap size={24} className="mx-auto mb-3 text-slate-700" />
-                <p className="text-[10px] text-slate-600 uppercase tracking-wider font-bold">No agents published</p>
-                <p className="text-[10px] text-slate-700 mt-1 italic">Create and publish an agent from the Editor</p>
+                <p className="text-[10px] text-slate-600 uppercase tracking-wider font-bold">No saved flows yet</p>
+                <p className="text-[10px] text-slate-700 mt-1 italic">Create a flow in the Editor to see it here</p>
               </div>
             ) : (
-              agents.map(agent => (
+              flows.map(flow => (
                 <div
-                  key={agent.id}
+                  key={flow.id}
                   className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4 hover:border-indigo-500/30 transition-all group"
                 >
                   <div className="flex items-center justify-between mb-3">
@@ -131,8 +140,8 @@ export default function DashboardPage() {
                         <Cpu size={14} className="text-indigo-400" />
                       </div>
                       <div>
-                        <h3 className="text-xs font-bold text-white">{agent.name}</h3>
-                        <span className="text-[9px] text-slate-500">{formatDate(agent.publishedAt)}</span>
+                        <h3 className="text-xs font-bold text-white">{flow.name}</h3>
+                        <span className="text-[9px] text-slate-500">{formatDate(flow.updated_at)}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -143,46 +152,35 @@ export default function DashboardPage() {
                       >
                         <Edit3 size={12} />
                       </button>
-                      <button
-                        onClick={() => deleteAgent(agent.id)}
-                        className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-rose-400 transition-colors"
-                        title="Delete"
-                      >
-                        <Trash2 size={12} />
-                      </button>
                     </div>
                   </div>
 
-                  {/* Stats bar */}
-                  <div className="flex items-center gap-4 mb-3">
-                    <span className="text-[9px] text-slate-500">
-                      <Play size={8} className="inline mr-1" />
-                      {agent.totalRuns} runs
-                    </span>
-                    <span className="text-[9px] text-emerald-500">
-                      <CheckCircle2 size={8} className="inline mr-1" />
-                      {agent.successRuns} ok
-                    </span>
-                    <span className="text-[9px] text-slate-500">
-                      {agent.nodes.length} nodes
-                    </span>
-                  </div>
+                  {/* Status + Share row */}
+                  <div className="flex items-center justify-between">
+                    {flow.isPublic ? (
+                      <a
+                        href={`/view/${flow.id}`}
+                        target="_blank"
+                        className="flex items-center gap-1 text-[9px] text-emerald-400 hover:text-emerald-300 transition-colors"
+                      >
+                        <Eye size={10} />
+                        Public — View Link
+                      </a>
+                    ) : (
+                      <span className="text-[9px] text-slate-600 italic">Private</span>
+                    )}
 
-                  {/* Export buttons */}
-                  <div className="flex items-center gap-2">
                     <button
-                      onClick={() => handleExport(agent, "typescript")}
-                      className="flex items-center gap-1 px-2.5 py-1 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-lg text-[9px] font-bold hover:bg-blue-500/20 transition-all"
+                      onClick={() => handleShare(flow)}
+                      className={cn(
+                        "flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold transition-all",
+                        copiedId === flow.id
+                          ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
+                          : "bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20"
+                      )}
                     >
-                      <Download size={10} />
-                      TypeScript
-                    </button>
-                    <button
-                      onClick={() => handleExport(agent, "python")}
-                      className="flex items-center gap-1 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-[9px] font-bold hover:bg-emerald-500/20 transition-all"
-                    >
-                      <Download size={10} />
-                      Python
+                      {copiedId === flow.id ? <Check size={10} /> : <Share2 size={10} />}
+                      {copiedId === flow.id ? "Link Copied!" : "Share"}
                     </button>
                   </div>
                 </div>
@@ -235,7 +233,6 @@ export default function DashboardPage() {
             </div>
 
             <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4">
-              {/* Health summary */}
               <div className={cn(
                 "flex items-center gap-3 p-3 rounded-xl border mb-4",
                 vaultEntries.length > 0
@@ -259,7 +256,6 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* Key list */}
               <div className="space-y-2">
                 {vaultEntries.map(entry => (
                   <div
@@ -296,7 +292,6 @@ export default function DashboardPage() {
   );
 }
 
-// --- Stat Card Component ---
 function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string | number; color: string }) {
   const colorClasses: Record<string, string> = {
     indigo: "border-indigo-500/20 bg-indigo-500/5 text-indigo-400",

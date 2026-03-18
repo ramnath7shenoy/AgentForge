@@ -121,3 +121,12 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* React Flow Overrides */
+.react-flow__node {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}

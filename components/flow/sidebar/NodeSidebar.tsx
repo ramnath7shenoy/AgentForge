@@ -63,7 +63,11 @@ const categories = [
   }
 ];
 
-const NodeSidebar: React.FC = () => {
+interface NodeSidebarProps {
+  onClearCanvas?: () => void;
+}
+
+const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"nodes" | "vault">("nodes");
   const { nodes, edges, setNodes, setEdges, clearCanvas, tutorialStep } = useFlowStore();
@@ -320,7 +324,7 @@ const NodeSidebar: React.FC = () => {
             <button
               className="w-full flex items-center justify-center gap-2 border border-rose-500/30 hover:bg-rose-500 text-rose-500 hover:text-white text-xs font-bold py-2.5 rounded-xl transition-all shadow-lg shadow-rose-500/5 group"
               type="button"
-              onClick={clearCanvas}
+              onClick={onClearCanvas || clearCanvas}
             >
               <Trash2 size={14} className="group-hover:animate-pulse" />
               Clear Canvas

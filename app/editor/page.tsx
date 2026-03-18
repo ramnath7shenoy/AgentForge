@@ -16,7 +16,13 @@ import {
   Clock,
   RotateCcw,
   Trash2,
-  Terminal
+  Terminal,
+  Share2,
+  Check,
+  LogIn,
+  Eye,
+  Pencil,
+  LayoutTemplate
 } from "lucide-react";
 
 import FlowCanvas from "@/components/flow/canvas/FlowCanvas";
@@ -27,11 +33,15 @@ import ResponseGallery from "@/components/flow/ResponseGallery";
 import ApprovalBanner from "@/components/flow/ApprovalBanner";
 
 import { useFlowStore, isAwaitingApproval } from "@/stores/flowStore";
-import { saveFlow, getLatestFlow } from "@/app/actions/flow";
+import { saveFlow, getLatestFlow, publishFlow } from "@/app/actions/flow";
+import { FLOW_TEMPLATES } from "@/lib/constants/templates";
 import { getSnapshots, saveSnapshot, deleteSnapshot, FlowSnapshot } from "@/lib/versionSnapshots";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { ReactFlowProvider } from "reactflow";
+import { createClient } from "@/lib/supabase/client";
+
+const LS_GUEST_FLOW_KEY = "agentforge_guest_flow";
 
 function EditorContent() {
   const router = useRouter();
@@ -43,7 +53,6 @@ function EditorContent() {
     setSelectedNodeId,
     simulateFlow,
     finalResult,
-
     showMinimap,
     setShowMinimap,
     theme,
@@ -51,7 +60,8 @@ function EditorContent() {
     tutorialStep,
     setTutorialStep,
     completeTutorial,
-    running
+    running,
+    clearCanvas
   } = useFlowStore();
 
   const [mounted, setMounted] = useState(false);
@@ -61,55 +71,111 @@ function EditorContent() {
   const [snapshots, setSnapshots] = useState<FlowSnapshot[]>([]);
   const [showTerminal, setShowTerminal] = useState(false);
   const versionRef = useRef<HTMLDivElement>(null);
+  const shareMenuRef = useRef<HTMLDivElement>(null);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error" | "">("");
   const [hasHydrated, setHasHydrated] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [currentFlowId, setCurrentFlowId] = useState<string | undefined>(undefined);
+  const [shareStatus, setShareStatus] = useState<"idle" | "sharing" | "copied">("idle");
+  const [showShareMenu, setShowShareMenu] = useState(false);
+  const [publicEditable, setPublicEditable] = useState(false);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
 
-  // Initial Fetch on Load
+  // Get auth user on mount
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUserId(user?.id ?? null);
+    });
+    // Listen for auth changes (e.g. login in another tab)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserId(session?.user?.id ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Initial Fetch on Load — smart: prefer DB if logged in, localStorage otherwise
   useEffect(() => {
     async function fetchInitialFlow() {
       const result = await getLatestFlow();
+
       if (result.success && result.flow) {
-        // Hydrate from DB
+        // Hydrate from DB (logged-in user's flow)
         const dbNodes = typeof result.flow.nodes === "string" ? JSON.parse(result.flow.nodes) : result.flow.nodes;
         const dbEdges = typeof result.flow.edges === "string" ? JSON.parse(result.flow.edges) : result.flow.edges;
-
-        if (Array.isArray(dbNodes) && dbNodes.length > 0) {
-          setNodes(dbNodes);
-        }
-        if (Array.isArray(dbEdges) && dbEdges.length > 0) {
-          setEdges(dbEdges);
-        }
+        if (Array.isArray(dbNodes) && dbNodes.length > 0) setNodes(dbNodes);
+        if (Array.isArray(dbEdges) && dbEdges.length > 0) setEdges(dbEdges);
+        setCurrentFlowId(result.flow.id);
+      } else {
+        // Guest: load from localStorage
+        try {
+          const raw = localStorage.getItem(LS_GUEST_FLOW_KEY);
+          if (raw) {
+            const { nodes: lsNodes, edges: lsEdges } = JSON.parse(raw);
+            if (Array.isArray(lsNodes) && lsNodes.length > 0) setNodes(lsNodes);
+            if (Array.isArray(lsEdges)) setEdges(lsEdges);
+          }
+        } catch { /* ignore */ }
       }
       setHasHydrated(true);
     }
     fetchInitialFlow();
   }, [setNodes, setEdges]);
 
-  // Auto-save logic
+  // Migrate guest localStorage flow to DB on login
   useEffect(() => {
-    if (!mounted || !hasHydrated || nodes.length === 0) return;
+    if (!userId || !hasHydrated) return;
+    const raw = localStorage.getItem(LS_GUEST_FLOW_KEY);
+    if (!raw) return;
+
+    try {
+      const { nodes: lsNodes, edges: lsEdges } = JSON.parse(raw);
+      if (Array.isArray(lsNodes) && lsNodes.length > 0) {
+        // Migrate to DB and clear local storage
+        saveFlow(userId, "Migrated Flow", JSON.stringify(lsNodes), JSON.stringify(lsEdges)).then((res) => {
+          if (res.success) {
+            localStorage.removeItem(LS_GUEST_FLOW_KEY);
+            if (res.flow) {
+              setCurrentFlowId(res.flow.id);
+              setNodes(typeof res.flow.nodes === "string" ? JSON.parse(res.flow.nodes) : (res.flow.nodes as any[]));
+              setEdges(typeof res.flow.edges === "string" ? JSON.parse(res.flow.edges) : (res.flow.edges as any[]));
+            }
+          }
+        });
+      }
+    } catch { /* ignore */ }
+  }, [userId, hasHydrated, setNodes, setEdges]);
+
+  // Auto-save logic: DB for logged-in users, localStorage for guests
+  useEffect(() => {
+    if (!mounted || !hasHydrated) return;
 
     setSaveStatus("saving");
     const timeoutId = setTimeout(async () => {
       try {
-        const userId = "current-user-id"; // Placeholder until actual auth is hooked up
-        const flowId = "default-flow-id"; // Ensure a single flow gets upserted for now
-        // Stringify nodes and edges to bypass Next.js Server Action serialization drops
-        const serializedNodes = JSON.stringify(nodes);
-        const serializedEdges = JSON.stringify(edges);
-        const result = await saveFlow(userId, "My Flow", serializedNodes, serializedEdges, flowId);
-        if (result.success) {
-          setSaveStatus("saved");
+        if (userId) {
+          // Logged-in: save to database
+          const serializedNodes = JSON.stringify(nodes);
+          const serializedEdges = JSON.stringify(edges);
+          const result = await saveFlow(userId, "My Flow", serializedNodes, serializedEdges, currentFlowId);
+          if (result.success) {
+            setSaveStatus("saved");
+            if (result.flow && !currentFlowId) setCurrentFlowId(result.flow.id);
+          } else {
+            setSaveStatus("error");
+          }
         } else {
-          setSaveStatus("error");
+          // Guest: save to localStorage
+          localStorage.setItem(LS_GUEST_FLOW_KEY, JSON.stringify({ nodes, edges }));
+          setSaveStatus("saved");
         }
-      } catch (err) {
+      } catch {
         setSaveStatus("error");
       }
     }, 2000);
 
     return () => clearTimeout(timeoutId);
-  }, [nodes, edges, mounted, hasHydrated]);
+  }, [nodes, edges, mounted, hasHydrated, userId, currentFlowId]);
 
   useEffect(() => {
     setMounted(true);
@@ -132,26 +198,25 @@ function EditorContent() {
     }
   }, [finalResult, tutorialStep, setTutorialStep]);
 
-  // Show terminal when running
   useEffect(() => {
     if (running) setShowTerminal(true);
   }, [running]);
 
-  // Poll for approval state (flash safety alert)
   useEffect(() => {
     if (!running) { return; }
     const interval = setInterval(() => {
-      // isPaused state removed to fix linting
       isAwaitingApproval();
     }, 200);
     return () => clearInterval(interval);
   }, [running]);
 
-  // Close version menu on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (versionRef.current && !versionRef.current.contains(e.target as Node)) {
         setShowVersionMenu(false);
+      }
+      if (shareMenuRef.current && !shareMenuRef.current.contains(e.target as Node)) {
+        setShowShareMenu(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -179,6 +244,84 @@ function EditorContent() {
     setShowVersionMenu(!showVersionMenu);
   };
 
+  const handleShare = async () => {
+    if (!currentFlowId && userId) return;
+    setShareStatus("sharing");
+    try {
+      let shareId = currentFlowId;
+
+      if (!userId) {
+        // Guest mode - create a new public flow
+        const serializedNodes = JSON.stringify(nodes);
+        const serializedEdges = JSON.stringify(edges);
+        const result = await saveFlow(null, "Guest Shared Flow", serializedNodes, serializedEdges, undefined, true, publicEditable);
+        if (result.success && result.flow) {
+          shareId = result.flow.id;
+        } else {
+          throw new Error("Failed to save guest flow");
+        }
+      } else if (shareId) {
+        // Logged-in user, publish existing
+        const result = await publishFlow(shareId, publicEditable);
+        if (!result.success) throw new Error("Failed to publish flow");
+      }
+
+      if (shareId) {
+        const url = `${window.location.origin}/view/${shareId}`;
+        await navigator.clipboard.writeText(url);
+        setShareStatus("copied");
+        setTimeout(() => setShareStatus("idle"), 2500);
+      }
+    } catch {
+      setShareStatus("idle");
+    }
+  };
+
+  const handleClearCanvas = async () => {
+    if (confirm("Are you sure you want to clear the entire canvas? This cannot be undone.")) {
+      clearCanvas();
+      // Explicitly save empty state to DB — don't rely on auto-save which needs mounted+hydrated
+      if (userId && currentFlowId) {
+        setSaveStatus("saving");
+        const result = await saveFlow(userId, "My Flow", "[]", "[]", currentFlowId);
+        if (result.success) setSaveStatus("saved");
+        else setSaveStatus("error");
+      } else if (!userId) {
+        localStorage.setItem(LS_GUEST_FLOW_KEY, JSON.stringify({ nodes: [], edges: [] }));
+        setSaveStatus("saved");
+      }
+    }
+  };
+
+  const handleLoadTemplate = async (templateId: string) => {
+    const template = FLOW_TEMPLATES.find(t => t.id === templateId);
+    if (!template) return;
+
+    if (nodes.length > 0) {
+      const ok = confirm(`Loading "${template.name}" will replace your current canvas. Continue?`);
+      if (!ok) return;
+    }
+
+    setNodes(template.nodes as any);
+    setEdges(template.edges as any);
+    setShowTemplateModal(false);
+
+    // Explicit save after loading template (don't wait for debounced auto-save)
+    setTimeout(async () => {
+      if (userId) {
+        setSaveStatus("saving");
+        const result = await saveFlow(userId, template.name, JSON.stringify(template.nodes), JSON.stringify(template.edges), currentFlowId);
+        if (result.success) {
+          setSaveStatus("saved");
+          if (result.flow && !currentFlowId) setCurrentFlowId(result.flow.id);
+        } else setSaveStatus("error");
+      } else {
+        localStorage.setItem(LS_GUEST_FLOW_KEY, JSON.stringify({ nodes: template.nodes, edges: template.edges }));
+        setSaveStatus("saved");
+      }
+    }, 100);
+  };
+
   const formatTs = (ts: number) => {
     const d = new Date(ts);
     return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -201,7 +344,7 @@ function EditorContent() {
           </div>
           <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800 mx-2" />
           <span className="text-[10px] text-slate-400 font-medium uppercase tracking-widest hidden md:block">
-            Production Environment
+            {userId ? "Cloud Mode" : "Guest Mode"}
           </span>
           {saveStatus && (
             <span className={cn(
@@ -210,83 +353,116 @@ function EditorContent() {
                 saveStatus === "saved" ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400" :
                   "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400"
             )}>
-              {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save Error"}
+              {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? (userId ? "Saved to Cloud" : "Saved Locally") : "Save Error"}
             </span>
           )}
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-            <HeaderButton onClick={() => setShowMinimap(!showMinimap)} icon={<Map size={14} />} active={showMinimap} />
-          </div>
-
-          {/* VERSION HISTORY */}
-          <div className="relative" ref={versionRef}>
+          {/* UTILITY GROUP */}
+          <div className="flex items-center gap-2 p-1 bg-gray-100 dark:bg-gray-800 rounded-xl border border-slate-200 dark:border-slate-800">
             <button
-              onClick={handleOpenVersionMenu}
+              onClick={() => setShowMinimap(!showMinimap)}
               className={cn(
-                "p-2.5 rounded-xl border transition-all shadow-sm",
-                showVersionMenu
-                  ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-400"
-                  : "border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-500 dark:text-slate-400"
+                "p-2 rounded-lg transition-all",
+                showMinimap 
+                  ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm" 
+                  : "text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
               )}
-              title="Version History"
+              title="Toggle Minimap"
             >
-              <Clock size={16} />
+              <Map size={14} />
             </button>
 
-            {showVersionMenu && (
-              <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-[#0b0e14] border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Snapshots</span>
-                  <button
-                    onClick={handleSaveSnapshot}
-                    className="text-[10px] font-bold text-indigo-500 hover:text-indigo-400 transition-colors"
-                  >
-                    + Save Now
-                  </button>
-                </div>
-                <div className="max-h-64 overflow-y-auto">
-                  {snapshots.length === 0 ? (
-                    <div className="px-4 py-6 text-center text-[10px] text-slate-500 italic">
-                      No snapshots yet
-                    </div>
-                  ) : (
-                    snapshots.map((snap) => (
-                      <div
-                        key={snap.id}
-                        className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group cursor-pointer border-b border-slate-100 dark:border-slate-800 last:border-0"
-                      >
-                        <div onClick={() => handleRestoreSnapshot(snap)} className="flex-1 flex flex-col">
-                          <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{snap.name}</span>
-                          <span className="text-[9px] text-slate-400">{formatTs(snap.timestamp)} · {snap.nodes.length} nodes</span>
-                        </div>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => handleRestoreSnapshot(snap)}
-                            className="p-1 text-indigo-400 hover:text-indigo-300"
-                            title="Restore"
-                          >
-                            <RotateCcw size={12} />
-                          </button>
-                          <button
-                            onClick={() => { deleteSnapshot(snap.id); setSnapshots(prev => prev.filter(s => s.id !== snap.id)); }}
-                            className="p-1 text-slate-500 hover:text-rose-400"
-                            title="Delete"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
+            {/* VERSION HISTORY / SNAPSHOTS */}
+            <div className="relative" ref={versionRef}>
+              <button
+                onClick={handleOpenVersionMenu}
+                className={cn(
+                  "p-2 rounded-lg transition-all",
+                  showVersionMenu
+                    ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                    : "text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+                )}
+                title="Version History"
+              >
+                <Clock size={16} />
+              </button>
+
+              {showVersionMenu && (
+                <div className="absolute left-0 top-full mt-2 w-72 bg-white dark:bg-[#0b0e14] border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Snapshots</span>
+                    <button
+                      onClick={handleSaveSnapshot}
+                      className="text-[10px] font-bold text-indigo-500 hover:text-indigo-400 transition-colors"
+                    >
+                      + Save Now
+                    </button>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {snapshots.length === 0 ? (
+                      <div className="px-4 py-6 text-center text-[10px] text-slate-500 italic">
+                        No snapshots yet
                       </div>
-                    ))
-                  )}
+                    ) : (
+                      snapshots.map((snap) => (
+                        <div
+                          key={snap.id}
+                          className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group cursor-pointer border-b border-slate-100 dark:border-slate-800 last:border-0"
+                        >
+                          <div onClick={() => handleRestoreSnapshot(snap)} className="flex-1 flex flex-col">
+                            <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{snap.name}</span>
+                            <span className="text-[9px] text-slate-400">{formatTs(snap.timestamp)} · {snap.nodes.length} nodes</span>
+                          </div>
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => handleRestoreSnapshot(snap)}
+                              className="p-1 text-indigo-400 hover:text-indigo-300"
+                              title="Restore"
+                            >
+                              <RotateCcw size={12} />
+                            </button>
+                            <button
+                              onClick={() => { deleteSnapshot(snap.id); setSnapshots(prev => prev.filter(s => s.id !== snap.id)); }}
+                              className="p-1 text-slate-500 hover:text-rose-400"
+                              title="Delete"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 ml-2">
-            <button
+          <div className="h-6 w-[1px] bg-slate-200 dark:bg-slate-800 mx-1" />
+
+          {/* 1. TEMPLATES */}
+          <button
+            onClick={() => setShowTemplateModal(true)}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-bold transition-all border border-transparent"
+            title="Load a Template"
+          >
+            <LayoutTemplate size={14} />
+            Templates
+          </button>
+
+          {/* 2. DARK MODE TOGGLE */}
+          <button
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            className="p-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-all shadow-sm border border-transparent"
+            title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          >
+            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+
+          {/* 3. RUN FLOW */}
+          <button
               onClick={() => simulateFlow(startNodeId)}
               className={cn(
                 "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all",
@@ -294,12 +470,13 @@ function EditorContent() {
                   ? "bg-indigo-600 hover:bg-indigo-500 text-white ring-4 ring-indigo-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(99,102,241,0.5)] z-10"
                   : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
               )}
-            >
+          >
               <Play size={14} className="fill-current" />
               Run Flow
-            </button>
+          </button>
 
-            <button
+          {/* 4. PUBLISH */}
+          <button
               onClick={() => {
                 completeTutorial();
                 router.push('/publish');
@@ -310,18 +487,109 @@ function EditorContent() {
                   ? "bg-emerald-500 hover:bg-emerald-400 text-white ring-4 ring-emerald-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(16,185,129,0.5)] z-10"
                   : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20"
               )}
-            >
-              <Rocket size={14} />
-              Publish & Export
-            </button>
-          </div>
-
-          <button
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 transition-all text-slate-500 dark:text-slate-400 shadow-sm"
           >
-            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+              <Rocket size={14} />
+              Publish
           </button>
+
+          {/* 5. SHARE (Extreme Right) */}
+          <div className="relative" ref={shareMenuRef}>
+            <button
+              onClick={() => setShowShareMenu(!showShareMenu)}
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-md",
+                showShareMenu
+                  ? "bg-violet-700 text-white shadow-violet-500/30"
+                  : "bg-violet-600 hover:bg-violet-500 text-white shadow-violet-500/20"
+              )}
+              title="Share or Collaborate"
+            >
+              <Share2 size={14} />
+              Share
+            </button>
+
+            {showShareMenu && (
+              <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-[#0d1117] border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150 p-4 flex flex-col gap-3">
+                {/* Header */}
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Share Publicly</h3>
+                  <button onClick={() => setShowShareMenu(false)} className="text-slate-500 hover:text-slate-300 transition-colors">
+                    <X size={12} />
+                  </button>
+                </div>
+
+                {/* Permission toggle */}
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Link Permission</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      onClick={() => setPublicEditable(false)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-all",
+                        !publicEditable
+                          ? "bg-indigo-500/10 border-indigo-500/40 text-indigo-400"
+                          : "border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                      )}
+                    >
+                      <Eye size={12} />
+                      View Only
+                    </button>
+                    <button
+                      onClick={() => setPublicEditable(true)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-all",
+                        publicEditable
+                          ? "bg-amber-500/10 border-amber-500/40 text-amber-400"
+                          : "border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                      )}
+                    >
+                      <Pencil size={12} />
+                      Can Edit
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {publicEditable
+                      ? "Anyone with the link can edit this flow."
+                      : "Anyone with the link can view this flow."}
+                  </p>
+                </div>
+
+                {/* Copy link button */}
+                <button
+                  onClick={handleShare}
+                  disabled={shareStatus === "sharing"}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-bold transition-all justify-center w-full",
+                    shareStatus === "copied"
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                      : shareStatus === "sharing"
+                      ? "opacity-50 cursor-not-allowed border-slate-200 dark:border-slate-700 text-slate-500"
+                      : "bg-indigo-600 border-transparent text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/20"
+                  )}
+                >
+                  {shareStatus === "copied"
+                    ? <><Check size={14} /> ✅ Link Copied!</>
+                    : shareStatus === "sharing"
+                    ? "Generating link..."
+                    : <><Share2 size={14} /> Copy Link</>}
+                </button>
+
+                {!userId && (
+                  <div className="flex flex-col gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-violet-400">Collaborate in Real-Time</h3>
+                    <p className="text-[10px] text-slate-500">Sign in to sync & collaborate with a team.</p>
+                    <button
+                      onClick={() => router.push("/login?message=collaborate")}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-violet-500/40 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 text-xs font-bold transition-all justify-center w-full"
+                    >
+                      <LogIn size={14} />
+                      Sign In to Collaborate
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -352,7 +620,7 @@ function EditorContent() {
               className="overflow-hidden border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0b0e14] flex-shrink-0"
             >
               <div className="w-64 h-full">
-                <NodeSidebar />
+                <NodeSidebar onClearCanvas={handleClearCanvas} />
               </div>
             </motion.aside>
           )}
@@ -444,6 +712,77 @@ function EditorContent() {
 
       </div>
 
+      {/* TEMPLATE MODAL */}
+      <AnimatePresence>
+        {showTemplateModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-6"
+            onClick={() => setShowTemplateModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              transition={{ type: "spring", stiffness: 300, damping: 25 }}
+              className="w-full max-w-2xl bg-[#0d1117] border border-slate-700 rounded-2xl shadow-2xl overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+                <div>
+                  <h2 className="font-bold text-white flex items-center gap-2">
+                    <LayoutTemplate size={16} className="text-indigo-400" />
+                    Choose a Template
+                  </h2>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Load a pre-built flow to get started quickly.</p>
+                </div>
+                <button
+                  onClick={() => setShowTemplateModal(false)}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Template Grid */}
+              <div className="p-6 grid grid-cols-1 gap-3">
+                {FLOW_TEMPLATES.map((template) => (
+                  <div
+                    key={template.id}
+                    className="flex items-center justify-between p-4 bg-slate-900/50 border border-slate-800 rounded-xl hover:border-indigo-500/40 hover:bg-slate-800/50 transition-all group cursor-pointer"
+                    onClick={() => handleLoadTemplate(template.id)}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-11 h-11 bg-indigo-600/15 border border-indigo-500/20 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">
+                        {template.icon}
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-white group-hover:text-indigo-300 transition-colors">
+                          {template.name}
+                        </h3>
+                        <p className="text-[11px] text-slate-500 mt-0.5 max-w-md">{template.description}</p>
+                        <p className="text-[10px] text-slate-600 mt-1 font-mono">
+                          {template.nodes.length} nodes · {template.edges.length} edges
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-all flex-shrink-0 ml-4 shadow-lg shadow-indigo-500/20"
+                      onClick={(e) => { e.stopPropagation(); handleLoadTemplate(template.id); }}
+                    >
+                      Load
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <MissionBriefing />
     </div>
   );
@@ -457,30 +796,4 @@ export default function EditorPage() {
   );
 }
 
-interface HeaderButtonProps {
-  icon: React.ReactNode;
-  label?: string;
-  onClick: () => void;
-  active?: boolean;
-  variant?: "primary" | "ghost";
-  flash?: boolean;
-}
 
-function HeaderButton({ icon, label, onClick, active, variant = "ghost", flash }: HeaderButtonProps) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap relative",
-        variant === "primary" && "bg-indigo-600 text-white hover:bg-indigo-700 shadow-md shadow-indigo-500/20",
-        variant === "ghost" && !active && "text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800",
-        active && variant === "ghost" && "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm",
-        flash && "!text-amber-400 animate-pulse ring-2 ring-amber-500/40 !bg-amber-500/10"
-      )}
-    >
-      {icon}
-      {label && <span>{label}</span>}
-      {flash && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-400 rounded-full animate-ping" />}
-    </button>
-  );
-}
