@@ -152,6 +152,37 @@ export async function publishFlow(flowId: string, publicEditable?: boolean) {
 }
 
 /**
+ * Update a flow's public visibility or editability permissions.
+ */
+export async function updateFlowSettings(
+  flowId: string, 
+  settings: { isPublic?: boolean; publicEditable?: boolean }
+) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) return { success: false, error: 'Unauthorized' };
+
+    const flow = await prisma.flow.update({
+      where: { 
+        id: flowId,
+        userId: user.id // Safety: only owner can update settings
+      },
+      data: {
+        ...(settings.isPublic !== undefined ? { isPublic: settings.isPublic } : {}),
+        ...(settings.publicEditable !== undefined ? { publicEditable: settings.publicEditable } : {}),
+      } as any,
+    });
+
+    return { success: true, flow };
+  } catch (error) {
+    console.error('Failed to update flow settings:', error);
+    return { success: false, error: 'Failed to update flow settings' };
+  }
+}
+
+/**
  * Update nodes/edges of an already-public flow (used for editable shared-view auto-save).
  */
 export async function saveSharedFlow(

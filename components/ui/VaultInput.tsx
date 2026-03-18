@@ -10,9 +10,16 @@ interface VaultInputProps {
   onChange: (value: string) => void;
   placeholder?: string;
   theme?: string;
+  isOwner?: boolean;
 }
 
-export default function VaultInput({ value, onChange, placeholder, theme = "dark" }: VaultInputProps) {
+export default function VaultInput({ 
+  value, 
+  onChange, 
+  placeholder, 
+  theme = "dark", 
+  isOwner = true 
+}: VaultInputProps) {
   const [showDropdown, setShowDropdown] = useState(false);
   const entries = useVaultStore((s) => s.entries);
   const keys = useMemo(() => entries.map(e => e.key), [entries]);
@@ -31,36 +38,49 @@ export default function VaultInput({ value, onChange, placeholder, theme = "dark
 
   const isVaultRef = value?.startsWith("{{vault.");
 
+  const displayValue = useMemo(() => {
+    if (isOwner) return value;
+    if (isVaultRef) {
+      // Show just the key name for guests so they know it's connected
+      return value; 
+    }
+    return value ? "••••••••••••" : "";
+  }, [value, isOwner, isVaultRef]);
+
   return (
     <div ref={containerRef} className="relative">
       <input
         type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder || "Enter value or use vault key..."}
+        value={displayValue}
+        onChange={(e) => isOwner && onChange(e.target.value)}
+        placeholder={isOwner ? (placeholder || "Enter value or use vault key...") : "Encrypted - Owner Only"}
+        readOnly={!isOwner}
         className={cn(
           "w-full rounded-lg p-2 pr-10 text-sm outline-none transition-all border focus:ring-2",
           theme === "dark"
             ? "bg-slate-900 border-slate-700 text-white focus:ring-indigo-500/20 focus:border-indigo-500"
             : "bg-slate-50 border-slate-200 text-slate-900 focus:ring-indigo-500/20 focus:border-indigo-500",
-          isVaultRef && "!text-cyan-400 !border-cyan-500/30 !bg-cyan-500/5"
+          isVaultRef && "!text-cyan-400 !border-cyan-500/30 !bg-cyan-500/5",
+          !isOwner && "opacity-80 cursor-not-allowed"
         )}
       />
 
-      {/* Key icon button */}
-      <button
-        type="button"
-        onClick={() => setShowDropdown(!showDropdown)}
-        className={cn(
-          "absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded transition-all",
-          isVaultRef
-            ? "text-cyan-400 hover:text-cyan-300"
-            : "text-slate-500 hover:text-indigo-400"
-        )}
-        title="Insert vault key"
-      >
-        <Key size={14} />
-      </button>
+      {/* Key icon button - Only for owners */}
+      {isOwner && (
+        <button
+          type="button"
+          onClick={() => setShowDropdown(!showDropdown)}
+          className={cn(
+            "absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded transition-all",
+            isVaultRef
+              ? "text-cyan-400 hover:text-cyan-300"
+              : "text-slate-500 hover:text-indigo-400"
+          )}
+          title="Insert vault key"
+        >
+          <Key size={14} />
+        </button>
+      )}
 
       {/* Dropdown menu */}
       {showDropdown && (

@@ -85,7 +85,7 @@ function LoginContent() {
             },
           }}
           providers={['google', 'github', 'apple']}
-          redirectTo={`${typeof window !== "undefined" ? window.location.origin : ""}/editor`}
+          redirectTo={`${typeof window !== "undefined" ? window.location.origin : ""}/auth/callback`}
         />
       </div>
     </div>

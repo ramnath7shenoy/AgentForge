@@ -65,15 +65,23 @@ const categories = [
 
 interface NodeSidebarProps {
   onClearCanvas?: () => void;
+  isOwner?: boolean;
 }
 
-const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas }) => {
+const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas, isOwner = true }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"nodes" | "vault">("nodes");
   const { nodes, edges, setNodes, setEdges, clearCanvas, tutorialStep } = useFlowStore();
   const [savedAgentsList, setSavedAgentsList] = useState<SavedAgent[]>([]);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveName, setSaveName] = useState("");
+
+  // Ensure non-owners can't see vault even if state is manipulated
+  useEffect(() => {
+    if (!isOwner && activeTab === "vault") {
+      setActiveTab("nodes");
+    }
+  }, [isOwner, activeTab]);
 
   // Vault state
   const { entries, addEntry, removeEntry } = useVaultStore();
@@ -150,18 +158,20 @@ const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas }) => {
           <Layers size={14} />
           Nodes
         </button>
-        <button
-          onClick={() => setActiveTab("vault")}
-          className={cn(
-            "flex-1 flex items-center justify-center gap-2 py-3 text-[10px] font-black uppercase tracking-widest transition-all",
-            activeTab === "vault"
-              ? "text-cyan-400 border-b-2 border-cyan-400 bg-cyan-500/5"
-              : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/30"
-          )}
-        >
-          <Lock size={14} />
-          Vault
-        </button>
+        {isOwner && (
+          <button
+            onClick={() => setActiveTab("vault")}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-2 py-3 text-[10px] font-black uppercase tracking-widest transition-all",
+              activeTab === "vault"
+                ? "text-cyan-400 border-b-2 border-cyan-400 bg-cyan-500/5"
+                : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/30"
+            )}
+          >
+            <Lock size={14} />
+            Vault
+          </button>
+        )}
       </div>
 
       {/* SEARCH (visible on both tabs) */}
@@ -254,12 +264,15 @@ const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas }) => {
               </div>
             )}
           </div>
+        </>
+      )}
 
-          {/* FOOTER ACTIONS */}
-          <div className={cn(
-            "mt-auto p-4 pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2 transition-all",
-            tutorialStep > 0 && tutorialStep < 8 && "opacity-30 pointer-events-none grayscale"
-          )}>
+      {/* FOOTER ACTIONS */}
+      {activeTab === "nodes" && isOwner && (
+        <div className={cn(
+          "mt-auto p-4 pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2 transition-all",
+          tutorialStep > 0 && tutorialStep < 8 && "opacity-30 pointer-events-none grayscale"
+        )}>
             {showSaveDialog && (
               <div className="flex gap-2 mb-2 animate-in slide-in-from-bottom-2 duration-200">
                 <input
@@ -330,7 +343,6 @@ const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas }) => {
               Clear Canvas
             </button>
           </div>
-        </>
       )}
 
       {/* VAULT TAB CONTENT */}

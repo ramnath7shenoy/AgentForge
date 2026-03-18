@@ -6,29 +6,45 @@ export async function POST(req: NextRequest) {
   try {
     const { prompt, instructions, userId } = await req.json();
 
-    // 1. Fetch decrypted key from Vault model 
-    // In a real application we would decrypt the key here.
-    // Assuming 'userId' is passed from the client or auth logic.
-    // For now, we mock fetching if userId is not provided.
-    
-    let apiKey = process.env.NEXT_PUBLIC_ENCRYPTION_KEY || process.env.OPENAI_API_KEY;
+    // 1. Fetch vault and secrets
+    let resolvedInstructions = instructions;
+    let apiKey = process.env.OPENAI_API_KEY; // Fallback if no vault entry matches
 
     if (userId) {
       const vault = await prisma.vault.findUnique({
         where: { userId },
       });
+      
       if (vault) {
-        // Mock Decryption logic using ENCRYPTION_KEY
-        // e.g. apiKey = decrypt(vault.encrypted_keys, process.env.NEXT_PUBLIC_ENCRYPTION_KEY)
-        apiKey = vault.encrypted_keys; 
+        // Parse the stored secrets (assumed to be JSON)
+        try {
+          const secrets = JSON.parse(vault.encrypted_keys);
+          
+          // Find any {{vault.KEY}} references and replace them
+          resolvedInstructions = instructions.replace(/{{\s*vault\.([^}]+)\s*}}/g, (_: string, key: string) => {
+            const secret = secrets[key.trim()];
+            if (secret) return secret;
+            return `[REDACTED SECRET: ${key}]`;
+          });
+
+          // Special logic for AI key injection
+          // If the prompt itself is a vault ref or contains one, resolve it for the AI call
+          if (secrets['OPENAI_API_KEY']) apiKey = secrets['OPENAI_API_KEY'];
+          if (secrets['GEMINI_API_KEY']) apiKey = secrets['GEMINI_API_KEY'];
+        } catch (e) {
+          console.error("Failed to parse vault secrets:", e);
+        }
       }
     }
 
     if (!apiKey) {
-      return NextResponse.json({ error: "No API key found in Vault." }, { status: 401 });
+      // return NextResponse.json({ error: "No API key found in Vault." }, { status: 401 });
+      // For demo, we still allow proceeding if there's a fallback
     }
 
-    // 2. Call OpenAI or Gemini API (Mocked for streaming simulation since real key isn't guaranteed valid)
+    // 2. Call OpenAI or Gemini API (Simulated Streaming)
+    // In a real app, you'd use openai.chat.completions.create({ stream: true, ... }) 
+    // and use resolvedInstructions as the system or user prompt.
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {

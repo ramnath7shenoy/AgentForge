@@ -22,7 +22,11 @@ import {
   LogIn,
   Eye,
   Pencil,
-  LayoutTemplate
+  LayoutTemplate,
+  BookOpen,
+  LogOut,
+  Globe,
+  Lock
 } from "lucide-react";
 
 import FlowCanvas from "@/components/flow/canvas/FlowCanvas";
@@ -67,45 +71,58 @@ function EditorContent() {
   const [mounted, setMounted] = useState(false);
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
+
+  // Menus & Refs
   const [showVersionMenu, setShowVersionMenu] = useState(false);
-  const [snapshots, setSnapshots] = useState<FlowSnapshot[]>([]);
-  const [showTerminal, setShowTerminal] = useState(false);
+  const [showShareMenu, setShowShareMenu] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
   const versionRef = useRef<HTMLDivElement>(null);
   const shareMenuRef = useRef<HTMLDivElement>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+
+  const [snapshots, setSnapshots] = useState<FlowSnapshot[]>([]);
+  const [showTerminal, setShowTerminal] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error" | "">("");
   const [hasHydrated, setHasHydrated] = useState(false);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+
+  // Auth & Sharing States
+  const [user, setUser] = useState<any>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [currentFlowId, setCurrentFlowId] = useState<string | undefined>(undefined);
-  const [shareStatus, setShareStatus] = useState<"idle" | "sharing" | "copied">("idle");
-  const [showShareMenu, setShowShareMenu] = useState(false);
+  const [shareStatus, setShareStatus] = useState<"idle" | "sharing" | "copied" | "private_copied">("idle");
+  const [isPublic, setIsPublic] = useState(false);
   const [publicEditable, setPublicEditable] = useState(false);
-  const [showTemplateModal, setShowTemplateModal] = useState(false);
 
   // Get auth user on mount
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getUser().then(({ data: { user } }) => {
       setUserId(user?.id ?? null);
+      setUser(user ?? null);
     });
     // Listen for auth changes (e.g. login in another tab)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserId(session?.user?.id ?? null);
+      setUser(session?.user ?? null);
     });
     return () => subscription.unsubscribe();
   }, []);
 
-  // Initial Fetch on Load — smart: prefer DB if logged in, localStorage otherwise
+  // Initial Fetch on Load
   useEffect(() => {
     async function fetchInitialFlow() {
       const result = await getLatestFlow();
 
       if (result.success && result.flow) {
-        // Hydrate from DB (logged-in user's flow)
+        // Hydrate from DB
         const dbNodes = typeof result.flow.nodes === "string" ? JSON.parse(result.flow.nodes) : result.flow.nodes;
         const dbEdges = typeof result.flow.edges === "string" ? JSON.parse(result.flow.edges) : result.flow.edges;
         if (Array.isArray(dbNodes) && dbNodes.length > 0) setNodes(dbNodes);
         if (Array.isArray(dbEdges) && dbEdges.length > 0) setEdges(dbEdges);
         setCurrentFlowId(result.flow.id);
+        setIsPublic(result.flow.isPublic ?? false);
+        setPublicEditable(result.flow.publicEditable ?? false);
       } else {
         // Guest: load from localStorage
         try {
@@ -131,7 +148,6 @@ function EditorContent() {
     try {
       const { nodes: lsNodes, edges: lsEdges } = JSON.parse(raw);
       if (Array.isArray(lsNodes) && lsNodes.length > 0) {
-        // Migrate to DB and clear local storage
         saveFlow(userId, "Migrated Flow", JSON.stringify(lsNodes), JSON.stringify(lsEdges)).then((res) => {
           if (res.success) {
             localStorage.removeItem(LS_GUEST_FLOW_KEY);
@@ -146,7 +162,7 @@ function EditorContent() {
     } catch { /* ignore */ }
   }, [userId, hasHydrated, setNodes, setEdges]);
 
-  // Auto-save logic: DB for logged-in users, localStorage for guests
+  // Auto-save logic
   useEffect(() => {
     if (!mounted || !hasHydrated) return;
 
@@ -154,10 +170,9 @@ function EditorContent() {
     const timeoutId = setTimeout(async () => {
       try {
         if (userId) {
-          // Logged-in: save to database
           const serializedNodes = JSON.stringify(nodes);
           const serializedEdges = JSON.stringify(edges);
-          const result = await saveFlow(userId, "My Flow", serializedNodes, serializedEdges, currentFlowId);
+          const result = await saveFlow(userId, "My Flow", serializedNodes, serializedEdges, currentFlowId, isPublic, publicEditable);
           if (result.success) {
             setSaveStatus("saved");
             if (result.flow && !currentFlowId) setCurrentFlowId(result.flow.id);
@@ -165,7 +180,6 @@ function EditorContent() {
             setSaveStatus("error");
           }
         } else {
-          // Guest: save to localStorage
           localStorage.setItem(LS_GUEST_FLOW_KEY, JSON.stringify({ nodes, edges }));
           setSaveStatus("saved");
         }
@@ -175,7 +189,7 @@ function EditorContent() {
     }, 2000);
 
     return () => clearTimeout(timeoutId);
-  }, [nodes, edges, mounted, hasHydrated, userId, currentFlowId]);
+  }, [nodes, edges, mounted, hasHydrated, userId, currentFlowId, isPublic, publicEditable]);
 
   useEffect(() => {
     setMounted(true);
@@ -193,9 +207,7 @@ function EditorContent() {
   }, [theme, setTutorialStep, tutorialStep]);
 
   useEffect(() => {
-    if (tutorialStep === 6 && finalResult) {
-      setTutorialStep(7);
-    }
+    if (tutorialStep === 6 && finalResult) setTutorialStep(7);
   }, [finalResult, tutorialStep, setTutorialStep]);
 
   useEffect(() => {
@@ -203,21 +215,17 @@ function EditorContent() {
   }, [running]);
 
   useEffect(() => {
-    if (!running) { return; }
-    const interval = setInterval(() => {
-      isAwaitingApproval();
-    }, 200);
+    if (!running) return;
+    const interval = setInterval(() => isAwaitingApproval(), 200);
     return () => clearInterval(interval);
   }, [running]);
 
+  // Click outside handler for menus
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (versionRef.current && !versionRef.current.contains(e.target as Node)) {
-        setShowVersionMenu(false);
-      }
-      if (shareMenuRef.current && !shareMenuRef.current.contains(e.target as Node)) {
-        setShowShareMenu(false);
-      }
+      if (versionRef.current && !versionRef.current.contains(e.target as Node)) setShowVersionMenu(false);
+      if (shareMenuRef.current && !shareMenuRef.current.contains(e.target as Node)) setShowShareMenu(false);
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) setShowProfileMenu(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -261,7 +269,7 @@ function EditorContent() {
           throw new Error("Failed to save guest flow");
         }
       } else if (shareId) {
-        // Logged-in user, publish existing
+        // Logged-in user: publish existing immediately for share link
         const result = await publishFlow(shareId, publicEditable);
         if (!result.success) throw new Error("Failed to publish flow");
       }
@@ -269,8 +277,15 @@ function EditorContent() {
       if (shareId) {
         const url = `${window.location.origin}/view/${shareId}`;
         await navigator.clipboard.writeText(url);
-        setShareStatus("copied");
-        setTimeout(() => setShareStatus("idle"), 2500);
+
+        // Check Privacy Gate Logic
+        if (!isPublic && userId) {
+          setShareStatus("private_copied");
+        } else {
+          setShareStatus("copied");
+        }
+
+        setTimeout(() => setShareStatus("idle"), 3000);
       }
     } catch {
       setShareStatus("idle");
@@ -280,10 +295,9 @@ function EditorContent() {
   const handleClearCanvas = async () => {
     if (confirm("Are you sure you want to clear the entire canvas? This cannot be undone.")) {
       clearCanvas();
-      // Explicitly save empty state to DB — don't rely on auto-save which needs mounted+hydrated
       if (userId && currentFlowId) {
         setSaveStatus("saving");
-        const result = await saveFlow(userId, "My Flow", "[]", "[]", currentFlowId);
+        const result = await saveFlow(userId, "My Flow", "[]", "[]", currentFlowId, isPublic, publicEditable);
         if (result.success) setSaveStatus("saved");
         else setSaveStatus("error");
       } else if (!userId) {
@@ -306,11 +320,10 @@ function EditorContent() {
     setEdges(template.edges as any);
     setShowTemplateModal(false);
 
-    // Explicit save after loading template (don't wait for debounced auto-save)
     setTimeout(async () => {
       if (userId) {
         setSaveStatus("saving");
-        const result = await saveFlow(userId, template.name, JSON.stringify(template.nodes), JSON.stringify(template.edges), currentFlowId);
+        const result = await saveFlow(userId, template.name, JSON.stringify(template.nodes), JSON.stringify(template.edges), currentFlowId, isPublic, publicEditable);
         if (result.success) {
           setSaveStatus("saved");
           if (result.flow && !currentFlowId) setCurrentFlowId(result.flow.id);
@@ -365,8 +378,8 @@ function EditorContent() {
               onClick={() => setShowMinimap(!showMinimap)}
               className={cn(
                 "p-2 rounded-lg transition-all",
-                showMinimap 
-                  ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm" 
+                showMinimap
+                  ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
                   : "text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
               )}
               title="Toggle Minimap"
@@ -463,36 +476,36 @@ function EditorContent() {
 
           {/* 3. RUN FLOW */}
           <button
-              onClick={() => simulateFlow(startNodeId)}
-              className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all",
-                tutorialStep === 6
-                  ? "bg-indigo-600 hover:bg-indigo-500 text-white ring-4 ring-indigo-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(99,102,241,0.5)] z-10"
-                  : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
-              )}
+            onClick={() => simulateFlow(startNodeId)}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all",
+              tutorialStep === 6
+                ? "bg-indigo-600 hover:bg-indigo-500 text-white ring-4 ring-indigo-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(99,102,241,0.5)] z-10"
+                : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
+            )}
           >
-              <Play size={14} className="fill-current" />
-              Run Flow
+            <Play size={14} className="fill-current" />
+            Run Flow
           </button>
 
           {/* 4. PUBLISH */}
           <button
-              onClick={() => {
-                completeTutorial();
-                router.push('/publish');
-              }}
-              className={cn(
-                "flex items-center gap-2 px-4 py-2 transition-all rounded-xl text-xs font-bold",
-                (tutorialStep === 7 && finalResult)
-                  ? "bg-emerald-500 hover:bg-emerald-400 text-white ring-4 ring-emerald-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(16,185,129,0.5)] z-10"
-                  : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20"
-              )}
+            onClick={() => {
+              completeTutorial();
+              router.push('/publish');
+            }}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 transition-all rounded-xl text-xs font-bold",
+              (tutorialStep === 7 && finalResult)
+                ? "bg-emerald-500 hover:bg-emerald-400 text-white ring-4 ring-emerald-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(16,185,129,0.5)] z-10"
+                : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20"
+            )}
           >
-              <Rocket size={14} />
-              Publish
+            <Rocket size={14} />
+            Publish
           </button>
 
-          {/* 5. SHARE (Extreme Right) */}
+          {/* 5. SHARE MENU */}
           <div className="relative" ref={shareMenuRef}>
             <button
               onClick={() => setShowShareMenu(!showShareMenu)}
@@ -510,77 +523,100 @@ function EditorContent() {
 
             {showShareMenu && (
               <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-[#0d1117] border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150 p-4 flex flex-col gap-3">
+
                 {/* Header */}
-                <div className="flex items-center justify-between">
-                  <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Share Publicly</h3>
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                  <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Share & Privacy</h3>
                   <button onClick={() => setShowShareMenu(false)} className="text-slate-500 hover:text-slate-300 transition-colors">
                     <X size={12} />
                   </button>
                 </div>
 
+                {userId && (
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                    <div className="flex flex-col">
+                      <p className="text-[10px] text-slate-700 dark:text-slate-300 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                        {isPublic ? <Globe size={12} className="text-emerald-500" /> : <Lock size={12} className="text-slate-500" />}
+                        Public Access
+                      </p>
+                      <p className="text-[9px] text-slate-500 mt-0.5">Allow anyone with link to view.</p>
+                    </div>
+                    <button
+                      onClick={() => setIsPublic(!isPublic)}
+                      className={cn(
+                        "w-8 h-4 rounded-full transition-colors relative outline-none border border-transparent focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500",
+                        isPublic ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-700"
+                      )}
+                    >
+                      <div className={cn("absolute top-[1px] w-[12px] h-[12px] bg-white rounded-full transition-all duration-200", isPublic ? "left-[18px]" : "left-[2px]")} />
+                    </button>
+                  </div>
+                )}
+
                 {/* Permission toggle */}
                 <div className="flex flex-col gap-1.5">
-                  <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Link Permission</p>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Editor Permissions</p>
                   <div className="grid grid-cols-2 gap-1.5">
                     <button
                       onClick={() => setPublicEditable(false)}
                       className={cn(
-                        "flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-all",
+                        "flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-semibold transition-all justify-center",
                         !publicEditable
-                          ? "bg-indigo-500/10 border-indigo-500/40 text-indigo-400"
+                          ? "bg-indigo-500/10 border-indigo-500/40 text-indigo-500 dark:text-indigo-400"
                           : "border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                       )}
                     >
-                      <Eye size={12} />
-                      View Only
+                      <Eye size={12} /> View Only
                     </button>
                     <button
                       onClick={() => setPublicEditable(true)}
                       className={cn(
-                        "flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-all",
+                        "flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-semibold transition-all justify-center",
                         publicEditable
-                          ? "bg-amber-500/10 border-amber-500/40 text-amber-400"
+                          ? "bg-amber-500/10 border-amber-500/40 text-amber-600 dark:text-amber-400"
                           : "border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                       )}
                     >
-                      <Pencil size={12} />
-                      Can Edit
+                      <Pencil size={12} /> Can Edit
                     </button>
                   </div>
-                  <p className="text-[10px] text-slate-500 mt-0.5">
-                    {publicEditable
-                      ? "Anyone with the link can edit this flow."
-                      : "Anyone with the link can view this flow."}
-                  </p>
                 </div>
 
                 {/* Copy link button */}
-                <button
-                  onClick={handleShare}
-                  disabled={shareStatus === "sharing"}
-                  className={cn(
-                    "flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-bold transition-all justify-center w-full",
-                    shareStatus === "copied"
-                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                <div className="flex flex-col gap-2 mt-1">
+                  <button
+                    onClick={handleShare}
+                    disabled={shareStatus === "sharing"}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-bold transition-all justify-center w-full",
+                      (shareStatus === "copied" || shareStatus === "private_copied")
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                        : shareStatus === "sharing"
+                          ? "opacity-50 cursor-not-allowed border-slate-200 dark:border-slate-700 text-slate-500"
+                          : "bg-indigo-600 border-transparent text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/20"
+                    )}
+                  >
+                    {(shareStatus === "copied" || shareStatus === "private_copied")
+                      ? <><Check size={14} /> {shareStatus === "private_copied" ? "Copied! (Private)" : "Link Copied!"}</>
                       : shareStatus === "sharing"
-                      ? "opacity-50 cursor-not-allowed border-slate-200 dark:border-slate-700 text-slate-500"
-                      : "bg-indigo-600 border-transparent text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/20"
+                        ? "Generating link..."
+                        : <><Share2 size={14} /> Copy Link</>}
+                  </button>
+
+                  {shareStatus === "private_copied" && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 leading-tight text-center bg-amber-50 dark:bg-amber-500/10 p-1.5 rounded-md border border-amber-200 dark:border-amber-500/20">
+                      ⚠️ Link copied, but access is <strong>Private</strong>. Others won't be able to view it until you toggle to Public.
+                    </p>
                   )}
-                >
-                  {shareStatus === "copied"
-                    ? <><Check size={14} /> ✅ Link Copied!</>
-                    : shareStatus === "sharing"
-                    ? "Generating link..."
-                    : <><Share2 size={14} /> Copy Link</>}
-                </button>
+                </div>
 
                 {!userId && (
                   <div className="flex flex-col gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                    <h3 className="text-[10px] font-black uppercase tracking-widest text-violet-400">Collaborate in Real-Time</h3>
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-violet-500 dark:text-violet-400">Collaborate in Real-Time</h3>
                     <p className="text-[10px] text-slate-500">Sign in to sync & collaborate with a team.</p>
                     <button
                       onClick={() => router.push("/login?message=collaborate")}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-violet-500/40 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 text-xs font-bold transition-all justify-center w-full"
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-violet-500/40 bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-500/20 text-xs font-bold transition-all justify-center w-full"
                     >
                       <LogIn size={14} />
                       Sign In to Collaborate
@@ -590,6 +626,70 @@ function EditorContent() {
               </div>
             )}
           </div>
+
+          <div className="h-6 w-[1px] bg-slate-200 dark:bg-slate-800 mx-1" />
+
+          {/* 6. ACCOUNT UI DROPDOWN */}
+          <div className="relative" ref={profileMenuRef}>
+            {user ? (
+              <>
+                <button
+                  onClick={() => setShowProfileMenu(!showProfileMenu)}
+                  className="flex items-center justify-center w-7 h-7 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold border border-indigo-400 transition-colors shadow-lg shadow-indigo-500/20 outline-none"
+                  title={user.email}
+                >
+                  {user.email?.[0].toUpperCase() || "U"}
+                </button>
+
+                <AnimatePresence>
+                  {showProfileMenu && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-[#0d1117] border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-[100] overflow-hidden"
+                    >
+                      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+                        <p className="text-[10px] text-slate-500 uppercase font-black tracking-wider">Logged in as</p>
+                        <p className="text-xs text-slate-700 dark:text-slate-200 truncate mt-0.5 font-medium">{user.email}</p>
+                      </div>
+
+                      <div className="py-1">
+                        <a
+                          href="https://github.com/ramnath7shenoy/AgentForge/blob/main/README.md"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 px-4 py-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        >
+                          <BookOpen size={14} className="text-indigo-500 dark:text-indigo-400" /> Documentation
+                        </a>
+
+                        <button
+                          onClick={async () => {
+                            const supabase = createClient();
+                            await supabase.auth.signOut();
+                            window.location.href = "/";
+                          }}
+                          className="flex items-center gap-2 px-4 py-2 text-xs text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 w-full text-left transition-colors"
+                        >
+                          <LogOut size={14} /> Sign Out
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </>
+            ) : (
+              <button
+                onClick={() => router.push("/login")}
+                className="text-xs font-bold px-4 py-2 bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900 rounded-xl hover:opacity-90 transition-opacity shadow-md"
+              >
+                Sign In
+              </button>
+            )}
+          </div>
+
         </div>
       </header>
 
@@ -667,7 +767,7 @@ function EditorContent() {
             </button>
           )}
 
-          {/* HELP FAB: Bottom Right of Canvas */}
+          {/* HELP FAB */}
           <button
             onClick={() => {
               localStorage.removeItem('agentforge_onboarding_complete');
@@ -795,5 +895,3 @@ export default function EditorPage() {
     </ReactFlowProvider>
   );
 }
-
-

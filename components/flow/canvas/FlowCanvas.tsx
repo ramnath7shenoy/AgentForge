@@ -35,9 +35,10 @@ import ApprovalNode from "../nodes/ApprovalNode";
 
 interface FlowCanvasProps {
   setSelectedNodeId: (id: string | null) => void;
+  editable?: boolean;
 }
 
-export default function FlowCanvas({ setSelectedNodeId }: FlowCanvasProps) {
+export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowCanvasProps) {
   const nodesFromStore = useFlowStore((state) => state.nodes);
   const nodes = useMemo(() => nodesFromStore || [], [nodesFromStore]);
   const edgesFromStore = useFlowStore((state) => state.edges);
@@ -135,8 +136,8 @@ export default function FlowCanvas({ setSelectedNodeId }: FlowCanvasProps) {
         "w-full h-full transition-colors duration-300",
         theme === "dark" ? "bg-[#0b0e14]" : "bg-slate-50"
       )} 
-      onDragOver={(e) => e.preventDefault()} 
-      onDrop={onDrop}
+      onDragOver={editable ? (e) => e.preventDefault() : undefined} 
+      onDrop={editable ? onDrop : undefined}
     >
       <ReactFlow
         nodes={nodes}
@@ -145,10 +146,13 @@ export default function FlowCanvas({ setSelectedNodeId }: FlowCanvasProps) {
           : e
         )}
         nodeTypes={nodeTypes}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
+        onNodesChange={editable ? onNodesChange : undefined}
+        onEdgesChange={editable ? onEdgesChange : undefined}
+        onConnect={editable ? onConnect : undefined}
         onNodeClick={(_, n) => setSelectedNodeId(n.id)}
+        nodesDraggable={editable}
+        nodesConnectable={editable}
+        elementsSelectable={editable}
         fitView
       >
         <Controls className={cn(

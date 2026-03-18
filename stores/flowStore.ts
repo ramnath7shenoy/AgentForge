@@ -99,7 +99,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   },
 
   // --- FLOW EXECUTION LOGIC ---
-  simulateFlow: async (startNodeId: string) => {
+  simulateFlow: async (startNodeId: string, userId?: string) => {
     const { nodes, edges } = get();
     if (!startNodeId) return;
 
@@ -336,7 +336,11 @@ export const useFlowStore = create<FlowState>((set, get) => ({
           const res = await fetch('/api/execute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: instructions, instructions, userId: 'default-user' })
+            body: JSON.stringify({ 
+              prompt: instructions, 
+              instructions, 
+              userId: userId || 'default-user' 
+            })
           });
 
           if (res.body) {

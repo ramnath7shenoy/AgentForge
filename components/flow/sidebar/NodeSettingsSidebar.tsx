@@ -24,7 +24,11 @@ import {
 import { cn } from "@/lib/utils";
 import VaultInput from "@/components/ui/VaultInput";
 
-const NodeSettingsSidebar: React.FC = () => {
+interface NodeSettingsSidebarProps {
+  isOwner?: boolean;
+}
+
+const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = true }) => {
   const nodes = useFlowStore((state) => state.nodes);
   const selectedNodeId = useFlowStore((state) => state.selectedNodeId);
   const setNodes = useFlowStore((state) => state.setNodes);
@@ -36,6 +40,13 @@ const NodeSettingsSidebar: React.FC = () => {
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
   const [sidebarTab, setSidebarTab] = React.useState<"settings" | "data">("settings");
+
+  // Force settings tab for guests
+  React.useEffect(() => {
+    if (!isOwner && sidebarTab === "data") {
+      setSidebarTab("settings");
+    }
+  }, [isOwner, sidebarTab]);
 
   const updateNodeData = (id: string, newData: Partial<NodeData>) => {
     setNodes(
@@ -250,8 +261,8 @@ const NodeSettingsSidebar: React.FC = () => {
             onChange={(val) => updateNodeData(selectedNode.id, { webhookID: val })}
             placeholder="Webhook signing secret..."
             theme={theme}
-          />
-        </div>
+            isOwner={isOwner}
+          />        </div>
       </div>
     );
   };
@@ -398,6 +409,7 @@ const NodeSettingsSidebar: React.FC = () => {
             onChange={(val) => updateNodeData(selectedNode.id, { persistence: val })}
             placeholder="Bearer token or vault key..."
             theme={theme}
+            isOwner={isOwner}
           />
         </div>
       )}
@@ -642,18 +654,20 @@ const NodeSettingsSidebar: React.FC = () => {
         >
           Settings
         </button>
-        <button
-          onClick={() => setSidebarTab("data")}
-          className={cn(
-            "flex items-center gap-1.5 px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 -mb-px",
-            sidebarTab === "data"
-              ? "text-purple-400 border-purple-500"
-              : theme === "dark" ? "text-slate-500 border-transparent hover:text-slate-300" : "text-slate-400 border-transparent hover:text-slate-600"
-          )}
-        >
-          Data
-          {hasData && <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />}
-        </button>
+        {isOwner && (
+          <button
+            onClick={() => setSidebarTab("data")}
+            className={cn(
+              "flex items-center gap-1.5 px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 -mb-px",
+              sidebarTab === "data"
+                ? "text-purple-400 border-purple-500"
+                : theme === "dark" ? "text-slate-500 border-transparent hover:text-slate-300" : "text-slate-400 border-transparent hover:text-slate-600"
+            )}
+          >
+            Data
+            {hasData && <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />}
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
