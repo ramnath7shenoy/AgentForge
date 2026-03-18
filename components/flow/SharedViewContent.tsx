@@ -127,7 +127,7 @@ function SharedEditor({ flow, editable }: SharedViewContentProps) {
           </div>
           <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800 mx-2" />
           <span className="text-slate-400 text-sm font-medium truncate max-w-xs">{flow.name}</span>
-          
+
           {editable ? (
             <span className="flex items-center gap-1.5 text-[10px] text-amber-400 uppercase tracking-widest font-bold px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded-md">
               <Pencil size={10} />
@@ -158,8 +158,8 @@ function SharedEditor({ flow, editable }: SharedViewContentProps) {
               onClick={() => setShowMinimap(!showMinimap)}
               className={cn(
                 "p-2 rounded-lg transition-all",
-                showMinimap 
-                  ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm" 
+                showMinimap
+                  ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
                   : "text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
               )}
               title="Toggle Minimap"
@@ -176,11 +176,11 @@ function SharedEditor({ flow, editable }: SharedViewContentProps) {
           </button>
 
           <button
-              onClick={() => simulateFlow(startNodeId, flow.userId)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
+            onClick={() => simulateFlow(startNodeId)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
           >
-              <Play size={14} className="fill-current" />
-              Run Flow
+            <Play size={14} className="fill-current" />
+            Run Flow
           </button>
         </div>
       </header>
