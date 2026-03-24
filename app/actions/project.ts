@@ -22,6 +22,7 @@ export async function createProject(name: string) {
     });
 
     revalidatePath('/editor');
+    revalidatePath('/dashboard');
     return { project };
   } catch (error: any) {
     console.error('Project creation failed:', error);
@@ -56,7 +57,7 @@ export async function getProjects() {
 }
 
 /**
- * Deletes a project securely via Prisma.
+ * Deletes a project and all its flows securely via Prisma.
  */
 export async function deleteProject(projectId: string) {
   const supabase = await createClient();
@@ -65,6 +66,15 @@ export async function deleteProject(projectId: string) {
   if (!user) return { error: 'Unauthorized' };
 
   try {
+    // Delete flows associated with this project first
+    await prisma.flow.deleteMany({
+      where: {
+        projectId: projectId,
+        userId: user.id
+      }
+    });
+
+    // Delete the project itself
     await prisma.project.delete({
       where: {
         id: projectId,
@@ -73,6 +83,7 @@ export async function deleteProject(projectId: string) {
     });
 
     revalidatePath('/editor');
+    revalidatePath('/dashboard');
     return { success: true };
   } catch (error: any) {
     console.error('Project deletion failed:', error);

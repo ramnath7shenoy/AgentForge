@@ -79,24 +79,24 @@
 }
 
 .dark {
-  /* Dark mode colors tuned for readability */
-  --background: #0f172a; /* page background */
-  --foreground: #e5e7eb; /* primary text */
-  --card: #111827; /* panel background */
-  --card-foreground: #e5e7eb;
-  --popover: #111827;
-  --popover-foreground: #e5e7eb;
+  /* Dark mode colors tuned for pure black readability */
+  --background: #000000; /* vantablack */
+  --foreground: #fafafa; /* clean off-white */
+  --card: #000000; 
+  --card-foreground: #fafafa;
+  --popover: #000000;
+  --popover-foreground: #fafafa;
   --primary: #6366f1; /* accent */
   --primary-foreground: #f9fafb;
-  --secondary: #1f2937; /* node background */
-  --secondary-foreground: #e5e7eb;
-  --muted: #111827;
-  --muted-foreground: #9ca3af; /* secondary text */
+  --secondary: #18181b; /* zinc-900 */
+  --secondary-foreground: #fafafa;
+  --muted: #18181b;
+  --muted-foreground: #a1a1aa; /* zinc-400 */
   --accent: #6366f1;
   --accent-foreground: #f9fafb;
-  --destructive: #b91c1c;
-  --border: #374151;
-  --input: #111827;
+  --destructive: #ef4444; /* red-500 */
+  --border: #1f1f1f; /* very dark gray */
+  --input: #18181b;
   --ring: #6366f1;
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);

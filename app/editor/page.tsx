@@ -44,14 +44,19 @@ import { generateWorkflow } from "@/app/actions/ai-architect";
 import { FLOW_TEMPLATES } from "@/lib/constants/templates";
 import { getSnapshots, saveSnapshot, deleteSnapshot, FlowSnapshot } from "@/lib/versionSnapshots";
 import { cn } from "@/lib/utils";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ReactFlowProvider } from "reactflow";
 import { createClient } from "@/lib/supabase/client";
+import { getProjects } from "@/app/actions/project";
 
 const LS_GUEST_FLOW_KEY = "agentforge_guest_flow";
 
 function EditorContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const projectIdParam = searchParams.get("projectId");
+  const flowIdParam = searchParams.get("id");
+
   const {
     nodes,
     edges,
@@ -71,7 +76,10 @@ function EditorContent() {
     clearCanvas,
     undo,
     past,
-    activeProject
+    activeProject,
+    setActiveProject,
+    projects,
+    setProjects
   } = useFlowStore();
 
   const [mounted, setMounted] = useState(false);
@@ -138,6 +146,18 @@ function EditorContent() {
   // Initial Fetch on Load
   useEffect(() => {
     async function fetchInitialFlow() {
+      // If navigating via New Agent (has projectId but no flow id), start blank canvas
+      if (projectIdParam && !flowIdParam) {
+        setNodes([]);
+        setEdges([]);
+        setCurrentFlowId(undefined);
+        setIsPublic(false);
+        setPublicEditable(false);
+        setFlowName("Untitled Agent");
+        setHasHydrated(true);
+        return;
+      }
+
       const result = await getLatestFlow();
 
       if (result.success && result.flow) {
@@ -164,7 +184,29 @@ function EditorContent() {
       setHasHydrated(true);
     }
     fetchInitialFlow();
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, projectIdParam, flowIdParam]);
+
+  // Fetch projects list
+  useEffect(() => {
+    if (userId) {
+      getProjects().then((res) => {
+        if (res.projects) {
+          setProjects(res.projects);
+        }
+      });
+    }
+  }, [userId, setProjects]);
+
+  // Project ID syncing matching user requested snippet
+  useEffect(() => {
+    if (projectIdParam && projects.length > 0) {
+      const matchedProject = projects.find(p => p.id === projectIdParam);
+      if (matchedProject) {
+        setActiveProject(matchedProject);
+        console.log("Auto-selected project:", matchedProject.name);
+      }
+    }
+  }, [projectIdParam, projects, setActiveProject]);
 
   // Migrate guest localStorage flow to DB on login
   useEffect(() => {
@@ -396,11 +438,11 @@ function EditorContent() {
   return (
     <div className={cn(
       "flex flex-col h-screen w-full transition-colors duration-300",
-      theme === "dark" ? "dark bg-[#0b0e14] text-slate-200" : "bg-slate-50 text-slate-900"
+      theme === "dark" ? "dark bg-background text-foreground" : "bg-background text-foreground"
     )}>
 
       {/* HEADER */}
-      <header className="flex items-center justify-between border-b border-white/5 px-4 py-2 bg-slate-950/40 backdrop-blur-xl z-50 shadow-sm relative">
+      <header className="flex items-center justify-between border-b border-border px-4 py-2 bg-background/40 backdrop-blur-xl z-50 shadow-sm relative">
 
         {/* ── LEFT SECTION ── */}
         <div className="flex items-center gap-2">
@@ -497,7 +539,7 @@ function EditorContent() {
               </button>
 
               {showVersionMenu && (
-                <div className="absolute right-0 top-full mt-2 w-72 bg-[#0b0e14] border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150">
+                <div className="absolute right-0 top-full mt-2 w-72 bg-popover border border-border rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150">
                   <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
                     <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Snapshots</span>
                     <button
@@ -655,7 +697,7 @@ function EditorContent() {
             </button>
 
             {showShareMenu && (
-              <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-[#0d1117] border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150 p-4 flex flex-col gap-3">
+              <div className="absolute right-0 top-full mt-2 w-72 bg-popover border border-border rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150 p-4 flex flex-col gap-3">
 
                 {/* Header */}
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
@@ -781,7 +823,7 @@ function EditorContent() {
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: 10, scale: 0.95 }}
                       transition={{ duration: 0.15 }}
-                      className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-[#0d1117] border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-[100] overflow-hidden"
+                      className="absolute right-0 top-full mt-2 w-56 bg-popover border border-border rounded-xl shadow-xl z-[100] overflow-hidden"
                     >
                       <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
                         <p className="text-[10px] text-slate-500 uppercase font-black tracking-wider">Logged in as</p>
@@ -850,7 +892,7 @@ function EditorContent() {
               animate={{ width: 256, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="overflow-hidden border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0b0e14] flex-shrink-0"
+              className="overflow-hidden border-r border-border bg-card flex-shrink-0"
             >
               <div className="w-64 h-full">
                 <NodeSidebar onClearCanvas={handleClearCanvas} />
@@ -860,7 +902,7 @@ function EditorContent() {
         </AnimatePresence>
 
         {/* CANVAS */}
-        <main className="flex-1 relative bg-slate-50 dark:bg-[#0b0e14]">
+        <main className="flex-1 relative bg-background">
           <FlowCanvas setSelectedNodeId={setSelectedNodeId} />
 
           {/* SHIMMER OVERLAY (Generating AI) */}
@@ -965,7 +1007,7 @@ function EditorContent() {
               animate={{ width: 320, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="overflow-hidden border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0b0e14] flex-shrink-0"
+              className="overflow-hidden border-l border-border bg-card flex-shrink-0"
             >
               <div className="w-80 h-full overflow-y-auto">
                 <NodeSettingsSidebar />
@@ -991,7 +1033,7 @@ function EditorContent() {
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 10 }}
               transition={{ type: "spring", stiffness: 300, damping: 25 }}
-              className="w-full max-w-2xl bg-[#0d1117] border border-slate-700 rounded-2xl shadow-2xl overflow-hidden"
+              className="w-full max-w-2xl bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Modal Header */}
@@ -1126,7 +1168,7 @@ function EditorContent() {
   );
 }
 
-export default function EditorPage() {
+export default function EditorPage({ searchParams }: { searchParams: { projectId?: string } }) {
   return (
     <ReactFlowProvider>
       <EditorContent />

@@ -29,7 +29,8 @@ import Navbar from "@/components/ui/Navbar";
 import { useLogStore } from "@/stores/useLogStore";
 import { useVaultStore } from "@/stores/vaultStore";
 import { cn } from "@/lib/utils";
-import { getUserFlows, publishFlow, deleteFlow, getFolders, createFolder } from "@/app/actions/flow";
+import { getUserFlows, publishFlow, deleteFlow } from "@/app/actions/flow";
+import { getProjects, createProject, deleteProject } from "@/app/actions/project";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface FlowRecord {
@@ -39,13 +40,14 @@ interface FlowRecord {
   updated_at: Date;
   nodes: object;
   edges: object;
+  projectId?: string | null;
   folderId?: string | null;
 }
 
-interface Folder {
+interface ProjectRecord {
   id: string;
   name: string;
-  _count: { flows: number };
+  _count?: { flows: number };
 }
 
 export default function DashboardPage() {
@@ -54,13 +56,13 @@ export default function DashboardPage() {
   const vaultEntries = useVaultStore((s) => s.entries);
   const [mounted, setMounted] = useState(false);
   const [flows, setFlows] = useState<FlowRecord[]>([]);
-  const [folders, setFolders] = useState<Folder[]>([]);
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [activeTab, setActiveTab] = useState<"recent" | "projects" | "templates">("recent");
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [showNewFolderInput, setShowNewFolderInput] = useState(false);
-  const [newFolderName, setNewFolderName] = useState("");
+  const [showNewProjectInput, setShowNewProjectInput] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
 
   useEffect(() => {
     setMounted(true);
@@ -69,28 +71,39 @@ export default function DashboardPage() {
         setFlows(result.flows as FlowRecord[]);
       }
     });
-    getFolders().then((result) => {
-      if (result.success && result.folders) {
-        setFolders(result.folders as Folder[]);
+    getProjects().then((result) => {
+      if (result.projects) {
+        setProjects(result.projects as ProjectRecord[]);
       }
     });
   }, []);
 
   if (!mounted) return null;
 
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) return;
-    const result = await createFolder(newFolderName);
-    if (result.success && result.folder) {
-      setFolders([...folders, { ...result.folder, _count: { flows: 0 } } as Folder]);
-      setNewFolderName("");
-      setShowNewFolderInput(false);
+  const handleCreateProject = async () => {
+    if (!newProjectName.trim()) return;
+    const result = await createProject(newProjectName);
+    if (result.project) {
+      setProjects([...projects, { ...result.project, _count: { flows: 0 } } as ProjectRecord]);
+      setNewProjectName("");
+      setShowNewProjectInput(false);
+      setSelectedProjectId(result.project.id);
+    }
+  };
+
+  const handleDeleteProject = async (id: string) => {
+    const res = await deleteProject(id);
+    if (res.success) {
+      setProjects(projects.filter(p => p.id !== id));
+      if (selectedProjectId === id) setSelectedProjectId(null);
     }
   };
 
   const filteredFlows = flows.filter(flow => {
     if (activeTab === "projects") {
-      return selectedFolderId ? flow.folderId === selectedFolderId : !!flow.folderId;
+      // Check both projectId and folderId for legacy support, but prioritize projectId
+      const matchId = flow.projectId || flow.folderId;
+      return selectedProjectId ? matchId === selectedProjectId : !!matchId;
     }
     if (activeTab === "recent") return true;
     return true;
@@ -140,24 +153,24 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#05070a] text-white relative z-10 flex flex-col">
+    <div className="dark min-h-screen bg-background text-foreground relative z-10 flex flex-col">
       <Navbar />
 
       <div className="flex-1 max-w-7xl w-full mx-auto px-6 py-8 flex gap-8">
         
         {/* SIDEBAR */}
-        <div className="w-64 flex flex-col gap-6">
+        <div className="w-64 flex flex-col gap-6 border-r border-border pr-6">
           <div className="space-y-1">
-            <h2 className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-3 mb-2">Workspace</h2>
+            <h2 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground px-3 mb-2">Workspace</h2>
             <SidebarTab 
               icon={<History size={14} />} 
               label="Recent Flows" 
               active={activeTab === "recent"} 
-              onClick={() => { setActiveTab("recent"); setSelectedFolderId(null); }}
+              onClick={() => { setActiveTab("recent"); setSelectedProjectId(null); }}
             />
             <SidebarTab 
               icon={<FolderIcon size={14} />} 
-              label="Project Folders" 
+              label="Projects" 
               active={activeTab === "projects"} 
               onClick={() => setActiveTab("projects")}
             />
@@ -178,58 +191,71 @@ export default function DashboardPage() {
                 className="space-y-1"
               >
                 <div className="flex items-center justify-between px-3 mb-2">
-                  <h2 className="text-[10px] font-black uppercase tracking-widest text-slate-500">My Projects</h2>
+                  <h2 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">My Projects</h2>
                   <button 
-                    onClick={() => setShowNewFolderInput(true)}
-                    className="text-slate-500 hover:text-indigo-400 transition-colors"
+                    onClick={() => setShowNewProjectInput(true)}
+                    className="text-muted-foreground hover:text-indigo-400 transition-colors"
                   >
                     <PlusCircle size={14} />
                   </button>
                 </div>
 
-                {showNewFolderInput && (
+                {showNewProjectInput && (
                   <div className="px-3 mb-2">
                     <input 
                       autoFocus
-                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-indigo-500 transition-all"
-                      placeholder="Folder name..."
-                      value={newFolderName}
-                      onChange={(e) => setNewFolderName(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
-                      onBlur={() => !newFolderName && setShowNewFolderInput(false)}
+                      className="w-full bg-background border border-border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-indigo-500 transition-all"
+                      placeholder="Project name..."
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleCreateProject()}
+                      onBlur={() => !newProjectName && setShowNewProjectInput(false)}
                     />
                   </div>
                 )}
 
-                {folders.map(folder => (
-                  <button
-                    key={folder.id}
-                    onClick={() => setSelectedFolderId(folder.id)}
-                    className={cn(
-                      "w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition-all group",
-                      selectedFolderId === folder.id 
-                        ? "bg-indigo-600/10 text-indigo-400 font-bold" 
-                        : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"
-                    )}
-                  >
-                    <div className="flex items-center gap-2">
-                      <FolderIcon size={12} className={cn(selectedFolderId === folder.id ? "text-indigo-400" : "text-slate-500")} />
-                      {folder.name}
-                    </div>
-                    <span className="text-[10px] opacity-50 group-hover:opacity-100">{folder._count.flows}</span>
-                  </button>
+                {projects.map(project => (
+                  <div key={project.id} className="group relative">
+                    <button
+                      onClick={() => setSelectedProjectId(project.id)}
+                      className={cn(
+                        "w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition-all",
+                        selectedProjectId === project.id 
+                          ? "bg-indigo-600/10 text-indigo-400 font-bold" 
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <FolderIcon size={12} className={cn(selectedProjectId === project.id ? "text-indigo-400" : "text-muted-foreground")} />
+                        {project.name}
+                      </div>
+                      <span className="text-[10px] opacity-50 group-hover:opacity-0">{project._count?.flows ?? 0}</span>
+                    </button>
+                    
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm(`Are you sure you want to delete the project "${project.name}"?`)) {
+                          handleDeleteProject(project.id);
+                        }
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-muted-foreground hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
                 ))}
 
-                {folders.length === 0 && !showNewFolderInput && (
-                  <div className="px-3 py-4 text-center border border-dashed border-slate-800 rounded-xl">
-                    <p className="text-[10px] text-slate-600 italic">No folders yet</p>
+                {projects.length === 0 && !showNewProjectInput && (
+                  <div className="px-3 py-4 text-center border border-dashed border-border rounded-xl">
+                    <p className="text-[10px] text-muted-foreground italic">No projects yet</p>
                   </div>
                 )}
               </motion.div>
             )}
           </AnimatePresence>
 
-          <div className="mt-auto p-4 bg-slate-900/50 border border-slate-800 rounded-2xl">
+          <div className="mt-auto p-4 bg-card border border-border rounded-2xl">
             <div className="flex items-center gap-2 mb-3">
               <Shield size={14} className="text-indigo-400" />
               <h3 className="text-[10px] font-bold uppercase tracking-wider">System Health</h3>
@@ -250,17 +276,17 @@ export default function DashboardPage() {
             <div>
               <h1 className="text-2xl font-bold tracking-tight">
                 {activeTab === "recent" && "Mission Control"}
-                {activeTab === "projects" && (selectedFolderId ? folders.find(f => f.id === selectedFolderId)?.name : "Project Folders")}
+                {activeTab === "projects" && (selectedProjectId ? projects.find(f => f.id === selectedProjectId)?.name : "Projects")}
                 {activeTab === "templates" && "Agent Blueprints"}
               </h1>
-              <p className="text-sm text-slate-500 mt-1">
+              <p className="text-sm text-muted-foreground mt-1">
                 {activeTab === "recent" && "Agent fleet overview & system diagnostics"}
-                {activeTab === "projects" && "Organize your agents into specialized mission folders"}
+                {activeTab === "projects" && "Organize your agents into specialized mission projects"}
                 {activeTab === "templates" && "Starting points for advanced automation"}
               </p>
             </div>
             <button
-              onClick={() => router.push("/editor")}
+              onClick={() => router.push(selectedProjectId ? `/editor?projectId=${selectedProjectId}` : "/editor")}
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-500/20 active:scale-95"
             >
               <Plus size={14} />
@@ -284,22 +310,22 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <Zap size={14} className="text-indigo-400" />
-                  <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
-                    {activeTab === "recent" ? "Recent Deployments" : "Folder Contents"}
+                  <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                    {activeTab === "recent" ? "Recent Deployments" : "Project Contents"}
                   </h2>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 {filteredFlows.length === 0 ? (
-                  <div className="col-span-2 bg-slate-900/30 border border-dashed border-slate-800 rounded-3xl p-12 text-center">
-                    <div className="w-16 h-16 bg-slate-800/50 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                      <Cpu size={24} className="text-slate-600" />
+                  <div className="col-span-2 bg-card border border-dashed border-border rounded-3xl p-12 text-center">
+                    <div className="w-16 h-16 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4">
+                      <Cpu size={24} className="text-muted-foreground" />
                     </div>
-                    <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">No agents detected</p>
+                    <p className="text-xs text-muted-foreground font-bold uppercase tracking-widest">No agents detected</p>
                     <button 
                       onClick={() => router.push("/editor")}
-                      className="mt-4 text-[10px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 mx-auto"
+                      className="mt-4 text-[10px] text-indigo-500 hover:text-indigo-400 font-bold flex items-center gap-1 mx-auto"
                     >
                       Initialize first agent <ChevronRight size={10} />
                     </button>
@@ -311,7 +337,7 @@ export default function DashboardPage() {
                       key={flow.id}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="bg-slate-900/50 backdrop-blur-md border border-slate-800/50 rounded-2xl p-4 hover:border-indigo-500/40 transition-all group relative overflow-hidden"
+                      className="bg-card backdrop-blur-md border border-border rounded-2xl p-4 hover:border-indigo-500/40 transition-all group relative overflow-hidden"
                     >
                       <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
                          <div className="flex gap-1">
@@ -349,7 +375,7 @@ export default function DashboardPage() {
                            </div>
                         </div>
                       ) : (
-                        <div className="flex items-center justify-between mt-2 pt-4 border-t border-slate-800/50">
+                        <div className="flex items-center justify-between mt-2 pt-4 border-t border-border">
                           <div className="flex items-center gap-2">
                             {flow.isPublic ? (
                               <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-bold">
@@ -384,16 +410,16 @@ export default function DashboardPage() {
                <div className="flex flex-col gap-3">
                   <div className="flex items-center gap-2 px-1">
                     <Activity size={14} className="text-blue-400" />
-                    <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">Event Stream</h2>
+                    <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Event Stream</h2>
                   </div>
-                  <div className="bg-slate-900/30 border border-slate-800/50 rounded-3xl overflow-hidden backdrop-blur-sm">
+                  <div className="bg-card border border-border rounded-3xl overflow-hidden backdrop-blur-sm">
                     {recentLogs.length === 0 ? (
                       <div className="p-12 text-center">
-                        <Activity size={20} className="mx-auto mb-2 text-slate-700" />
-                        <p className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">Quiet Sector</p>
+                        <Activity size={20} className="mx-auto mb-2 text-muted-foreground" />
+                        <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Quiet Sector</p>
                       </div>
                     ) : (
-                      <div className="divide-y divide-slate-800/30">
+                      <div className="divide-y divide-border">
                         {recentLogs.map(log => (
                           <div key={log.id} className="flex items-start gap-3 px-4 py-3 hover:bg-white/5 transition-colors">
                             <div className="mt-1 flex-shrink-0">
@@ -418,21 +444,21 @@ export default function DashboardPage() {
                <div className="flex flex-col gap-3">
                   <div className="flex items-center gap-2 px-1">
                     <Lock size={14} className="text-cyan-400" />
-                    <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">Vault Access</h2>
+                    <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Vault Access</h2>
                   </div>
-                  <div className="bg-slate-900/30 border border-slate-800/50 rounded-3xl p-5 backdrop-blur-sm">
+                  <div className="bg-card border border-border rounded-3xl p-5 backdrop-blur-sm">
                      <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
                            <div className={cn("w-2 h-2 rounded-full", vaultEntries.length > 0 ? "bg-emerald-500 animate-pulse" : "bg-rose-500")} />
-                           <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">
+                           <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
                              {vaultEntries.length > 0 ? "Encrypted" : "Empty"}
                            </span>
                         </div>
-                        <span className="text-[9px] text-slate-500 font-bold">{vaultEntries.length} Keys</span>
+                        <span className="text-[9px] text-muted-foreground font-bold">{vaultEntries.length} Keys</span>
                      </div>
                      <div className="space-y-2">
                         {vaultEntries.slice(0, 3).map(entry => (
-                          <div key={entry.key} className="flex items-center justify-between px-3 py-2 bg-black/20 border border-slate-800/50 rounded-xl">
+                          <div key={entry.key} className="flex items-center justify-between px-3 py-2 bg-muted border border-border rounded-xl">
                             <span className="text-[10px] font-mono text-cyan-400">{entry.key}</span>
                             <span className="text-[9px] text-slate-600 font-mono">••••••</span>
                           </div>
@@ -461,12 +487,12 @@ function SidebarTab({ icon, label, active, onClick }: { icon: React.ReactNode; l
   return (
     <button
       onClick={onClick}
-      className={cn(
-        "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all relative group",
-        active 
-          ? "bg-indigo-600/10 text-indigo-400" 
-          : "text-slate-500 hover:bg-slate-900 hover:text-slate-300"
-      )}
+        className={cn(
+          "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all relative group",
+          active 
+            ? "bg-indigo-600/10 text-indigo-400" 
+            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+        )}
     >
       {active && <motion.div layoutId="sidebar-active" className="absolute left-0 w-1 h-5 bg-indigo-500 rounded-r-full" />}
       <span className={cn("transition-colors", active ? "text-indigo-400" : "group-hover:text-slate-300")}>
@@ -490,7 +516,7 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
       "rounded-3xl border p-5 flex items-center gap-4 transition-all hover:scale-[1.02] backdrop-blur-sm",
       colorClasses[color] || colorClasses.indigo
     )}>
-      <div className="w-12 h-12 rounded-2xl bg-slate-900/80 flex items-center justify-center shadow-inner">
+      <div className="w-12 h-12 rounded-2xl bg-muted flex items-center justify-center shadow-inner">
         {icon}
       </div>
       <div>

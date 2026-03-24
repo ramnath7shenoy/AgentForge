@@ -145,7 +145,7 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
     <div 
       className={cn(
         "w-full h-full transition-colors duration-300",
-        theme === "dark" ? "bg-[#0b0e14]" : "bg-slate-50"
+        "bg-background"
       )} 
       onDragOver={editable ? (e) => e.preventDefault() : undefined} 
       onDrop={editable ? onDrop : undefined}
@@ -178,10 +178,7 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
         )} />
         {showMinimap && (
           <MiniMap 
-            style={{ 
-                background: theme === "dark" ? '#0b0e14' : '#ffffff',
-                border: 'none'
-            }} 
+            className="!bg-popover !border-border rounded-xl shadow-lg"
             maskColor={theme === "dark" ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.5)"}
           />
         )}

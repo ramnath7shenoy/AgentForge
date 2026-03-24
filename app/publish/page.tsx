@@ -45,14 +45,14 @@ export default function PublishPage() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-[#0b0e14] text-white overflow-hidden">
+    <div className="flex h-screen w-full bg-background text-foreground overflow-hidden">
       {/* LEFT COLUMN: Preview & Gallery */}
-      <div className="w-1/2 border-r border-slate-800 flex flex-col h-full bg-[#0b0e14]">
-        <header className="p-6 border-b border-slate-800 flex items-center justify-between bg-[#0b0e14]">
+      <div className="w-1/2 border-r border-border flex flex-col h-full bg-card">
+        <header className="p-6 border-b border-border flex items-center justify-between bg-card">
           <div className="flex items-center gap-4">
             <button
               onClick={() => router.back()}
-              className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400 hover:text-white border border-slate-800"
+              className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400 hover:text-white border border-border"
             >
               <ArrowLeft size={18} />
             </button>
@@ -89,7 +89,7 @@ export default function PublishPage() {
 
                 <textarea
                   data-nodrag
-                  className="w-full h-24 bg-[#05070a] border border-slate-800 rounded-xl p-4 text-xs text-slate-300 resize-none focus:outline-none focus:border-indigo-500/50 transition-colors shadow-inner"
+                  className="w-full h-24 bg-background border border-border rounded-xl p-4 text-xs text-muted-foreground resize-none focus:outline-none focus:border-indigo-500/50 transition-colors shadow-inner"
                   placeholder="Enter temporary testing data..."
                   onChange={(e) => {
                     const startNode = nodes.find(n => n.type === 'input') || nodes[0];
@@ -133,14 +133,12 @@ export default function PublishPage() {
                 </div>
 
                 <div className="w-full">
-                  {finalResult.type === "text" && (
-                    <pre className="text-[11px] font-mono text-slate-300 p-5 bg-[#05070a] rounded-xl border border-slate-800 whitespace-pre-wrap text-left shadow-inner leading-relaxed">
+                  {finalResult.type === "text" ? (
+                    <pre className="text-[11px] font-mono text-slate-300 p-5 bg-background rounded-xl border border-border whitespace-pre-wrap text-left shadow-inner leading-relaxed">
                       {finalResult.payload}
                     </pre>
-                  )}
-
-                  {finalResult.type === "file" && (
-                    <div className="flex flex-col items-center gap-5 p-8 bg-[#05070a] rounded-xl border border-slate-800 shadow-inner">
+                  ) : (
+                    <div className="flex flex-col items-center gap-5 p-8 bg-background rounded-xl border border-border shadow-inner">
                       {finalResult.meta?.mimeType?.startsWith('image/') ? (
                         <img src={finalResult.payload} alt="Preview" className="max-h-52 rounded-xl shadow-2xl border border-slate-800" />
                       ) : (
@@ -164,7 +162,7 @@ export default function PublishPage() {
                   )}
 
                   {finalResult.type === "data" && (
-                    <pre className="text-[10px] font-mono text-indigo-400 p-5 bg-[#05070a] rounded-xl border border-slate-800 text-left shadow-inner">
+                    <pre className="text-[10px] font-mono text-indigo-400 p-5 bg-background rounded-xl border border-border text-left shadow-inner">
                       {JSON.stringify(finalResult.payload, null, 2)}
                     </pre>
                   )}
@@ -181,8 +179,8 @@ export default function PublishPage() {
       </div>
 
       {/* RIGHT COLUMN: Code Export */}
-      <div className="w-1/2 flex flex-col h-full bg-[#05070a]">
-        <header className="p-6 border-b border-slate-800 flex items-center justify-between bg-[#0b0e14]">
+      <div className="w-1/2 flex flex-col h-full bg-background">
+        <header className="p-6 border-b border-border flex items-center justify-between bg-card">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-indigo-500/10 rounded-lg">
               <Code2 size={18} className="text-indigo-500" />
@@ -232,7 +230,7 @@ export default function PublishPage() {
             {copied ? "Copied" : "Copy Source"}
           </button>
 
-          <div className="flex-1 bg-[#0b0e14] border border-slate-800 rounded-2xl p-8 overflow-hidden flex flex-col shadow-2xl">
+          <div className="flex-1 bg-card border border-border rounded-2xl p-8 overflow-hidden flex flex-col shadow-2xl">
             <div className="flex items-center gap-2 mb-6 opacity-40">
               <div className="w-2.5 h-2.5 rounded-full bg-rose-500" />
               <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />

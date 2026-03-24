@@ -59,8 +59,8 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
   if (!selectedNode) {
     return (
       <div className={cn(
-        "w-full h-full p-6 flex flex-col items-center justify-center text-center transition-colors duration-300 border-l",
-        theme === "dark" ? "bg-[#0b0e14] border-slate-800 text-slate-500" : "bg-white border-slate-200 text-slate-400"
+        "w-full h-full p-6 flex flex-col items-center justify-center text-center transition-colors duration-300 border-l mb-2",
+        "bg-card border-border text-muted-foreground"
       )}>
         <Settings size={24} className="mb-2 opacity-20" />
         <p className="italic text-sm">Select a tool to configure</p>
@@ -101,7 +101,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           <select
             className={cn(
               "rounded-lg p-2 text-sm focus:ring-2 focus:ring-amber-500/20 outline-none transition-all border",
-              theme === "dark" ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-900",
+              "bg-background border-border text-foreground",
               tutorialStep === 3 && "ring-4 ring-amber-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(245,158,11,0.5)]"
             )}
             value={selectedNode.data.schedule || "Manual"}
@@ -130,7 +130,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                 <select
                   className={cn(
                     "rounded-lg p-2 text-sm focus:ring-2 focus:ring-amber-500/20 outline-none transition-all border",
-                    theme === "dark" ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+                    "bg-background border-border text-foreground"
                   )}
                   value={selectedNode.data.cron || "Every Minute"}
                   onChange={(e) => updateNodeData(selectedNode.id, { cron: e.target.value })}
@@ -143,7 +143,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
               </div>
 
               {(selectedNode.data.cron === "Daily" || selectedNode.data.cron === "Weekly") && (
-                <div className="flex flex-col gap-2 p-3 bg-slate-100 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div className="flex flex-col gap-2 p-3 bg-muted rounded-xl border border-border">
                   {selectedNode.data.cron === "Weekly" && (
                     <div className="flex flex-col gap-2 mb-2">
                       <label className="text-[10px] font-bold uppercase text-slate-500">Run on Days</label>
@@ -164,9 +164,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                                 "px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md border transition-all",
                                 isSelected 
                                   ? "bg-amber-500 border-amber-500 text-white shadow-md shadow-amber-500/20" 
-                                  : theme === "dark" 
-                                    ? "bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200" 
-                                    : "bg-white border-slate-200 text-slate-500 hover:text-slate-800"
+                                  : "bg-card border-border text-muted-foreground hover:text-foreground"
                               )}
                             >
                               {day}
@@ -183,7 +181,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                       type="time"
                       className={cn(
                         "rounded-lg p-2 text-sm focus:ring-2 focus:ring-amber-500/20 outline-none transition-all border w-full",
-                        theme === "dark" ? "bg-slate-900 border-slate-700 text-white" : "bg-white border-slate-200 text-slate-900"
+                        "bg-background border-border text-foreground"
                       )}
                       value={selectedNode.data.time || "09:00"}
                       onChange={(e) => updateNodeData(selectedNode.id, { time: e.target.value })}
@@ -197,7 +195,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                 <select
                   className={cn(
                     "rounded-lg p-2 text-sm focus:ring-2 focus:ring-amber-500/20 outline-none transition-all border",
-                    theme === "dark" ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+                    "bg-background border-border text-foreground"
                   )}
                   value={selectedNode.data.timezone || "Local Browser Time"}
                   onChange={(e) => updateNodeData(selectedNode.id, { timezone: e.target.value })}
@@ -210,12 +208,12 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           )}
 
           {selectedNode.data.schedule === "Webhook" && (
-            <div className="mt-2 p-3 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 break-all text-xs font-mono text-slate-500 flex flex-col gap-2 relative group">
-              <span className="text-[10px] font-bold uppercase text-slate-400">Webhook URL Generated:</span>
+            <div className="mt-2 p-3 bg-muted rounded-lg border border-border break-all text-xs font-mono text-muted-foreground flex flex-col gap-2 relative group">
+              <span className="text-[10px] font-bold uppercase text-muted-foreground text-opacity-70">Webhook URL Generated:</span>
               <span className="pr-6">https://agentforge.com/api/webhook/{selectedNode.id}</span>
               <button 
                 onClick={handleCopyWebhook}
-                className="absolute right-3 top-1/2 mt-1 -translate-y-1/2 text-slate-400 hover:text-amber-500 opacity-0 group-hover:opacity-100 transition-all font-sans text-[10px] bg-slate-200 dark:bg-slate-800 px-2 py-1 rounded"
+                className="absolute right-3 top-1/2 mt-1 -translate-y-1/2 text-muted-foreground hover:text-amber-500 opacity-0 group-hover:opacity-100 transition-all font-sans text-[10px] bg-background px-2 py-1 rounded"
               >
                 Copy URL
               </button>
@@ -240,15 +238,15 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         </div>
         <div className="flex flex-col gap-2">
           <label className="text-[10px] font-bold uppercase text-slate-500">Incoming URL</label>
-          <p className="text-[10px] text-slate-400 italic leading-relaxed">
+          <p className="text-[10px] text-muted-foreground italic leading-relaxed">
             Send POST requests to this endpoint to trigger the flow and pass payload data.
           </p>
-          <div className="mt-2 p-3 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 break-all text-xs font-mono text-slate-500 flex flex-col gap-2 relative group">
-            <span className="text-[10px] font-bold uppercase text-slate-400">Webhook Endpoint Generated:</span>
+          <div className="mt-2 p-3 bg-muted rounded-lg border border-border break-all text-xs font-mono text-muted-foreground flex flex-col gap-2 relative group">
+            <span className="text-[10px] font-bold uppercase text-muted-foreground text-opacity-70">Webhook Endpoint Generated:</span>
             <span className="pr-6">https://agentforge.com/api/webhook/{selectedNode.id}</span>
             <button 
                 onClick={handleCopyWebhook}
-                className="absolute right-3 top-1/2 mt-1 -translate-y-1/2 text-slate-400 hover:text-purple-500 opacity-0 group-hover:opacity-100 transition-all font-sans text-[10px] bg-slate-200 dark:bg-slate-800 px-2 py-1 rounded"
+                className="absolute right-3 top-1/2 mt-1 -translate-y-1/2 text-muted-foreground hover:text-purple-500 opacity-0 group-hover:opacity-100 transition-all font-sans text-[10px] bg-background px-2 py-1 rounded"
               >
                 Copy URL
               </button>
@@ -280,7 +278,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           placeholder="What should we search for in the vault?"
           className={cn(
             "rounded-lg p-3 text-sm focus:ring-2 focus:ring-cyan-500/20 outline-none transition-all border resize-none",
-            theme === "dark" ? "bg-slate-900 border-slate-700 text-white focus:border-cyan-500" : "bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500"
+            "bg-background border-border text-foreground focus:border-cyan-500"
           )}
           value={selectedNode.data.instructions || ""}
           onChange={(e) => updateNodeData(selectedNode.id, { instructions: e.target.value })}
@@ -289,7 +287,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         <label className="text-[10px] font-bold uppercase text-slate-500 mt-2">Manage Knowledge</label>
         <button className={cn(
           "w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold uppercase border transition-all",
-          theme === "dark" ? "bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-400" : "bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-600"
+          "bg-card hover:bg-muted border-border text-muted-foreground"
         )}>
            <Upload size={14} /> Upload File
         </button>
@@ -297,7 +295,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
            <span className="text-[10px] font-bold uppercase text-slate-500">Learned Documents</span>
            <div className={cn(
              "text-xs p-3 rounded-md border italic text-center",
-             theme === "dark" ? "bg-slate-900/50 border-slate-800 text-slate-500" : "bg-slate-50 border-slate-200 text-slate-400"
+             "bg-background border-border text-muted-foreground"
            )}>
                No documents uploaded yet.
            </div>
@@ -317,7 +315,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         <select
           className={cn(
             "rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all border",
-            theme === "dark" ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+            "bg-background border-border text-foreground"
           )}
           value={selectedNode.data.verification || "Critic AI"}
           onChange={(e) => updateNodeData(selectedNode.id, { verification: e.target.value })}
@@ -332,7 +330,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           placeholder="e.g. Ensure no PII is present in the response..."
           className={cn(
             "rounded-lg p-3 text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all border resize-none",
-            theme === "dark" ? "bg-slate-900 border-slate-700 text-white focus:border-emerald-500" : "bg-slate-50 border-slate-200 text-slate-900 focus:border-emerald-500"
+            "bg-background border-border text-foreground focus:border-emerald-500"
           )}
           value={selectedNode.data.instructions || ""}
           onChange={(e) => updateNodeData(selectedNode.id, { instructions: e.target.value })}
@@ -352,7 +350,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         <select
           className={cn(
             "rounded-lg p-2 text-sm focus:ring-2 focus:ring-slate-500/20 outline-none transition-all border",
-            theme === "dark" ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+            "bg-background border-border text-foreground"
           )}
           value={selectedNode.data.batchLogic || "Loop through List"}
           onChange={(e) => updateNodeData(selectedNode.id, { batchLogic: e.target.value })}
@@ -367,7 +365,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           placeholder="e.g. Extract the email address from each item..."
           className={cn(
             "rounded-lg p-3 text-sm focus:ring-2 focus:ring-slate-500/20 outline-none transition-all border resize-none font-mono",
-            theme === "dark" ? "bg-[#05070a] border-slate-800 text-white focus:border-slate-500" : "bg-white border-slate-200 text-slate-900 focus:border-slate-500"
+            "bg-background border-border text-foreground focus:border-slate-500"
           )}
           value={selectedNode.data.instructions || ""}
           onChange={(e) => updateNodeData(selectedNode.id, { instructions: e.target.value })}
@@ -387,9 +385,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         <select
           className={cn(
             "rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all border",
-            theme === "dark"
-              ? "bg-slate-900 border-slate-700 text-white focus:border-emerald-500"
-              : "bg-slate-50 border-slate-200 text-slate-900 focus:border-emerald-500"
+            "bg-background border-border text-foreground focus:border-emerald-500"
           )}
           value={selectedNode.data.connectionType || ""}
           onChange={(e) => updateNodeData(selectedNode.id, { connectionType: e.target.value })}
@@ -427,8 +423,8 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         <textarea
           rows={4}
           className={cn(
-            "rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600 resize-none font-mono text-xs border relative z-10",
-            theme === "dark" ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+            "rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all placeholder:text-muted-foreground resize-none font-mono text-xs border relative z-10",
+            "bg-background border-border text-foreground"
           )}
           placeholder="e.g. You are a helpful assistant..."
           value={(selectedNode.data.instructions as string) || ""}
@@ -485,7 +481,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           {routes.map((route: string) => (
             <div key={route} className={cn(
               "flex flex-col gap-2 p-3 border rounded-xl transition-colors relative group",
-              theme === "dark" ? "bg-slate-900/50 border-slate-800" : "bg-slate-50 border-slate-200"
+              "bg-card border-border"
             )}>
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase text-orange-500">{route}</span>
@@ -501,7 +497,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                   rows={2}
                   className={cn(
                     "border rounded-md p-2 text-sm focus:ring-2 focus:ring-orange-500/20 outline-none resize-none transition-all",
-                    theme === "dark" ? "bg-[#05070a] border-slate-800 text-white" : "bg-white border-slate-200"
+                    "bg-background border-border text-foreground"
                   )}
                   value={selectedNode.data.conditions?.[route] || ""}
                   onChange={(e) => {
@@ -532,9 +528,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           placeholder="e.g. Hello {{name}}, your request is complete."
           className={cn(
             "rounded-lg p-3 text-sm focus:ring-2 focus:ring-pink-500/20 outline-none transition-all border resize-none",
-            theme === "dark"
-              ? "bg-slate-900 border-slate-700 text-white focus:border-pink-500"
-              : "bg-slate-50 border-slate-200 text-slate-900 focus:border-pink-500"
+            "bg-background border-border text-foreground focus:border-pink-500"
           )}
           value={selectedNode.data.resultFormat || ""}
           onChange={(e) => updateNodeData(selectedNode.id, { resultFormat: e.target.value })}
@@ -558,9 +552,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           onChange={(e) => updateNodeData(selectedNode.id, { gatekeeperMessage: e.target.value })}
           className={cn(
             "rounded-lg p-2 text-sm outline-none transition-all border focus:ring-2",
-            theme === "dark"
-              ? "bg-slate-900 border-slate-700 text-white focus:ring-amber-500/20 focus:border-amber-500"
-              : "bg-slate-50 border-slate-200 text-slate-900 focus:ring-amber-500/20 focus:border-amber-500"
+            "bg-background border-border text-foreground focus:ring-amber-500/20 focus:border-amber-500"
           )}
         />
         <p className="text-[10px] text-slate-400 italic">Displayed in the approval banner when flow pauses.</p>
@@ -575,9 +567,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           onChange={(e) => updateNodeData(selectedNode.id, { timeoutMinutes: parseInt(e.target.value) || 0 })}
           className={cn(
             "rounded-lg p-2 text-sm outline-none transition-all border focus:ring-2 w-24",
-            theme === "dark"
-              ? "bg-slate-900 border-slate-700 text-white focus:ring-amber-500/20"
-              : "bg-slate-50 border-slate-200 text-slate-900 focus:ring-amber-500/20"
+            "bg-background border-border text-foreground focus:ring-amber-500/20"
           )}
         />
       </div>
@@ -588,9 +578,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           onChange={(e) => updateNodeData(selectedNode.id, { timeoutAction: e.target.value })}
           className={cn(
             "rounded-lg p-2 text-sm outline-none transition-all border focus:ring-2",
-            theme === "dark"
-              ? "bg-slate-900 border-slate-700 text-white focus:ring-amber-500/20"
-              : "bg-slate-50 border-slate-200 text-slate-900 focus:ring-amber-500/20"
+            "bg-background border-border text-foreground focus:ring-amber-500/20"
           )}
         >
           <option value="abort">Abort Flow</option>
@@ -610,7 +598,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         <label className="text-[10px] font-bold uppercase text-slate-500">Linked Agent</label>
         <div className={cn(
           "p-3 rounded-lg border text-sm",
-          theme === "dark" ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+          "bg-background border-border text-foreground"
         )}>
           {selectedNode.data.subflowName || "Sub-Agent"}
         </div>
@@ -620,7 +608,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         <label className="text-[10px] font-bold uppercase text-slate-500 mt-2">Agent ID</label>
         <div className={cn(
           "p-2 rounded-lg border text-[10px] font-mono break-all",
-          theme === "dark" ? "bg-slate-900/50 border-slate-800 text-slate-500" : "bg-slate-50 border-slate-200 text-slate-400"
+          "bg-card border-border text-muted-foreground"
         )}>
           {selectedNode.data.subflowId || "N/A"}
         </div>
@@ -636,20 +624,20 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
   return (
     <div className={cn(
       "w-full h-full flex flex-col border-l transition-colors duration-300",
-      theme === "dark" ? "bg-[#0b0e14] border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"
+      "bg-card border-border text-foreground"
     )}>
       {/* Tab header */}
       <div className={cn(
         "flex items-center border-b px-6 pt-4 pb-0 gap-0",
-        theme === "dark" ? "border-slate-800" : "border-slate-200"
+        "border-border"
       )}>
         <button
           onClick={() => setSidebarTab("settings")}
           className={cn(
             "px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 -mb-px",
             sidebarTab === "settings"
-              ? "text-indigo-400 border-indigo-500"
-              : theme === "dark" ? "text-slate-500 border-transparent hover:text-slate-300" : "text-slate-400 border-transparent hover:text-slate-600"
+              ? "text-indigo-500 border-indigo-500"
+              : "text-muted-foreground border-transparent hover:text-foreground"
           )}
         >
           Settings
@@ -660,8 +648,8 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
             className={cn(
               "flex items-center gap-1.5 px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 -mb-px",
               sidebarTab === "data"
-                ? "text-purple-400 border-purple-500"
-                : theme === "dark" ? "text-slate-500 border-transparent hover:text-slate-300" : "text-slate-400 border-transparent hover:text-slate-600"
+                ? "text-purple-500 border-purple-500"
+                : "text-muted-foreground border-transparent hover:text-foreground"
             )}
           >
             Data
@@ -675,7 +663,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           <>
             <div className={cn(
               "flex items-center justify-between mb-8 border-b pb-4",
-              theme === "dark" ? "border-slate-800" : "border-slate-200"
+              "border-border"
             )}>
               <div className="flex flex-col">
                 <span className="text-[10px] uppercase tracking-widest text-indigo-500 font-bold">Tool Configuration</span>
@@ -740,7 +728,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                         <span className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Output</span>
                         <pre className={cn(
                           "text-[10px] font-mono p-3 rounded-xl border overflow-auto max-h-32",
-                          theme === "dark" ? "bg-slate-900/50 border-slate-800 text-slate-400" : "bg-slate-50 border-slate-200 text-slate-600"
+                          "bg-background border-border text-muted-foreground"
                         )}>
                           {typeof logEntry.outputSnapshot === "string" ? String(logEntry.outputSnapshot) : JSON.stringify(logEntry.outputSnapshot, null, 2)}
                         </pre>
@@ -754,7 +742,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                     <span className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Node Output</span>
                     <pre className={cn(
                       "text-[10px] font-mono p-3 rounded-xl border overflow-auto max-h-40",
-                      theme === "dark" ? "bg-slate-900/50 border-slate-800 text-slate-400" : "bg-slate-50 border-slate-200 text-slate-600"
+                      "bg-background border-border text-muted-foreground"
                     )}>
                       {typeof nodeOutput === "string" ? nodeOutput : JSON.stringify(nodeOutput, null, 2)}
                     </pre>

@@ -18,6 +18,12 @@ import {
   ExecutionStatus,
 } from "@/types/flowStoreTypes";
 
+// If FlowState in types doesn't have projects, we'll patch it here:
+export interface ExtendedFlowState extends FlowState {
+  projects: any[];
+  setProjects: (projects: any[]) => void;
+}
+
 import {
   executeFlow,
   NodeExecutor,
@@ -40,7 +46,7 @@ export function sendApprovalSignal(approved: boolean) {
 }
 export function isAwaitingApproval() { return approvalResolve !== null; }
 
-export const useFlowStore = create<FlowState>((set, get) => ({
+export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
   nodes: [],
   edges: [],
   theme: "dark", 
@@ -57,6 +63,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   showVariablesPanel: false,
   tutorialStep: 0,
   activeProject: null,
+  projects: [],
 
   // --- HISTORY STATE ---
   past: [],
@@ -96,6 +103,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   },
 
   clearActiveProject: () => set({ activeProject: null }),
+  setProjects: (projects) => set({ projects }),
   
   // NEW ACTION: Clear all nodes for a fresh start
   clearCanvas: () => {

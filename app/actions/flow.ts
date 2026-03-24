@@ -98,7 +98,7 @@ export async function getLatestFlow() {
 /**
  * Get all flows for a specific user (for the Dashboard).
  */
-export async function getUserFlows(folderId?: string) {
+export async function getUserFlows(projectId?: string) {
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -108,7 +108,7 @@ export async function getUserFlows(folderId?: string) {
     const flows = await prisma.flow.findMany({
       where: { 
         userId: user.id,
-        ...(folderId ? { folderId } : {})
+        ...(projectId ? { projectId } : {})
       },
       orderBy: { updated_at: 'desc' },
     });
