@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play,
@@ -1171,7 +1171,9 @@ function EditorContent() {
 export default function EditorPage({ searchParams }: { searchParams: { projectId?: string } }) {
   return (
     <ReactFlowProvider>
-      <EditorContent />
+      <Suspense fallback={<div className="h-screen w-screen bg-black flex items-center justify-center text-white">Loading Editor...</div>}>
+        <EditorContent />
+      </Suspense>
     </ReactFlowProvider>
   );
 }
