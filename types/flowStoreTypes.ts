@@ -96,6 +96,10 @@ export interface FlowState {
   showMinimap: boolean;
   showExecutionLogPanel: boolean;
   showVariablesPanel: boolean;
+  past: { nodes: Node<NodeData>[]; edges: Edge[] }[];
+  future: { nodes: Node<NodeData>[]; edges: Edge[] }[];
+  takeSnapshot: () => void;
+  undo: () => void;
   setNodes: (nodes: Node<NodeData>[]) => void;
   setEdges: (edges: Edge[]) => void;
   setSelectedNodeId: (id: string | null) => void;
@@ -112,4 +116,7 @@ export interface FlowState {
   tutorialStep: number;
   setTutorialStep: (step: number) => void;
   completeTutorial: () => void;
+  activeProject: { id: string, name: string } | null;
+  setActiveProject: (project: { id: string, name: string } | null) => void;
+  clearActiveProject: () => void;
 }

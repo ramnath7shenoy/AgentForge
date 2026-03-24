@@ -5,9 +5,9 @@ import { Handle, Position, NodeProps } from "reactflow";
 import { Zap } from "lucide-react";
 import { NodeCard } from "./NodeCard";
 
-export default function ActionNode({ id, data }: NodeProps) {
+export default function ActionNode({ id, data, selected }: NodeProps) {
   return (
-    <NodeCard nodeId={id}>
+    <NodeCard nodeId={id} selected={selected}>
       <div className="flex items-center gap-2 font-bold text-emerald-500 uppercase tracking-tighter mb-1">
         <Zap size={14} fill="currentColor" />
         <span>Integration</span>

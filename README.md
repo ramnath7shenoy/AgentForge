@@ -7,10 +7,10 @@
 ## Features
 
 - **Node-based Editor:** Create and manage AI workflows with an intuitive drag-and-drop interface.
-- **Real-time Simulation:** Test and visualize AI agent execution instantly.
-- **Connect Steps:** Easily link nodes to define complex workflows.
-- **State Management:** Powered by Zustand for fast and reactive state handling.
-- **Modern Design:** Built with TailwindCSS for responsive, clean, and professional UI.
+- **AI-Driven Skeleton Generation:** Use the "Magic Wand" AI Architect to instantly build fully-connected workflow structures from simple natural language prompts.
+- **Universal Project Management:** Seamlessly switch between different automated agents and projects using the unified sidebar Project Selector.
+- **Real-time Simulation:** Test and visualize AI agent execution instantly with glowing node highlights and streaming logs.
+- **Connect Steps:** Easily link nodes and define complex conditional routing logic.
 
 ---
 

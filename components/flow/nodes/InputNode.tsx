@@ -8,7 +8,7 @@ import { useFlowStore } from "@/stores/flowStore";
 import { cn } from "@/lib/utils";
 import { FlowPacket } from "@/types/flowStoreTypes";
 
-export default function InputNode({ id, data }: NodeProps) {
+export default function InputNode({ id, data, selected }: NodeProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const { nodes, setNodes, theme } = useFlowStore();
@@ -48,7 +48,7 @@ export default function InputNode({ id, data }: NodeProps) {
   };
 
   return (
-    <NodeCard nodeId={id} className="min-w-[240px]">
+    <NodeCard nodeId={id} selected={selected} className="min-w-[240px]">
       <div className="flex items-center gap-2 font-bold text-blue-500 uppercase tracking-tighter mb-3">
         <Play size={14} fill="currentColor" />
         <span>Starting Point</span>

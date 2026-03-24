@@ -1,0 +1,81 @@
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma\schema.prisma.
+
+Prisma schema warning:
+- Preview feature "multiSchema" is deprecated. The functionality can be used without specifying it as a preview feature.
+
+Error: Prisma schema validation - (validate wasm)
+Error code: P1012
+[1;91merror[0m: [1mError parsing attribute "@unique": Partial indexes are a preview feature. Add "partialIndexes" to previewFeatures in your generator block.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:74[0m
+[1;94m   | [0m
+[1;94m73 | [0m  role                        String?                @db.VarChar(255)
+[1;94m74 | [0m  email                       String?                @unique(map: "users_email_partial_key", [1;91mwhere: raw("(is_sso_user = false)")[0m) @db.VarChar(255)
+[1;94m   | [0m
+[1;91merror[0m: [1mError parsing attribute "@unique": Partial indexes are a preview feature. Add "partialIndexes" to previewFeatures in your generator block.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:78[0m
+[1;94m   | [0m
+[1;94m77 | [0m  invited_at                  DateTime?              @db.Timestamptz(6)
+[1;94m78 | [0m  confirmation_token          String?                @unique(map: "confirmation_token_idx", [1;91mwhere: raw("((confirmation_token)::text !~ '^[0-9 ]*$'::text)")[0m) @db.VarChar(255)
+[1;94m   | [0m
+[1;91merror[0m: [1mError parsing attribute "@unique": Partial indexes are a preview feature. Add "partialIndexes" to previewFeatures in your generator block.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:80[0m
+[1;94m   | [0m
+[1;94m79 | [0m  confirmation_sent_at        DateTime?              @db.Timestamptz(6)
+[1;94m80 | [0m  recovery_token              String?                @unique(map: "recovery_token_idx", [1;91mwhere: raw("((recovery_token)::text !~ '^[0-9 ]*$'::text)")[0m) @db.VarChar(255)
+[1;94m   | [0m
+[1;91merror[0m: [1mError parsing attribute "@unique": Partial indexes are a preview feature. Add "partialIndexes" to previewFeatures in your generator block.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:82[0m
+[1;94m   | [0m
+[1;94m81 | [0m  recovery_sent_at            DateTime?              @db.Timestamptz(6)
+[1;94m82 | [0m  email_change_token_new      String?                @unique(map: "email_change_token_new_idx", [1;91mwhere: raw("((email_change_token_new)::text !~ '^[0-9 ]*$'::text)")[0m) @db.VarChar(255)
+[1;94m   | [0m
+[1;91merror[0m: [1mError parsing attribute "@unique": Partial indexes are a preview feature. Add "partialIndexes" to previewFeatures in your generator block.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:97[0m
+[1;94m   | [0m
+[1;94m96 | [0m  confirmed_at                DateTime?              @default(dbgenerated("LEAST(email_confirmed_at, phone_confirmed_at)")) @db.Timestamptz(6)
+[1;94m97 | [0m  email_change_token_current  String?                @unique(map: "email_change_token_current_idx", [1;91mwhere: raw("((email_change_token_current)::text !~ '^[0-9 ]*$'::text)")[0m) @default("") @db.VarChar(255)
+[1;94m   | [0m
+[1;91merror[0m: [1mError parsing attribute "@unique": Partial indexes are a preview feature. Add "partialIndexes" to previewFeatures in your generator block.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:100[0m
+[1;94m   | [0m
+[1;94m99 | [0m  banned_until                DateTime?              @db.Timestamptz(6)
+[1;94m100 | [0m  reauthentication_token      String?                @unique(map: "reauthentication_token_idx", [1;91mwhere: raw("((reauthentication_token)::text !~ '^[0-9 ]*$'::text)")[0m) @default("") @db.VarChar(255)
+[1;94m   | [0m
+[1;91merror[0m: [1mError parsing attribute "@@unique": Partial indexes are a preview feature. Add "partialIndexes" to previewFeatures in your generator block.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:279[0m
+[1;94m   | [0m
+[1;94m278 | [0m
+[1;94m279 | [0m  @@unique([friendly_name, user_id], map: "mfa_factors_user_friendly_name_unique", [1;91mwhere: raw("(TRIM(BOTH FROM friendly_name) <> ''::text)")[0m)
+[1;94m   | [0m
+[1;91merror[0m: [1mError parsing attribute "@@index": Partial indexes are a preview feature. Add "partialIndexes" to previewFeatures in your generator block.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:308[0m
+[1;94m   | [0m
+[1;94m307 | [0m
+[1;94m308 | [0m  @@index([expires_at], map: "oauth_auth_pending_exp_idx", [1;91mwhere: raw("(status = 'pending'::auth.oauth_authorization_status)")[0m)
+[1;94m   | [0m
+[1;91merror[0m: [1mError parsing attribute "@@index": Partial indexes are a preview feature. Add "partialIndexes" to previewFeatures in your generator block.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:358[0m
+[1;94m   | [0m
+[1;94m357 | [0m  @@unique([user_id, client_id], map: "oauth_consents_user_client_unique")
+[1;94m358 | [0m  @@index([client_id], map: "oauth_consents_active_client_idx", [1;91mwhere: raw("(revoked_at IS NULL)")[0m)
+[1;94m   | [0m
+[1;91merror[0m: [1mError parsing attribute "@@index": Partial indexes are a preview feature. Add "partialIndexes" to previewFeatures in your generator block.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:359[0m
+[1;94m   | [0m
+[1;94m358 | [0m  @@index([client_id], map: "oauth_consents_active_client_idx", where: raw("(revoked_at IS NULL)"))
+[1;94m359 | [0m  @@index([user_id, client_id], map: "oauth_consents_active_user_client_idx", [1;91mwhere: raw("(revoked_at IS NULL)")[0m)
+[1;94m   | [0m
+[1;91merror[0m: [1mError validating field `flows` in model `Folder`: The relation field `flows` on model `Folder` is missing an opposite relation field on the model `Flow`. Either run `prisma format` or add it manually.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:51[0m
+[1;94m   | [0m
+[1;94m50 | [0m  updated_at DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+[1;94m51 | [0m  [1;91mflows      Flow[][0m
+[1;94m52 | [0m  user       users     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+[1;94m   | [0m
+
+Validation Error Count: 11
+[Context: validate]
+
+Prisma CLI Version : 7.5.0

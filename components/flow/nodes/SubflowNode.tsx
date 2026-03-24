@@ -6,11 +6,11 @@ import { Briefcase } from "lucide-react";
 import { NodeCard } from "./NodeCard";
 import { useRouter } from "next/navigation";
 
-export default function SubflowNode({ id, data }: NodeProps) {
+export default function SubflowNode({ id, data, selected }: NodeProps) {
   const router = useRouter();
 
   return (
-    <NodeCard nodeId={id} className="!border-2 !border-indigo-500/40 ring-2 ring-indigo-500/10 backdrop-blur-sm">
+    <NodeCard nodeId={id} selected={selected} className="!border-2 !border-indigo-500/40 ring-2 ring-indigo-500/10 backdrop-blur-sm">
       <div
         onDoubleClick={() => {
           if (data.subflowId) {

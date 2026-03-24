@@ -2,28 +2,35 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  Cpu,
-  Edit3,
-  Trash2,
-  Lock,
-  Activity,
-  CheckCircle2,
-  AlertTriangle,
-  HelpCircle,
-  Plus,
-  BarChart3,
-  Shield,
-  Zap,
-  Share2,
-  Check,
+import { 
+  Cpu, 
+  Edit3, 
+  Trash2, 
+  Lock, 
+  Activity, 
+  CheckCircle2, 
+  AlertTriangle, 
+  HelpCircle, 
+  Plus, 
+  BarChart3, 
+  Shield, 
+  Zap, 
+  Share2, 
+  Check, 
   Eye,
+  Folder as FolderIcon,
+  LayoutTemplate,
+  History,
+  ChevronRight,
+  PlusCircle,
+  FolderPlus
 } from "lucide-react";
 import Navbar from "@/components/ui/Navbar";
 import { useLogStore } from "@/stores/useLogStore";
 import { useVaultStore } from "@/stores/vaultStore";
 import { cn } from "@/lib/utils";
-import { getUserFlows, publishFlow } from "@/app/actions/flow";
+import { getUserFlows, publishFlow, deleteFlow, getFolders, createFolder } from "@/app/actions/flow";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface FlowRecord {
   id: string;
@@ -32,6 +39,13 @@ interface FlowRecord {
   updated_at: Date;
   nodes: object;
   edges: object;
+  folderId?: string | null;
+}
+
+interface Folder {
+  id: string;
+  name: string;
+  _count: { flows: number };
 }
 
 export default function DashboardPage() {
@@ -40,7 +54,13 @@ export default function DashboardPage() {
   const vaultEntries = useVaultStore((s) => s.entries);
   const [mounted, setMounted] = useState(false);
   const [flows, setFlows] = useState<FlowRecord[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [activeTab, setActiveTab] = useState<"recent" | "projects" | "templates">("recent");
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showNewFolderInput, setShowNewFolderInput] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
 
   useEffect(() => {
     setMounted(true);
@@ -49,9 +69,32 @@ export default function DashboardPage() {
         setFlows(result.flows as FlowRecord[]);
       }
     });
+    getFolders().then((result) => {
+      if (result.success && result.folders) {
+        setFolders(result.folders as Folder[]);
+      }
+    });
   }, []);
 
   if (!mounted) return null;
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) return;
+    const result = await createFolder(newFolderName);
+    if (result.success && result.folder) {
+      setFolders([...folders, { ...result.folder, _count: { flows: 0 } } as Folder]);
+      setNewFolderName("");
+      setShowNewFolderInput(false);
+    }
+  };
+
+  const filteredFlows = flows.filter(flow => {
+    if (activeTab === "projects") {
+      return selectedFolderId ? flow.folderId === selectedFolderId : !!flow.folderId;
+    }
+    if (activeTab === "recent") return true;
+    return true;
+  });
 
   const recentLogs = logs.slice(-10).reverse();
   const totalFlows = flows.length;
@@ -65,6 +108,18 @@ export default function DashboardPage() {
       await navigator.clipboard.writeText(url);
       setCopiedId(flow.id);
       setTimeout(() => setCopiedId(null), 2500);
+    }
+  };
+
+  const handleDelete = async (flowId: string) => {
+    const originalFlows = [...flows];
+    setFlows((prev) => prev.filter((f) => f.id !== flowId));
+    setDeletingId(null);
+
+    const result = await deleteFlow(flowId);
+    if (!result.success) {
+      setFlows(originalFlows);
+      alert("Failed to delete flow.");
     }
   };
 
@@ -85,232 +140,374 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#05070a] text-white relative z-10">
+    <div className="min-h-screen bg-[#05070a] text-white relative z-10 flex flex-col">
       <Navbar />
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Page Title */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Mission Control</h1>
-            <p className="text-sm text-slate-500 mt-1">Agent fleet overview & system diagnostics</p>
+      <div className="flex-1 max-w-7xl w-full mx-auto px-6 py-8 flex gap-8">
+        
+        {/* SIDEBAR */}
+        <div className="w-64 flex flex-col gap-6">
+          <div className="space-y-1">
+            <h2 className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-3 mb-2">Workspace</h2>
+            <SidebarTab 
+              icon={<History size={14} />} 
+              label="Recent Flows" 
+              active={activeTab === "recent"} 
+              onClick={() => { setActiveTab("recent"); setSelectedFolderId(null); }}
+            />
+            <SidebarTab 
+              icon={<FolderIcon size={14} />} 
+              label="Project Folders" 
+              active={activeTab === "projects"} 
+              onClick={() => setActiveTab("projects")}
+            />
+            <SidebarTab 
+              icon={<LayoutTemplate size={14} />} 
+              label="Templates" 
+              active={activeTab === "templates"} 
+              onClick={() => setActiveTab("templates")}
+            />
           </div>
-          <button
-            onClick={() => router.push("/editor")}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-500/20"
-          >
-            <Plus size={14} />
-            New Agent
-          </button>
-        </div>
 
-        {/* STATS ROW */}
-        <div className="grid grid-cols-4 gap-4 mb-8">
-          <StatCard icon={<Cpu size={16} />} label="Saved Flows" value={totalFlows} color="indigo" />
-          <StatCard icon={<Activity size={16} />} label="Recent Events" value={recentLogs.length} color="blue" />
-          <StatCard icon={<BarChart3 size={16} />} label="Public Flows" value={publicFlows} color="emerald" />
-          <StatCard icon={<Lock size={16} />} label="Vault Keys" value={vaultEntries.length} color="cyan" />
-        </div>
+          <AnimatePresence>
+            {activeTab === "projects" && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="space-y-1"
+              >
+                <div className="flex items-center justify-between px-3 mb-2">
+                  <h2 className="text-[10px] font-black uppercase tracking-widest text-slate-500">My Projects</h2>
+                  <button 
+                    onClick={() => setShowNewFolderInput(true)}
+                    className="text-slate-500 hover:text-indigo-400 transition-colors"
+                  >
+                    <PlusCircle size={14} />
+                  </button>
+                </div>
 
-        {/* BENTO GRID */}
-        <div className="grid grid-cols-3 gap-6">
-
-          {/* COLUMN 1: Saved Flows */}
-          <div className="col-span-1 flex flex-col gap-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Cpu size={14} className="text-indigo-400" />
-              <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">My Saved Flows</h2>
-            </div>
-
-            {flows.length === 0 ? (
-              <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-8 text-center">
-                <Zap size={24} className="mx-auto mb-3 text-slate-700" />
-                <p className="text-[10px] text-slate-600 uppercase tracking-wider font-bold">No saved flows yet</p>
-                <p className="text-[10px] text-slate-700 mt-1 italic">Create a flow in the Editor to see it here</p>
-              </div>
-            ) : (
-              flows.map(flow => (
-                <div
-                  key={flow.id}
-                  className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4 hover:border-indigo-500/30 transition-all group"
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 bg-indigo-600/20 rounded-lg flex items-center justify-center">
-                        <Cpu size={14} className="text-indigo-400" />
-                      </div>
-                      <div>
-                        <h3 className="text-xs font-bold text-white">{flow.name}</h3>
-                        <span className="text-[9px] text-slate-500">{formatDate(flow.updated_at)}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => router.push("/editor")}
-                        className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-indigo-400 transition-colors"
-                        title="Edit"
-                      >
-                        <Edit3 size={12} />
-                      </button>
-                    </div>
+                {showNewFolderInput && (
+                  <div className="px-3 mb-2">
+                    <input 
+                      autoFocus
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-indigo-500 transition-all"
+                      placeholder="Folder name..."
+                      value={newFolderName}
+                      onChange={(e) => setNewFolderName(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
+                      onBlur={() => !newFolderName && setShowNewFolderInput(false)}
+                    />
                   </div>
+                )}
 
-                  {/* Status + Share row */}
-                  <div className="flex items-center justify-between">
-                    {flow.isPublic ? (
-                      <a
-                        href={`/view/${flow.id}`}
-                        target="_blank"
-                        className="flex items-center gap-1 text-[9px] text-emerald-400 hover:text-emerald-300 transition-colors"
-                      >
-                        <Eye size={10} />
-                        Public — View Link
-                      </a>
-                    ) : (
-                      <span className="text-[9px] text-slate-600 italic">Private</span>
+                {folders.map(folder => (
+                  <button
+                    key={folder.id}
+                    onClick={() => setSelectedFolderId(folder.id)}
+                    className={cn(
+                      "w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition-all group",
+                      selectedFolderId === folder.id 
+                        ? "bg-indigo-600/10 text-indigo-400 font-bold" 
+                        : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"
                     )}
-
-                    <button
-                      onClick={() => handleShare(flow)}
-                      className={cn(
-                        "flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-bold transition-all",
-                        copiedId === flow.id
-                          ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
-                          : "bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20"
-                      )}
-                    >
-                      {copiedId === flow.id ? <Check size={10} /> : <Share2 size={10} />}
-                      {copiedId === flow.id ? "Link Copied!" : "Share"}
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* COLUMN 2: Recent Logs */}
-          <div className="col-span-1 flex flex-col gap-2">
-            <div className="flex items-center gap-2 mb-2">
-              <Activity size={14} className="text-blue-400" />
-              <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">Recent Events</h2>
-            </div>
-
-            <div className="bg-slate-900/50 border border-slate-800 rounded-2xl overflow-hidden">
-              {recentLogs.length === 0 ? (
-                <div className="p-8 text-center">
-                  <Activity size={24} className="mx-auto mb-3 text-slate-700" />
-                  <p className="text-[10px] text-slate-600 uppercase tracking-wider font-bold">No events yet</p>
-                  <p className="text-[10px] text-slate-700 mt-1 italic">Run a flow to see activity</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-800/50">
-                  {recentLogs.map(log => (
-                    <div key={log.id} className="flex items-start gap-3 px-4 py-3 hover:bg-slate-800/30 transition-colors">
-                      <div className="mt-0.5">
-                        {log.type === "SUCCESS" && <CheckCircle2 size={12} className="text-emerald-400" />}
-                        {log.type === "ERROR" && <AlertTriangle size={12} className="text-rose-400" />}
-                        {log.type === "INFO" && <Activity size={12} className="text-slate-500" />}
-                        {log.type === "WARN" && <Shield size={12} className="text-amber-400" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className={cn("text-[11px] truncate", logColorMap[log.type] || "text-slate-400")}>
-                          {log.message}
-                        </p>
-                        <span className="text-[9px] text-slate-600">{formatTime(log.timestamp)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* COLUMN 3: Vault Status */}
-          <div className="col-span-1 flex flex-col gap-2">
-            <div className="flex items-center gap-2 mb-2">
-              <Lock size={14} className="text-cyan-400" />
-              <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">Security Health</h2>
-            </div>
-
-            <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4">
-              <div className={cn(
-                "flex items-center gap-3 p-3 rounded-xl border mb-4",
-                vaultEntries.length > 0
-                  ? "border-emerald-500/20 bg-emerald-500/5"
-                  : "border-rose-500/20 bg-rose-500/5"
-              )}>
-                <div className={cn(
-                  "w-3 h-3 rounded-full",
-                  vaultEntries.length > 0 ? "bg-emerald-400 animate-pulse" : "bg-rose-400 animate-pulse"
-                )} />
-                <div>
-                  <p className={cn(
-                    "text-[10px] font-bold uppercase tracking-wider",
-                    vaultEntries.length > 0 ? "text-emerald-400" : "text-rose-400"
-                  )}>
-                    {vaultEntries.length > 0 ? "Vault Initialized" : "Vault Empty"}
-                  </p>
-                  <p className="text-[9px] text-slate-500 mt-0.5">
-                    {vaultEntries.length} secrets active
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {vaultEntries.map(entry => (
-                  <div
-                    key={entry.key}
-                    className="flex items-center justify-between px-3 py-2 bg-[#0b0e14] border border-slate-800 rounded-xl"
                   >
                     <div className="flex items-center gap-2">
-                      <Lock size={10} className="text-cyan-400" />
-                      <span className="text-[10px] font-mono text-cyan-400">{entry.key}</span>
+                      <FolderIcon size={12} className={cn(selectedFolderId === folder.id ? "text-indigo-400" : "text-slate-500")} />
+                      {folder.name}
                     </div>
-                    <span className="text-[9px] text-slate-600 font-mono">••••••</span>
-                  </div>
+                    <span className="text-[10px] opacity-50 group-hover:opacity-100">{folder._count.flows}</span>
+                  </button>
                 ))}
-                {vaultEntries.length === 0 && (
-                  <div className="text-center py-4">
-                    <p className="text-[10px] text-slate-600 italic">Add secrets in the Editor vault tab</p>
+
+                {folders.length === 0 && !showNewFolderInput && (
+                  <div className="px-3 py-4 text-center border border-dashed border-slate-800 rounded-xl">
+                    <p className="text-[10px] text-slate-600 italic">No folders yet</p>
                   </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="mt-auto p-4 bg-slate-900/50 border border-slate-800 rounded-2xl">
+            <div className="flex items-center gap-2 mb-3">
+              <Shield size={14} className="text-indigo-400" />
+              <h3 className="text-[10px] font-bold uppercase tracking-wider">System Health</h3>
+            </div>
+            <div className="space-y-2">
+              <HealthItem label="Core Engine" status="online" />
+              <HealthItem label="AI Gateway" status="online" />
+              <HealthItem label="Cloud Sync" status="online" />
+            </div>
+          </div>
+        </div>
+
+        {/* MAIN CONTENT */}
+        <div className="flex-1 flex flex-col gap-8">
+          
+          {/* Header Row */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">
+                {activeTab === "recent" && "Mission Control"}
+                {activeTab === "projects" && (selectedFolderId ? folders.find(f => f.id === selectedFolderId)?.name : "Project Folders")}
+                {activeTab === "templates" && "Agent Blueprints"}
+              </h1>
+              <p className="text-sm text-slate-500 mt-1">
+                {activeTab === "recent" && "Agent fleet overview & system diagnostics"}
+                {activeTab === "projects" && "Organize your agents into specialized mission folders"}
+                {activeTab === "templates" && "Starting points for advanced automation"}
+              </p>
+            </div>
+            <button
+              onClick={() => router.push("/editor")}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-500/20 active:scale-95"
+            >
+              <Plus size={14} />
+              New Agent
+            </button>
+          </div>
+
+          {/* STATS ROW */}
+          <div className="grid grid-cols-4 gap-4">
+            <StatCard icon={<Cpu size={16} />} label="Active Flows" value={totalFlows} color="indigo" />
+            <StatCard icon={<Activity size={16} />} label="Recent Events" value={recentLogs.length} color="blue" />
+            <StatCard icon={<BarChart3 size={16} />} label="Public Reach" value={publicFlows} color="emerald" />
+            <StatCard icon={<Lock size={16} />} label="Vault Keys" value={vaultEntries.length} color="cyan" />
+          </div>
+
+          {/* CONTENT GRID */}
+          <div className="grid grid-cols-12 gap-6">
+            
+            {/* Flows List */}
+            <div className="col-span-8 flex flex-col gap-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Zap size={14} className="text-indigo-400" />
+                  <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
+                    {activeTab === "recent" ? "Recent Deployments" : "Folder Contents"}
+                  </h2>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                {filteredFlows.length === 0 ? (
+                  <div className="col-span-2 bg-slate-900/30 border border-dashed border-slate-800 rounded-3xl p-12 text-center">
+                    <div className="w-16 h-16 bg-slate-800/50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                      <Cpu size={24} className="text-slate-600" />
+                    </div>
+                    <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">No agents detected</p>
+                    <button 
+                      onClick={() => router.push("/editor")}
+                      className="mt-4 text-[10px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 mx-auto"
+                    >
+                      Initialize first agent <ChevronRight size={10} />
+                    </button>
+                  </div>
+                ) : (
+                  filteredFlows.map(flow => (
+                    <motion.div
+                      layout
+                      key={flow.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-slate-900/50 backdrop-blur-md border border-slate-800/50 rounded-2xl p-4 hover:border-indigo-500/40 transition-all group relative overflow-hidden"
+                    >
+                      <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                         <div className="flex gap-1">
+                            <button
+                              onClick={() => router.push(`/editor?id=${flow.id}`)}
+                              className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-indigo-600 text-slate-400 hover:text-white transition-all"
+                            >
+                              <Edit3 size={12} />
+                            </button>
+                            <button
+                              onClick={() => setDeletingId(flow.id)}
+                              className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-rose-600 text-slate-400 hover:text-white transition-all"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                         </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="w-10 h-10 bg-indigo-600/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                          <Cpu size={18} className="text-indigo-400" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-white group-hover:text-indigo-300 transition-colors">{flow.name}</h3>
+                          <p className="text-[10px] text-slate-500 font-medium">{formatDate(flow.updated_at)}</p>
+                        </div>
+                      </div>
+
+                      {deletingId === flow.id ? (
+                        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-3 animate-in fade-in zoom-in duration-200">
+                           <p className="text-[10px] text-rose-400 font-bold mb-2">Confirm deletion?</p>
+                           <div className="flex gap-2">
+                             <button onClick={() => setDeletingId(null)} className="flex-1 py-1.5 text-[10px] font-bold text-slate-400 hover:bg-slate-800 rounded-lg transition-colors">Cancel</button>
+                             <button onClick={() => handleDelete(flow.id)} className="flex-1 py-1.5 text-[10px] font-bold bg-rose-500 hover:bg-rose-600 text-white rounded-lg transition-colors">Delete</button>
+                           </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between mt-2 pt-4 border-t border-slate-800/50">
+                          <div className="flex items-center gap-2">
+                            {flow.isPublic ? (
+                              <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-bold">
+                                <Eye size={10} /> Public
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-slate-600 font-bold">Private</span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => handleShare(flow)}
+                            className={cn(
+                              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all",
+                              copiedId === flow.id
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                : "bg-slate-800 hover:bg-slate-700 text-slate-300"
+                            )}
+                          >
+                            {copiedId === flow.id ? <Check size={10} /> : <Share2 size={10} />}
+                            {copiedId === flow.id ? "Copied" : "Share"}
+                          </button>
+                        </div>
+                      )}
+                    </motion.div>
+                  ))
                 )}
               </div>
             </div>
+
+            {/* Diagnostics Column */}
+            <div className="col-span-4 flex flex-col gap-6">
+               <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2 px-1">
+                    <Activity size={14} className="text-blue-400" />
+                    <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">Event Stream</h2>
+                  </div>
+                  <div className="bg-slate-900/30 border border-slate-800/50 rounded-3xl overflow-hidden backdrop-blur-sm">
+                    {recentLogs.length === 0 ? (
+                      <div className="p-12 text-center">
+                        <Activity size={20} className="mx-auto mb-2 text-slate-700" />
+                        <p className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">Quiet Sector</p>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-800/30">
+                        {recentLogs.map(log => (
+                          <div key={log.id} className="flex items-start gap-3 px-4 py-3 hover:bg-white/5 transition-colors">
+                            <div className="mt-1 flex-shrink-0">
+                              {log.type === "SUCCESS" && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />}
+                              {log.type === "ERROR" && <div className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]" />}
+                              {log.type === "INFO" && <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />}
+                              {log.type === "WARN" && <div className="w-1.5 h-1.5 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className={cn("text-[11px] font-medium leading-tight", logColorMap[log.type] || "text-slate-400")}>
+                                {log.message}
+                              </p>
+                              <span className="text-[9px] text-slate-600 font-mono mt-1 block">{formatTime(log.timestamp)}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+               </div>
+
+               <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2 px-1">
+                    <Lock size={14} className="text-cyan-400" />
+                    <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">Vault Access</h2>
+                  </div>
+                  <div className="bg-slate-900/30 border border-slate-800/50 rounded-3xl p-5 backdrop-blur-sm">
+                     <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                           <div className={cn("w-2 h-2 rounded-full", vaultEntries.length > 0 ? "bg-emerald-500 animate-pulse" : "bg-rose-500")} />
+                           <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">
+                             {vaultEntries.length > 0 ? "Encrypted" : "Empty"}
+                           </span>
+                        </div>
+                        <span className="text-[9px] text-slate-500 font-bold">{vaultEntries.length} Keys</span>
+                     </div>
+                     <div className="space-y-2">
+                        {vaultEntries.slice(0, 3).map(entry => (
+                          <div key={entry.key} className="flex items-center justify-between px-3 py-2 bg-black/20 border border-slate-800/50 rounded-xl">
+                            <span className="text-[10px] font-mono text-cyan-400">{entry.key}</span>
+                            <span className="text-[9px] text-slate-600 font-mono">••••••</span>
+                          </div>
+                        ))}
+                        {vaultEntries.length === 0 && <p className="text-[10px] text-slate-600 italic text-center py-2">No active secrets</p>}
+                     </div>
+                  </div>
+               </div>
+            </div>
+
           </div>
         </div>
       </div>
 
-      {/* HELP FAB */}
       <button
         onClick={() => router.push("/editor")}
-        className="fixed bottom-6 right-6 z-50 bg-slate-800/50 backdrop-blur-md p-3 rounded-full border border-slate-700 text-slate-400 hover:text-indigo-400 transition-all shadow-2xl group active:scale-95"
-        title="Open Editor"
+        className="fixed bottom-8 right-8 z-50 bg-slate-800/50 backdrop-blur-xl p-4 rounded-full border border-slate-700/50 text-slate-400 hover:text-indigo-400 transition-all shadow-2xl group active:scale-95"
       >
-        <HelpCircle size={20} className="group-hover:rotate-12 transition-transform" />
+        <HelpCircle size={24} className="group-hover:rotate-12 transition-transform" />
       </button>
     </div>
   );
 }
 
+function SidebarTab({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all relative group",
+        active 
+          ? "bg-indigo-600/10 text-indigo-400" 
+          : "text-slate-500 hover:bg-slate-900 hover:text-slate-300"
+      )}
+    >
+      {active && <motion.div layoutId="sidebar-active" className="absolute left-0 w-1 h-5 bg-indigo-500 rounded-r-full" />}
+      <span className={cn("transition-colors", active ? "text-indigo-400" : "group-hover:text-slate-300")}>
+        {icon}
+      </span>
+      {label}
+    </button>
+  );
+}
+
 function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string | number; color: string }) {
   const colorClasses: Record<string, string> = {
-    indigo: "border-indigo-500/20 bg-indigo-500/5 text-indigo-400",
-    blue: "border-blue-500/20 bg-blue-500/5 text-blue-400",
-    emerald: "border-emerald-500/20 bg-emerald-500/5 text-emerald-400",
-    cyan: "border-cyan-500/20 bg-cyan-500/5 text-cyan-400",
+    indigo: "border-indigo-500/10 bg-indigo-500/5 text-indigo-400",
+    blue: "border-blue-500/10 bg-blue-500/5 text-blue-400",
+    emerald: "border-emerald-500/10 bg-emerald-500/5 text-emerald-400",
+    cyan: "border-cyan-500/10 bg-cyan-500/5 text-cyan-400",
   };
 
   return (
     <div className={cn(
-      "rounded-2xl border p-4 flex items-center gap-4 transition-all hover:scale-[1.02]",
+      "rounded-3xl border p-5 flex items-center gap-4 transition-all hover:scale-[1.02] backdrop-blur-sm",
       colorClasses[color] || colorClasses.indigo
     )}>
-      <div className="p-2.5 rounded-xl bg-slate-900/50">
+      <div className="w-12 h-12 rounded-2xl bg-slate-900/80 flex items-center justify-center shadow-inner">
         {icon}
       </div>
       <div>
-        <p className="text-2xl font-bold">{value}</p>
-        <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500 mt-0.5">{label}</p>
+        <p className="text-2xl font-black tracking-tight">{value}</p>
+        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mt-0.5">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+function HealthItem({ label, status }: { label: string; status: "online" | "offline" | "busy" }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{label}</span>
+      <div className="flex items-center gap-1.5">
+        <span className="text-[9px] text-slate-400 font-medium capitalize">{status}</span>
+        <div className={cn("w-1.5 h-1.5 rounded-full", status === "online" ? "bg-emerald-500" : "bg-rose-500")} />
       </div>
     </div>
   );

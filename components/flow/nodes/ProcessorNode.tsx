@@ -5,9 +5,9 @@ import { Handle, Position, NodeProps } from "reactflow";
 import { Terminal } from "lucide-react";
 import { NodeCard } from "./NodeCard";
 
-export default function ProcessorNode({ id, data }: NodeProps) {
+export default function ProcessorNode({ id, data, selected }: NodeProps) {
   return (
-    <NodeCard nodeId={id}>
+    <NodeCard nodeId={id} selected={selected}>
       <div className="flex items-center gap-2 font-bold text-slate-400 uppercase tracking-tighter mb-1">
         <Terminal size={14} fill="currentColor" />
         <span>Logic Processor</span>

@@ -56,12 +56,46 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   showExecutionLogPanel: false,
   showVariablesPanel: false,
   tutorialStep: 0,
+  activeProject: null,
+
+  // --- HISTORY STATE ---
+  past: [],
+  future: [],
+
+  takeSnapshot: () => {
+    const { nodes, edges } = get();
+    set((state) => ({
+      past: [...state.past.slice(-50), { nodes: JSON.parse(JSON.stringify(nodes)), edges: JSON.parse(JSON.stringify(edges)) }],
+      future: []
+    }));
+  },
+
+  undo: () => {
+    const { past, nodes, edges } = get();
+    if (past.length === 0) return;
+
+    const previous = past[past.length - 1];
+    const newPast = past.slice(0, past.length - 1);
+
+    set({
+      nodes: previous.nodes,
+      edges: previous.edges,
+      past: newPast,
+      future: [{ nodes: JSON.parse(JSON.stringify(nodes)), edges: JSON.parse(JSON.stringify(edges)) }, ...get().future]
+    });
+  },
 
   // --- STANDARD ACTIONS ---
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
   setRunning: (running) => set({ running }),
+  setActiveProject: (project) => {
+    // Ensure we are setting the project with its actual database ID
+    set({ activeProject: project ? { id: project.id, name: project.name } : null });
+  },
+
+  clearActiveProject: () => set({ activeProject: null }),
   
   // NEW ACTION: Clear all nodes for a fresh start
   clearCanvas: () => {

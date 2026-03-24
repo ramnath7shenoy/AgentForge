@@ -5,6 +5,8 @@ import React, { useCallback, useMemo } from "react";
 import ReactFlow, {
   Controls,
   MiniMap,
+  Background,
+  BackgroundVariant,
   useReactFlow,
   applyNodeChanges,
   applyEdgeChanges,
@@ -44,7 +46,7 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
   const edgesFromStore = useFlowStore((state) => state.edges);
   const edges = useMemo(() => edgesFromStore || [], [edgesFromStore]);
   const theme = useFlowStore((state) => state.theme);
-  const { setNodes, setEdges, activeEdgeId, showMinimap, tutorialStep, setTutorialStep } = useFlowStore();
+  const { setNodes, setEdges, activeEdgeId, showMinimap, tutorialStep, setTutorialStep, takeSnapshot } = useFlowStore();
   const { project } = useReactFlow();
 
   const nodeTypes = useMemo(() => ({
@@ -65,12 +67,19 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
   }), []);
 
   const onNodesChange = useCallback((c: NodeChange[]) => {
+    const isSignificant = c.some(change => change.type === 'remove');
+    if (isSignificant) takeSnapshot();
     setNodes(applyNodeChanges(c, nodes));
-  }, [nodes, setNodes]);
+  }, [nodes, setNodes, takeSnapshot]);
   
-  const onEdgesChange = useCallback((c: EdgeChange[]) => setEdges(applyEdgeChanges(c, edges)), [edges, setEdges]);
+  const onEdgesChange = useCallback((c: EdgeChange[]) => {
+    const isSignificant = c.some(change => change.type === 'remove');
+    if (isSignificant) takeSnapshot();
+    setEdges(applyEdgeChanges(c, edges));
+  }, [edges, setEdges, takeSnapshot]);
   
   const onConnect: OnConnect = useCallback((conn) => {
+    takeSnapshot();
     setEdges(addEdge(conn, edges));
     // Tutorial Step 5 (Connect) -> 6 (Run Flow)
     if (tutorialStep === 5 && conn.source && conn.target) {
@@ -80,12 +89,14 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
         setTutorialStep(6);
       }
     }
-  }, [edges, setEdges, tutorialStep, nodes, setTutorialStep]);
+  }, [edges, setEdges, tutorialStep, nodes, setTutorialStep, takeSnapshot]);
 
   const onDrop = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     const type = event.dataTransfer.getData("application/reactflow");
     if (!type) return;
+
+    takeSnapshot();
 
     const bounds = event.currentTarget.getBoundingClientRect();
     const position = project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
@@ -155,6 +166,12 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
         elementsSelectable={editable}
         fitView
       >
+        <Background 
+          variant={BackgroundVariant.Dots} 
+          gap={20} 
+          size={1} 
+          color={theme === "dark" ? "#334155" : "#cbd5e1"} 
+        />
         <Controls className={cn(
           "transition-colors",
           theme === "dark" ? "dark:bg-slate-900 dark:border-slate-800" : "bg-white border-slate-200"

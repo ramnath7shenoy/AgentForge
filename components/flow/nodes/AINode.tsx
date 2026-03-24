@@ -5,9 +5,9 @@ import { Handle, Position, NodeProps } from "reactflow";
 import { Brain } from "lucide-react";
 import { NodeCard } from "./NodeCard";
 
-export default function AINode({ id, data }: NodeProps) {
+export default function AINode({ id, data, selected }: NodeProps) {
   return (
-    <NodeCard nodeId={id}>
+    <NodeCard nodeId={id} selected={selected}>
       <div className="flex items-center gap-2 font-bold text-purple-500 uppercase tracking-tighter mb-1">
         <Brain size={14} fill="currentColor" />
         <span>Agent Brain</span>

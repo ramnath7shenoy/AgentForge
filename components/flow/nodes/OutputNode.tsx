@@ -5,9 +5,9 @@ import { Handle, Position, NodeProps } from "reactflow";
 import { MessageSquare } from "lucide-react";
 import { NodeCard } from "./NodeCard";
 
-export default function OutputNode({ id, data }: NodeProps) {
+export default function OutputNode({ id, data, selected }: NodeProps) {
   return (
-    <NodeCard nodeId={id}>
+    <NodeCard nodeId={id} selected={selected}>
       <div className="flex items-center gap-2 font-bold text-pink-500 uppercase tracking-tighter mb-1">
         <MessageSquare size={14} fill="currentColor" />
         <span>Final Result</span>

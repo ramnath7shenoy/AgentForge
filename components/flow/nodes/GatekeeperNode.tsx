@@ -6,7 +6,7 @@ import { ShieldCheck } from "lucide-react";
 import { NodeCard } from "./NodeCard";
 import { useFlowStore } from "@/stores/flowStore";
 
-export default function GatekeeperNode({ id, data }: NodeProps) {
+export default function GatekeeperNode({ id, data, selected }: NodeProps) {
   const highlightedNodeId = useFlowStore((s) => s.highlightedNodeId);
   const executedNodeIds = useFlowStore((s) => s.executedNodeIds);
   const isActive = highlightedNodeId === id;
@@ -19,7 +19,7 @@ export default function GatekeeperNode({ id, data }: NodeProps) {
       : "";
 
   return (
-    <NodeCard nodeId={id} className={statusClass}>
+    <NodeCard nodeId={id} selected={selected} className={statusClass}>
       <div className="flex items-center gap-2 font-bold text-emerald-500 uppercase tracking-tighter mb-1">
         <ShieldCheck size={14} fill="currentColor" />
         <span>Safety Gatekeeper</span>

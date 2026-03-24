@@ -20,11 +20,17 @@ import {
   Lock,
   Plus,
   Layers,
-  LayoutGrid
+  LayoutGrid,
+  ChevronsUpDown,
+  Check,
+  FolderKanban
 } from "lucide-react";
 import { useFlowStore } from "@/stores/flowStore";
 import { useRouter } from "next/navigation";
 import { parseFlowJson } from "@/lib/flowPersistence";
+import { getProjects, createProject, deleteProject } from "@/app/actions/project";
+import { motion, AnimatePresence } from "framer-motion";
+import ProjectModal from "@/components/ui/modals/ProjectModal";
 import { getSavedAgents, saveAgent, deleteSavedAgent, SavedAgent } from "@/lib/savedAgents";
 import { useVaultStore } from "@/stores/vaultStore";
 import { cn } from "@/lib/utils";
@@ -71,10 +77,54 @@ interface NodeSidebarProps {
 const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas, isOwner = true }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"nodes" | "vault">("nodes");
-  const { nodes, edges, setNodes, setEdges, clearCanvas, tutorialStep } = useFlowStore();
+  const { nodes, edges, setNodes, setEdges, clearCanvas, tutorialStep, activeProject, setActiveProject, clearActiveProject } = useFlowStore();
   const [savedAgentsList, setSavedAgentsList] = useState<SavedAgent[]>([]);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveName, setSaveName] = useState("");
+  const [showProjectSelector, setShowProjectSelector] = useState(false);
+  const [projectSearch, setProjectSearch] = useState("");
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [projects, setProjects] = useState<{id: string, name: string}[]>([]);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadProjects() {
+      const res = await getProjects();
+      if (!res.error && res.projects) {
+        setProjects(res.projects);
+      }
+    }
+    loadProjects();
+  }, [showProjectSelector]);
+
+  const handleDeleteProject = async (id: string) => {
+    const res = await deleteProject(id);
+    if (res.success) {
+      setProjects(prev => prev.filter(p => p.id !== id));
+      if (activeProject?.id === id) {
+        clearActiveProject();
+        clearCanvas();
+      }
+      setDeletingProjectId(null);
+      // toast notification logic would go here if a toast provider was available
+      // For now we'll rely on the UI feedback (item disappearing)
+    } else {
+      alert(res.error || "Failed to delete project");
+    }
+  };
+
+  const handleCreateProject = async (name: string) => {
+    const res = await createProject(name);
+    if (res.project) {
+      setProjects(prev => [res.project, ...prev]);
+      setActiveProject({ id: res.project.id, name: res.project.name });
+      clearCanvas();
+      setShowProjectSelector(false);
+      setIsModalOpen(false);
+    } else {
+      alert(res.error || "Failed to create project");
+    }
+  };
 
   // Ensure non-owners can't see vault even if state is manipulated
   useEffect(() => {
@@ -135,17 +185,171 @@ const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas, isOwner = true
   );
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-[#0b0e14] transition-colors duration-300 border-r border-slate-200 dark:border-slate-800">
-      {/* Dashboard shortcut */}
-      <a
-        href="/dashboard"
-        className="flex items-center gap-2 px-4 py-2.5 text-[9px] font-bold uppercase tracking-widest text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/5 transition-all border-b border-slate-200 dark:border-slate-800"
-      >
-        <LayoutGrid size={12} />
-        Dashboard
-      </a>
+    <div className="flex flex-col h-full bg-slate-950/40 backdrop-blur-xl transition-colors duration-300 border-r border-white/5 relative">
+      
+      {/* --- TOP NAVIGATION BLOCK --- */}
+      <div className="flex flex-col gap-1 p-3 border-b border-white/5">
+        
+        {/* Dashboard Link */}
+        <button
+          onClick={() => window.location.href = '/dashboard'}
+          className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all w-full text-left"
+        >
+          <LayoutGrid size={14} className="text-slate-500" />
+          Dashboard
+        </button>
+
+        {/* Project Selector Toggle */}
+        <div className="relative">
+          <button
+            onClick={() => setShowProjectSelector(!showProjectSelector)}
+            className={cn(
+              "flex items-center justify-between w-full px-2 py-1.5 rounded-lg text-xs font-semibold transition-all border border-transparent",
+              showProjectSelector 
+                ? "bg-white/10 text-slate-200 border-white/10"
+                : "text-slate-300 hover:bg-white/5 border-transparent"
+            )}
+          >
+            <div className="flex items-center gap-2 overflow-hidden">
+              <FolderKanban size={14} className="text-indigo-400 flex-shrink-0" />
+              <span className="truncate">{activeProject?.name || "Select Project"}</span>
+            </div>
+            <ChevronsUpDown size={12} className="text-slate-500 flex-shrink-0 ml-2" />
+          </button>
+
+          {/* Project Selector Dropdown */}
+          <AnimatePresence>
+            {showProjectSelector && (
+              <>
+                {/* Invisible overlay to close dropdown */}
+                <div 
+                  className="fixed inset-0 z-[100]" 
+                  onClick={() => setShowProjectSelector(false)}
+                />
+                
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute top-full left-0 mt-1 w-[240px] bg-[#0d1117]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-[101] overflow-hidden flex flex-col pt-2"
+                >
+                  <div className="px-2 pb-2 border-b border-white/5">
+                    <div className="relative">
+                      <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+                      <input 
+                        autoFocus
+                        type="text"
+                        placeholder="Search projects..."
+                        value={projectSearch}
+                        onChange={(e) => setProjectSearch(e.target.value)}
+                        className="w-full bg-slate-900 border border-white/5 rounded-md py-1.5 pl-7 pr-3 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="max-h-48 overflow-y-auto p-1 scrollbar-hide">
+                    <AnimatePresence mode="popLayout">
+                      {projects
+                        .filter(p => p.name.toLowerCase().includes(projectSearch.toLowerCase()))
+                        .map(project => (
+                          <motion.div
+                            layout
+                            key={project.id}
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 20 }}
+                            transition={{ duration: 0.2 }}
+                            className="group relative"
+                          >
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => {
+                                setActiveProject({ id: project.id, name: project.name });
+                                setShowProjectSelector(false);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  setActiveProject({ id: project.id, name: project.name });
+                                  setShowProjectSelector(false);
+                                }
+                              }}
+                              className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-[11px] hover:bg-white/5 transition-colors text-left cursor-pointer outline-none focus:bg-white/5"
+                            >
+                              <span className={project.id === activeProject?.id ? "text-indigo-400 font-bold" : "text-slate-300"}>
+                                {project.name}
+                              </span>
+                              
+                              <div className="flex items-center gap-1">
+                                {project.id === activeProject?.id && <Check size={12} className="text-indigo-500" />}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDeletingProjectId(project.id);
+                                  }}
+                                  className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-rose-500/20 text-slate-500 hover:text-rose-500 transition-all focus:opacity-100"
+                                >
+                                  <Trash2 size={10} />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Delete Confirmation Overlay */}
+                            <AnimatePresence>
+                              {deletingProjectId === project.id && (
+                                <motion.div 
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  exit={{ opacity: 0 }}
+                                  className="absolute inset-0 bg-slate-900/95 flex items-center justify-between px-2 rounded-lg z-10"
+                                >
+                                  <span className="text-[9px] font-bold text-rose-400 uppercase tracking-tighter">Delete Project?</span>
+                                  <div className="flex gap-1">
+                                    <button 
+                                      onClick={(e) => { e.stopPropagation(); setDeletingProjectId(null); }}
+                                      className="px-1.5 py-0.5 rounded bg-slate-800 text-[9px] font-bold text-slate-400 hover:text-white"
+                                    >
+                                      No
+                                    </button>
+                                    <button 
+                                      onClick={(e) => { e.stopPropagation(); handleDeleteProject(project.id); }}
+                                      className="px-1.5 py-0.5 rounded bg-rose-600 text-[9px] font-bold text-white hover:bg-rose-500"
+                                    >
+                                      Yes
+                                    </button>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </motion.div>
+                        ))}
+                    </AnimatePresence>
+                    {projects.length === 0 && (
+                      <div className="text-center py-3 text-[10px] text-slate-500">
+                        No projects found.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="p-1 border-t border-white/5 bg-slate-900/30">
+                    <button 
+                      onClick={() => setIsModalOpen(true)}
+                      className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
+                    >
+                      <Plus size={12} />
+                      New Project
+                    </button>
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+
       {/* TABS */}
-      <div className="flex border-b border-slate-200 dark:border-slate-800">
+      <div className="flex border-b border-white/5">
         <button
           onClick={() => setActiveTab("nodes")}
           className={cn(
@@ -413,6 +617,13 @@ const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas, isOwner = true
           </div>
         </div>
       )}
+
+      {/* MODALS */}
+      <ProjectModal 
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSubmit={handleCreateProject}
+      />
     </div>
   );
 };

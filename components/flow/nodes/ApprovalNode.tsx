@@ -5,9 +5,9 @@ import { Handle, Position, NodeProps } from "reactflow";
 import { ShieldAlert, Pause } from "lucide-react";
 import { NodeCard } from "./NodeCard";
 
-export default function ApprovalNode({ id, data }: NodeProps) {
+export default function ApprovalNode({ id, data, selected }: NodeProps) {
   return (
-    <NodeCard nodeId={id} className="!border-2 !border-amber-500/40 ring-2 ring-amber-500/20 animate-[pulse_3s_ease-in-out_infinite]">
+    <NodeCard nodeId={id} selected={selected} className="!border-2 !border-amber-500/40 ring-2 ring-amber-500/20 animate-[pulse_3s_ease-in-out_infinite]">
       <div className="flex flex-col items-center gap-1">
         <div className="flex items-center gap-2 font-bold text-amber-400 uppercase tracking-tighter mb-1">
           <div className="relative">

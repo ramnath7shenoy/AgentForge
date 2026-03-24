@@ -1,10 +1,14 @@
-import React from "react";
+"use client";
 
-const TextNode = () => {
+import React from "react";
+import { NodeProps } from "reactflow";
+import { NodeCard } from "./NodeCard";
+
+const TextNode = ({ id, selected }: NodeProps) => {
   return (
-    <div className="bg-transparent !border-0">
-      <div>TextNode</div>
-    </div>
+    <NodeCard nodeId={id} selected={selected}>
+      <div className="text-xs font-medium opacity-70">Text Node</div>
+    </NodeCard>
   );
 };
 

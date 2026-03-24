@@ -18,10 +18,10 @@ export default function Navbar() {
   ];
 
   return (
-    <header className="flex items-center justify-between border-b border-slate-800 px-6 py-3 bg-[#0b0e14] z-50">
+    <header className="flex items-center justify-between border-b border-white/10 px-6 py-3 bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
       <div className="flex items-center gap-6">
-        <Link href="/" className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
+        <Link href="/" className="flex items-center gap-2 group">
+          <div className="w-8 h-8 bg-gradient-to-br from-indigo-600 to-violet-700 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:scale-110 transition-transform">
             <Zap size={16} className="text-white fill-current" />
           </div>
           <span className="font-bold tracking-tight text-sm uppercase text-white">AgentForge</span>
