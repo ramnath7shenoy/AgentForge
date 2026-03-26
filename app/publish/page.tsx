@@ -18,10 +18,11 @@ import {
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { NodeCard } from "@/components/flow/nodes/NodeCard";
+import Navbar from "@/components/ui/Navbar";
 
 export default function PublishPage() {
   const router = useRouter();
-  const { nodes, edges, simulateFlow, finalResult, setFinalResult } = useFlowStore();
+  const { nodes, edges, simulateFlow, finalResult, setFinalResult, theme } = useFlowStore();
 
   const [activeTab, setActiveTab] = useState<'python' | 'javascript' | 'typescript'>('python');
   const [copied, setCopied] = useState(false);
@@ -45,9 +46,14 @@ export default function PublishPage() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-background text-foreground overflow-hidden">
-      {/* LEFT COLUMN: Preview & Gallery */}
-      <div className="w-1/2 border-r border-border flex flex-col h-full bg-card">
+    <div className={cn(
+      "flex flex-col h-screen w-full transition-colors duration-300",
+      theme === "dark" ? "dark bg-background text-foreground" : "bg-background text-foreground"
+    )}>
+      <Navbar />
+      <div className="flex flex-1 overflow-hidden">
+        {/* LEFT COLUMN: Preview & Gallery */}
+        <div className="w-1/2 border-r border-border flex flex-col h-full bg-card">
         <header className="p-6 border-b border-border flex items-center justify-between bg-card">
           <div className="flex items-center gap-4">
             <button
@@ -244,5 +250,6 @@ export default function PublishPage() {
         </div>
       </div>
     </div>
+  </div>
   );
 }

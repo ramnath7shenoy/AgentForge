@@ -28,6 +28,23 @@ interface NodeSettingsSidebarProps {
   isOwner?: boolean;
 }
 
+const MODEL_PRESETS: Record<string, string[]> = {
+  gemini: ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest", "gemini-2.0-flash-exp"],
+  openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+  anthropic: ["claude-3-5-sonnet-latest", "claude-3-opus-latest"]
+};
+
+const HUMAN_LABELS: Record<string, string> = {
+  "gemini-1.5-flash-latest": "Gemini 1.5 Flash",
+  "gemini-1.5-pro-latest": "Gemini 1.5 Pro",
+  "gemini-2.0-flash-exp": "Gemini 2.0 Flash (Exp)",
+  "gpt-4o": "GPT-4o",
+  "gpt-4o-mini": "GPT-4o Mini",
+  "gpt-4-turbo": "GPT-4 Turbo",
+  "claude-3-5-sonnet-latest": "Claude 3.5 Sonnet",
+  "claude-3-opus-latest": "Claude 3 Opus"
+};
+
 const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = true }) => {
   const nodes = useFlowStore((state) => state.nodes);
   const selectedNodeId = useFlowStore((state) => state.selectedNodeId);
@@ -37,9 +54,12 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
   const setTutorialStep = useFlowStore((state) => state.setTutorialStep);
   const currentContext = useFlowStore((state) => state.currentContext);
   const executionLogs = useFlowStore((state) => state.executionLogs);
+  const updateNodeData = useFlowStore((state) => state.updateNodeData);
+  const executionResult = (useFlowStore((state) => (state as any).executionResult) || {}) as Record<string, any>;
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
   const [sidebarTab, setSidebarTab] = React.useState<"settings" | "data">("settings");
+  const [apiKeySaved, setApiKeySaved] = React.useState(false);
 
   // Force settings tab for guests
   React.useEffect(() => {
@@ -47,14 +67,6 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
       setSidebarTab("settings");
     }
   }, [isOwner, sidebarTab]);
-
-  const updateNodeData = (id: string, newData: Partial<NodeData>) => {
-    setNodes(
-      nodes.map((node) =>
-        node.id === id ? { ...node, data: { ...node.data, ...newData } } : node
-      )
-    );
-  };
 
   if (!selectedNode) {
     return (
@@ -418,6 +430,47 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         <Brain size={16} />
         <h3 className="text-sm font-bold uppercase tracking-tight">Agent Brain</h3>
       </div>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Model Provider</label>
+          <select
+            className={cn(
+              "rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all border",
+              "bg-background border-border text-foreground"
+            )}
+            value={selectedNode.data.provider || "gemini"}
+            onChange={(e) => {
+              const provider = e.target.value;
+              const defaultModel = MODEL_PRESETS[provider]?.[0] || "";
+              updateNodeData(selectedNode.id, { 
+                provider: provider as any,
+                modelName: defaultModel
+              });
+            }}
+          >
+            <option value="gemini">Google Gemini</option>
+            <option value="openai">OpenAI (GPT)</option>
+            <option value="anthropic">Anthropic (Claude)</option>
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Model Name</label>
+          <select
+            className={cn(
+              "rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all border",
+              "bg-background border-border text-foreground"
+            )}
+            value={selectedNode.data.modelName || ""}
+            onChange={(e) => updateNodeData(selectedNode.id, { modelName: e.target.value })}
+          >
+            {(MODEL_PRESETS[selectedNode.data.provider || "gemini"] || []).map(m => (
+              <option key={m} value={m}>{HUMAN_LABELS[m] || m}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       <div className="flex flex-col gap-2 relative">
         <label className="text-[10px] font-bold uppercase text-slate-500">Assistant Instructions</label>
         <textarea
@@ -434,13 +487,29 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         />
       </div>
       <div className="flex flex-col gap-2">
-        <label className="text-[10px] font-bold uppercase text-slate-500">API Key</label>
-        <VaultInput
-          value={selectedNode.data.persistence || ""}
-          onChange={(val) => updateNodeData(selectedNode.id, { persistence: val })}
-          placeholder="Model API key..."
-          theme={theme}
-        />
+        <div className="flex items-center justify-between">
+          <label className="text-[10px] font-bold uppercase text-slate-500">API Key</label>
+          {apiKeySaved && (
+            <span className="text-[9px] font-bold text-emerald-500 animate-pulse uppercase tracking-widest">
+              ✓ Saved
+            </span>
+          )}
+        </div>
+        <div className={cn(
+          "transition-all duration-300 rounded-lg",
+          apiKeySaved ? "ring-2 ring-emerald-500/50" : ""
+        )}>
+          <VaultInput
+            value={selectedNode.data.apiKey || ""}
+            onChange={(val) => {
+              updateNodeData(selectedNode.id, { apiKey: val });
+              setApiKeySaved(true);
+              setTimeout(() => setApiKeySaved(false), 2000);
+            }}
+            placeholder="Paste your provider key here..."
+            theme={theme}
+          />
+        </div>
       </div>
     </div>
   );
@@ -685,6 +754,39 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
               {selectedNode.type === "subflow" && renderSubflowNodeSettings()}
               {selectedNode.type === "approval" && renderApprovalNodeSettings()}
             </div>
+
+            {/* LATEST OUTPUT SECTION */}
+            {selectedNodeId && executionResult[selectedNodeId] && (
+              <div className="mt-8 pt-6 border-t border-border animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Terminal size={12} className="text-green-500" />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Latest Output</span>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      const text = typeof executionResult[selectedNodeId]?.payload === 'string' 
+                        ? executionResult[selectedNodeId].payload 
+                        : JSON.stringify(executionResult[selectedNodeId]?.payload || executionResult[selectedNodeId], null, 2);
+                      navigator.clipboard.writeText(text);
+                    }}
+                    className="flex items-center gap-1 text-[10px] font-bold text-indigo-500 hover:text-indigo-400 transition-colors bg-indigo-500/5 px-2 py-1 rounded-md border border-indigo-500/10"
+                  >
+                    Copy Result
+                  </button>
+                </div>
+                <div className="bg-zinc-200 dark:bg-zinc-900 rounded-xl p-4 border border-zinc-300 dark:border-zinc-800 shadow-inner group relative max-h-64 overflow-y-auto block">
+                  <pre className="text-[11px] font-mono text-green-700 dark:text-green-400 whitespace-pre-wrap break-all leading-relaxed min-h-[20px]">
+                    {typeof executionResult[selectedNodeId]?.payload === 'string' 
+                      ? executionResult[selectedNodeId].payload 
+                      : JSON.stringify(executionResult[selectedNodeId]?.payload || executionResult[selectedNodeId], null, 2)}
+                  </pre>
+                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
 

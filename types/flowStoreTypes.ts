@@ -60,6 +60,23 @@ export interface NodeData {
   gatekeeperMessage?: string;
   timeoutMinutes?: number;
   timeoutAction?: string;
+
+  // AI Logic
+  apiKey?: string;
+  provider?: 'gemini' | 'openai' | 'anthropic';
+  modelName?: string;
+  model?: string; // Keeping for backward compatibility if needed
+
+  // Local Edit Protection (Unwrapped Subagents)
+  localOverride?: {
+    nodes: Node<NodeData>[];
+    edges: Edge[];
+  };
+  workflowOverride?: {
+    nodes: Node<NodeData>[];
+    edges: Edge[];
+  };
+  parent_node_id?: string;
 }
 
 export type ExecutionStatus = "pending" | "success" | "error";
@@ -100,6 +117,7 @@ export interface FlowState {
   future: { nodes: Node<NodeData>[]; edges: Edge[] }[];
   takeSnapshot: () => void;
   undo: () => void;
+  lastAction: number;
   setNodes: (nodes: Node<NodeData>[]) => void;
   setEdges: (edges: Edge[]) => void;
   setSelectedNodeId: (id: string | null) => void;
@@ -119,4 +137,12 @@ export interface FlowState {
   activeProject: { id: string, name: string } | null;
   setActiveProject: (project: { id: string, name: string } | null) => void;
   clearActiveProject: () => void;
+
+  // Node Lifecycle
+  addNode: (node: Node<NodeData>) => void;
+  deleteNode: (nodeId: string) => void;
+
+  // Subagent Expansion
+  unwrapSubagent: (nodeId: string) => void;
+  wrapSubagent: (groupId: string) => void;
 }

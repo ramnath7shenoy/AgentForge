@@ -4,26 +4,32 @@ import React from "react";
 import { Handle, Position, NodeProps } from "reactflow";
 import { Briefcase } from "lucide-react";
 import { NodeCard } from "./NodeCard";
-import { useRouter } from "next/navigation";
+import { useFlowStore, ExtendedFlowState } from "@/stores/flowStore";
 
 export default function SubflowNode({ id, data, selected }: NodeProps) {
-  const router = useRouter();
+  const unwrapSubagent = useFlowStore((s: ExtendedFlowState) => s.unwrapSubagent);
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    unwrapSubagent(id);
+  };
 
   return (
-    <NodeCard nodeId={id} selected={selected} className="!border-2 !border-indigo-500/40 ring-2 ring-indigo-500/10 backdrop-blur-sm">
+    <NodeCard 
+      nodeId={id} 
+      selected={selected} 
+      className="!border-2 !border-indigo-500/40 ring-2 ring-indigo-500/10 backdrop-blur-sm group cursor-zoom-in"
+    >
       <div
-        onDoubleClick={() => {
-          if (data.subflowId) {
-            router.push(`/editor?subflow=${data.subflowId}`);
-          }
-        }}
-        className="flex flex-col items-center gap-1 cursor-pointer select-none"
+        onDoubleClick={handleDoubleClick}
+        className="flex flex-col items-center gap-1 cursor-zoom-in select-none relative"
+        title="Double-click to expand and edit in-place"
       >
         <div className="flex items-center gap-2 font-bold text-indigo-400 uppercase tracking-tighter mb-1">
           <Briefcase size={14} fill="currentColor" />
           <span>{data.subflowName || "Sub-Agent"}</span>
         </div>
-        <p className="text-[9px] opacity-50 font-medium italic">
+        <p className="text-[9px] opacity-0 group-hover:opacity-50 font-medium italic transition-opacity">
           Double-click to open
         </p>
       </div>

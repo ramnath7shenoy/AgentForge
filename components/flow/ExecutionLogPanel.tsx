@@ -61,7 +61,7 @@ const ExecutionLogPanel: React.FC = () => {
             {logs.length > 0 && (
               <button
                 onClick={(e) => { e.preventDefault(); handleClearLogs(); }}
-                className="flex items-center gap-1 text-[10px] text-rose-500 hover:text-rose-400 transition-colors px-2 py-0.5 rounded-md hover:bg-rose-500/10"
+                className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-white transition-colors px-2 py-1 rounded-lg border border-white/10 hover:border-white/20 hover:bg-white/5 font-bold uppercase tracking-wider"
                 title="Clear all logs"
               >
                 <Trash2 size={10} />

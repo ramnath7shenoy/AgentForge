@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useMemo, useEffect } from "react";
 
 import ReactFlow, {
   Controls,
@@ -34,6 +34,7 @@ import ProcessorNode from "../nodes/ProcessorNode";
 import WebhookNode from "../nodes/WebhookNode";
 import SubflowNode from "../nodes/SubflowNode";
 import ApprovalNode from "../nodes/ApprovalNode";
+import GroupNode from "../nodes/GroupNode";
 
 interface FlowCanvasProps {
   setSelectedNodeId: (id: string | null) => void;
@@ -46,8 +47,18 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
   const edgesFromStore = useFlowStore((state) => state.edges);
   const edges = useMemo(() => edgesFromStore || [], [edgesFromStore]);
   const theme = useFlowStore((state) => state.theme);
-  const { setNodes, setEdges, activeEdgeId, showMinimap, tutorialStep, setTutorialStep, takeSnapshot } = useFlowStore();
-  const { project } = useReactFlow();
+  const { setNodes, setEdges, addNode, activeEdgeId, showMinimap, tutorialStep, setTutorialStep, takeSnapshot } = useFlowStore();
+  const lastAction = useFlowStore((state) => state.lastAction);
+  const { project, fitView } = useReactFlow();
+
+  // Auto-fit view when subagents are wrapped/unwrapped
+  useEffect(() => {
+    if (lastAction > 0) {
+      setTimeout(() => {
+        fitView({ duration: 800, padding: 0.2 });
+      }, 50);
+    }
+  }, [lastAction, fitView]);
 
   const nodeTypes = useMemo(() => ({
     input: InputNode,
@@ -64,6 +75,7 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
     processor: ProcessorNode,
     subflow: SubflowNode,
     approval: ApprovalNode,
+    group: GroupNode,
   }), []);
 
   const onNodesChange = useCallback((c: NodeChange[]) => {
@@ -91,6 +103,14 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
     }
   }, [edges, setEdges, tutorialStep, nodes, setTutorialStep, takeSnapshot]);
 
+  const onNodesDelete = useCallback(() => {
+    takeSnapshot();
+  }, [takeSnapshot]);
+
+  const onEdgesDelete = useCallback(() => {
+    takeSnapshot();
+  }, [takeSnapshot]);
+
   const onDrop = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     const type = event.dataTransfer.getData("application/reactflow");
@@ -108,6 +128,11 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
       data: { 
         label: `${type.charAt(0).toUpperCase() + type.slice(1)}`,
         routes: type === 'router' ? ["Path A", "Path B"] : undefined,
+        // AI defaults
+        ...(type === 'ai' ? {
+          provider: 'gemini',
+          model: 'gemini-1.5-flash',
+        } : {}),
         // Subflow metadata from drag data
         ...(type === 'subflow' ? {
           subflowId: event.dataTransfer.getData("application/subflowId") || undefined,
@@ -119,8 +144,8 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
         border: "none",
       },
     };
-    const newNodes = [...nodes, newNode];
-    setNodes(newNodes);
+    
+    addNode(newNode);
     
     // Tutorial Step 2 -> 3: Trigger dropped, advance to Configure
     if (tutorialStep === 2 && type === 'trigger') {
@@ -159,11 +184,15 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
         nodeTypes={nodeTypes}
         onNodesChange={editable ? onNodesChange : undefined}
         onEdgesChange={editable ? onEdgesChange : undefined}
+        onNodesDelete={editable ? onNodesDelete : undefined}
+        onEdgesDelete={editable ? onEdgesDelete : undefined}
         onConnect={editable ? onConnect : undefined}
         onNodeClick={(_, n) => setSelectedNodeId(n.id)}
         nodesDraggable={editable}
         nodesConnectable={editable}
         elementsSelectable={editable}
+        minZoom={0.05}
+        maxZoom={2}
         fitView
       >
         <Background 
@@ -180,6 +209,17 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
           <MiniMap 
             className="!bg-popover !border-border rounded-xl shadow-lg"
             maskColor={theme === "dark" ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.5)"}
+            nodeColor={(n) => {
+              if (n.type === 'group') return 'transparent'; // Remove the solid block
+              return '#71717a'; // Default neutral gray for other nodes
+            }}
+            nodeStrokeColor={(n) => {
+              if (n.type === 'group') return '#ffffff'; // CLEAN WHITE BORDER for subagents
+              return 'transparent';
+            }}
+            nodeStrokeWidth={4} // Slightly thicker for better visibility
+            zoomable
+            pannable
           />
         )}
       </ReactFlow>

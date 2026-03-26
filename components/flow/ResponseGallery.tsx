@@ -7,14 +7,14 @@ import { Trash2, Terminal as TerminalIcon, Braces, Search, Download, Sparkles } 
 import { cn } from "@/lib/utils";
 
 const colorMap: Record<LogType, string> = {
-  INFO: "text-slate-400",
-  SUCCESS: "text-emerald-400",
-  ERROR: "text-rose-400",
-  WARN: "text-amber-400",
+  INFO: "text-slate-500 dark:text-slate-400",
+  SUCCESS: "text-emerald-600 dark:text-emerald-400",
+  ERROR: "text-rose-600 dark:text-rose-400",
+  WARN: "text-amber-600 dark:text-amber-400",
 };
 
 const badgeMap: Record<LogType, string> = {
-  INFO: "text-slate-500",
+  INFO: "text-slate-400 dark:text-slate-500",
   SUCCESS: "text-emerald-500",
   ERROR: "text-rose-500",
   WARN: "text-amber-500",
@@ -97,9 +97,9 @@ export default function ResponseGallery() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#05070a] rounded-2xl border border-slate-800 overflow-hidden shadow-2xl">
+    <div className="flex flex-col h-full bg-zinc-100 dark:bg-zinc-950 rounded-2xl border border-zinc-300 dark:border-zinc-800 overflow-hidden shadow-2xl transition-colors">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-800 bg-[#0b0e14]">
+      <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-[#0b0e14]">
         <div className="flex items-center">
           <div className="flex items-center gap-1.5 px-4 py-2.5">
             <div className="w-2.5 h-2.5 rounded-full bg-rose-500 opacity-60" />
@@ -124,7 +124,10 @@ export default function ResponseGallery() {
           {activeTab === "terminal" && logs.length > 0 && (
             <>
               <span className="text-[9px] text-slate-600 font-mono">{logs.length}</span>
-              <button onClick={clearLogs} className="flex items-center gap-1 text-[9px] text-rose-500/70 hover:text-rose-400 transition-colors px-2 py-0.5 rounded hover:bg-rose-500/10">
+              <button 
+                onClick={clearLogs} 
+                className="flex items-center gap-1 text-[9px] text-slate-400 hover:text-white transition-colors px-2 py-1 rounded-lg border border-white/10 hover:border-white/20 hover:bg-white/5 font-bold uppercase tracking-wider"
+              >
                 <Trash2 size={10} /> Clear
               </button>
             </>
@@ -134,16 +137,16 @@ export default function ResponseGallery() {
 
       {/* Terminal Tab */}
       {activeTab === "terminal" && (
-        <div className="flex-1 overflow-y-auto p-4 font-mono text-[11px] leading-relaxed scrollbar-hide space-y-0.5">
+        <div className="flex-1 overflow-y-auto p-4 font-mono text-[11px] leading-relaxed scrollbar-hide space-y-0.5 text-zinc-900 dark:text-zinc-100">
           {logs.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-slate-700 text-[10px] italic">Awaiting execution...</div>
+            <div className="flex items-center justify-center h-full text-zinc-400 dark:text-zinc-700 text-[10px] italic">Awaiting execution...</div>
           ) : logs.map((log) => (
-            <div key={log.id} className="flex items-start gap-2 hover:bg-slate-800/30 px-2 py-0.5 rounded transition-colors">
-              <span className="text-slate-600 flex-shrink-0 select-none">{formatTime(log.timestamp)}</span>
+            <div key={log.id} className="flex items-start gap-2 hover:bg-zinc-500/5 dark:hover:bg-slate-800/30 px-2 py-0.5 rounded transition-colors">
+              <span className="text-zinc-500 dark:text-zinc-600 flex-shrink-0 select-none">{formatTime(log.timestamp)}</span>
               <span className={cn("font-bold flex-shrink-0 w-16 text-right select-none", badgeMap[log.type])}>[{log.type}]</span>
               <span className={cn("flex-1", colorMap[log.type])}>
                 {log.message}
-                {log.elapsed !== undefined && <span className="text-slate-600 ml-2">({log.elapsed}ms)</span>}
+                {log.elapsed !== undefined && <span className="text-zinc-500 dark:text-zinc-600 ml-2">({log.elapsed}ms)</span>}
               </span>
             </div>
           ))}

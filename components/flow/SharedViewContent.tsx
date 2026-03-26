@@ -22,6 +22,7 @@ import NodeSidebar from "@/components/flow/sidebar/NodeSidebar";
 import NodeSettingsSidebar from "@/components/flow/sidebar/NodeSettingsSidebar";
 import ResponseGallery from "@/components/flow/ResponseGallery";
 import ApprovalBanner from "@/components/flow/ApprovalBanner";
+import Navbar from "@/components/ui/Navbar";
 
 import { useFlowStore } from "@/stores/flowStore";
 import { saveSharedFlow } from "@/app/actions/flow";
@@ -115,75 +116,47 @@ function SharedEditor({ flow, editable }: SharedViewContentProps) {
       "flex flex-col h-screen w-full transition-colors duration-300",
       theme === "dark" ? "dark bg-[#0b0e14] text-slate-200" : "bg-slate-50 text-slate-900"
     )}>
+      <Navbar />
 
-      {/* HEADER */}
-      <header className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 px-6 py-3 bg-white dark:bg-[#0b0e14] z-50 shadow-sm">
+      {/* SUB-HEADER (Flow Metadata) */}
+      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 px-6 py-2 bg-white/40 dark:bg-slate-900/40 backdrop-blur-sm z-40">
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <Zap size={16} className="text-white fill-current" />
-            </div>
-            <span className="font-bold tracking-tight text-sm uppercase">AgentForge</span>
-          </div>
-          <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800 mx-2" />
-          <span className="text-slate-400 text-sm font-medium truncate max-w-xs">{flow.name}</span>
+          <span className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-widest truncate max-w-xs">{flow.name}</span>
 
           {editable ? (
-            <span className="flex items-center gap-1.5 text-[10px] text-amber-400 uppercase tracking-widest font-bold px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded-md">
-              <Pencil size={10} />
-              Guest Editor
+            <span className="flex items-center gap-1.5 text-[9px] text-amber-500 uppercase tracking-widest font-black px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-full">
+              <Pencil size={9} />
+              Editor Mode
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 text-[10px] text-slate-500 uppercase tracking-widest font-bold px-2 py-1 bg-slate-800 rounded-md">
-              <Eye size={10} />
+            <span className="flex items-center gap-1.5 text-[9px] text-slate-400 uppercase tracking-widest font-black px-2 py-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full">
+              <Eye size={9} />
               Read Only
             </span>
           )}
 
           {editable && saveStatus && (
             <span className={cn(
-              "text-[10px] uppercase font-bold tracking-wider px-2 py-1 rounded-md",
-              saveStatus === "saving" ? "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400" :
-                saveStatus === "saved" ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400" :
-                  "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400"
+              "text-[9px] uppercase font-black tracking-widest px-2 py-0.5 rounded-full",
+              saveStatus === "saving" ? "text-amber-500" :
+                saveStatus === "saved" ? "text-emerald-500" :
+                  "text-rose-500"
             )}>
-              {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved to Cloud" : "Save Error"}
+              {saveStatus === "saving" ? "• Syncing..." : saveStatus === "saved" ? "• Synced" : "• Error"}
             </span>
           )}
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 p-1 bg-gray-100 dark:bg-gray-800 rounded-xl border border-slate-200 dark:border-slate-800">
-            <button
-              onClick={() => setShowMinimap(!showMinimap)}
-              className={cn(
-                "p-2 rounded-lg transition-all",
-                showMinimap
-                  ? "bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
-                  : "text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
-              )}
-              title="Toggle Minimap"
-            >
-              <Map size={14} />
-            </button>
-          </div>
-
-          <button
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className="p-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-all shadow-sm border border-transparent"
-          >
-            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-
           <button
             onClick={() => simulateFlow(startNodeId)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
           >
-            <Play size={14} className="fill-current" />
-            Run Flow
+            <Play size={12} className="fill-current" />
+            Run Sandbox
           </button>
         </div>
-      </header>
+      </div>
 
       {/* MAIN CONTENT AREA */}
       <div className="flex flex-1 overflow-hidden relative">

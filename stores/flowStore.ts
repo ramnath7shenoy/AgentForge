@@ -22,12 +22,23 @@ import {
 export interface ExtendedFlowState extends FlowState {
   projects: any[];
   setProjects: (projects: any[]) => void;
+  executionResult: Record<string, any> | null;
+  isRunning: boolean;
+  runClientFlow: (initialInput: string) => Promise<void>;
+  updateNodeData: (nodeId: string, newData: Partial<NodeData>) => void;
+  addNode: (node: Node<NodeData>) => void;
+  deleteNode: (nodeId: string) => void;
+  unwrapSubagent: (nodeId: string) => void;
+  wrapSubagent: (groupId: string) => void;
+  onNodeDragStop: (event: React.MouseEvent, node: Node) => void;
 }
 
 import {
   executeFlow,
   NodeExecutor,
 } from "@/lib/executionEngine";
+
+import { executeGraph } from "@/lib/flow/clientExecutor";
 
 import { resolveTemplates } from "@/lib/template";
 import { getSavedAgents } from "@/lib/savedAgents";
@@ -52,6 +63,7 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
   theme: "dark", 
   selectedNodeId: null,
   running: false,
+  isRunning: false,
   highlightedNodeId: null,
   currentContext: null,
   executionLogs: [],
@@ -64,11 +76,12 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
   tutorialStep: 0,
   activeProject: null,
   projects: [],
+  executionResult: {},
 
   // --- HISTORY STATE ---
   past: [],
   future: [],
-
+  lastAction: 0,
   takeSnapshot: () => {
     const { nodes, edges } = get();
     set((state) => ({
@@ -127,6 +140,11 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
     set({ theme });
     if (typeof window !== "undefined") {
       localStorage.setItem("theme", theme);
+      if (theme === "dark") {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
     }
   },
 
@@ -138,6 +156,87 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
   completeTutorial: () => {
     localStorage.setItem('agentforge_onboarding_complete', 'true');
     set({ tutorialStep: 0 });
+  },
+
+  updateNodeData: (nodeId: string, newData: Partial<NodeData>) => {
+    set((state) => ({
+      nodes: state.nodes.map((n) =>
+        n.id === nodeId ? { ...n, data: { ...n.data, ...newData } } : n
+      ),
+    }));
+  },
+
+  addNode: (newNode: Node<NodeData>) => {
+    const { nodes } = get();
+    
+    // Check if drop is inside a Group node
+    const groupNode = nodes.find(n => 
+      n.type === 'group' && 
+      newNode.position.x >= n.position.x &&
+      newNode.position.x <= n.position.x + (n.style?.width as number || 400) &&
+      newNode.position.y >= n.position.y &&
+      newNode.position.y <= n.position.y + (n.style?.height as number || 300)
+    );
+
+    let nodeToAdd = { ...newNode };
+    if (groupNode) {
+      nodeToAdd = {
+        ...nodeToAdd,
+        parentId: groupNode.id,
+        extent: 'parent' as const,
+        // Relative position inside group
+        position: {
+          x: newNode.position.x - groupNode.position.x,
+          y: newNode.position.y - groupNode.position.y
+        },
+        data: {
+          ...nodeToAdd.data,
+          parent_node_id: groupNode.id
+        }
+      };
+    }
+
+    set({ nodes: [...nodes, nodeToAdd] });
+  },
+
+  deleteNode: (nodeId: string) => {
+    const { nodes, edges } = get();
+    set({
+      nodes: nodes.filter(n => n.id !== nodeId),
+      edges: edges.filter(e => e.source !== nodeId && e.target !== nodeId)
+    });
+  },
+
+  runClientFlow: async (initialInput: string) => {
+    set({ running: true, isRunning: true, executionResult: {} });
+    
+    // Fresh snapshot inside the function
+    const { nodes, edges } = get();
+    console.log("🚀 Starting Flow with Nodes:", nodes);
+    
+    const addLog = useLogStore.getState().addLog;
+    
+    const result = await executeGraph(nodes, edges, initialInput, (message, type, nodeId) => {
+      addLog(type || "INFO", message, nodeId);
+      
+      // Also highlight nodes in real-time if nodeId is provided
+      if (nodeId) {
+        set((s) => ({
+          highlightedNodeId: nodeId,
+          executedNodeIds: s.executedNodeIds.includes(nodeId) 
+            ? s.executedNodeIds 
+            : [...s.executedNodeIds, nodeId],
+        }));
+      }
+    });
+
+    set({ 
+      executionResult: result.context.nodes as any, 
+      running: false,
+      isRunning: false,
+      highlightedNodeId: null,
+      finalResult: result.context.variables.output || Object.values(result.context.nodes).pop() || null
+    });
   },
 
   // --- FLOW EXECUTION LOGIC ---
@@ -367,46 +466,13 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
         const data = node.data as NodeData;
         const instructions = resolveTemplates(data.instructions || "", context);
         const addLog = useLogStore.getState().addLog;
-        const appendLogMessage = useLogStore.getState().appendLogMessage;
         
-        // Initial log to display the start of streaming
-        addLog("INFO", "Streaming result: ", node.id);
-
-        let fullResult = "";
-
-        try {
-          const res = await fetch('/api/execute', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              prompt: instructions, 
-              instructions, 
-              userId: userId || 'default-user' 
-            })
-          });
-
-          if (res.body) {
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            while (true) {
-              const { value, done } = await reader.read();
-              if (done) break;
-              const chunkValue = decoder.decode(value);
-              if (chunkValue) {
-                 fullResult += chunkValue;
-                 appendLogMessage(node.id, chunkValue);
-              }
-            }
-          } else {
-             fullResult = "No response stream received.";
-          }
-        } catch(e: any) {
-           fullResult = "Error requesting API: " + e.message;
-        }
+        addLog("INFO", "Executing AI simulation...", node.id);
+        await sleep(1000);
 
         const packet: FlowPacket = { 
           type: "text", 
-          payload: fullResult
+          payload: `Simulated AI output for: ${instructions.slice(0, 30)}...`
         };
 
         return {
@@ -417,7 +483,7 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
             status: "success",
             startedAt: Date.now(),
             endedAt: Date.now(),
-            durationMs: 0,
+            durationMs: 1000,
             inputSnapshot: instructions,
             outputSnapshot: packet,
           },
@@ -609,6 +675,185 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
       console.error("Flow execution failed:", error);
     } finally {
       set({ running: false, highlightedNodeId: null, activeEdgeId: null });
+    }
+  },
+
+  unwrapSubagent: (nodeId: string) => {
+    const { nodes, edges } = get();
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node || (node.type !== 'subflow' && node.type !== 'subagent')) return;
+
+    // 1. Get subagent data (Prioritize workflowOverride)
+    let subData = node.data.workflowOverride || node.data.localOverride;
+    
+    if (!subData) {
+      const subflowId = node.data.subflowId;
+      const project = get().projects.find(p => p.id === subflowId);
+      if (project) {
+        subData = { nodes: project.nodes, edges: project.edges };
+      } else {
+        const savedAgents = getSavedAgents();
+        const agent = savedAgents.find(a => a.id === subflowId);
+        if (agent) {
+          subData = { nodes: agent.nodes, edges: agent.edges };
+        }
+      }
+    }
+
+    if (!subData) {
+      console.warn("Could not find subagent data for expansion");
+      return;
+    }
+
+    // 2. Convert SubflowNode to GroupNode
+    // Calculate bounding box if nodes exist
+    const subNodesList = subData.nodes;
+    let minX = 0, minY = 0, maxX = 400, maxY = 300;
+    if (subNodesList.length > 0) {
+      minX = Math.min(...subNodesList.map(n => n.position.x));
+      minY = Math.min(...subNodesList.map(n => n.position.y));
+      maxX = Math.max(...subNodesList.map(n => n.position.x + 200));
+      maxY = Math.max(...subNodesList.map(n => n.position.y + 100));
+    }
+
+    const padding = 60;
+    const groupWidth = (maxX - minX) + padding * 2;
+    const groupHeight = (maxY - minY) + padding * 2;
+
+    const groupNode: Node = {
+      ...node,
+      type: 'group',
+      style: { 
+        ...node.style, 
+        width: groupWidth, 
+        height: groupHeight, 
+        background: 'transparent',
+        border: '1px solid rgba(255, 255, 255, 0.4)', // CLEAN WHITE BORDER for subagents
+        borderRadius: '24px',
+      },
+      className: "bg-white/5 border-white/20",
+      data: { ...node.data, label: node.data.subflowName || node.data.label }
+    };
+
+    // 3. Offset and prepare sub-nodes
+    const subNodes = subNodesList.map(sn => ({
+      ...sn,
+      id: `${nodeId}-${sn.id}`,
+      parentId: nodeId,
+      extent: 'parent' as const,
+      position: { x: sn.position.x - minX + padding, y: sn.position.y - minY + padding },
+      data: { ...sn.data, parent_node_id: nodeId }
+    }));
+
+    const subEdges = (subData.edges || []).map(se => ({
+      ...se,
+      id: `${nodeId}-${se.id}`,
+      source: `${nodeId}-${se.source}`,
+      target: `${nodeId}-${se.target}`,
+      parentId: nodeId
+    }));
+
+    set({
+      nodes: nodes.map(n => n.id === nodeId ? groupNode : n).concat(subNodes),
+      edges: edges.concat(subEdges as any),
+      lastAction: Date.now()
+    });
+  },
+
+  wrapSubagent: (groupId: string) => {
+    const { nodes, edges } = get();
+    const groupNode = nodes.find(n => n.id === groupId);
+    if (!groupNode || groupNode.type !== 'group') return;
+
+    const children = nodes.filter(n => n.parentId === groupId);
+    const childEdges = edges.filter(e => (e as any).parentId === groupId);
+
+    // Calculate offsets used during unwrap to reverse them
+    const subNodesList = children;
+    let minX = 0, minY = 0;
+    // We don't easily know the original minX/minY, but we know padding was added.
+    // Actually, when wrapping, we just save the current relative positions.
+    
+    // Save state back to localOverride
+    const localNodes = children.map(cn => ({
+      ...cn,
+      id: cn.id.replace(`${groupId}-`, ''),
+      parentId: undefined,
+      extent: undefined,
+      // Position is already relative to parent in ReactFlow when parentId is set
+      // So we just keep it as is, or adjust if we want to normalize it
+    }));
+
+    const localEdges = childEdges.map(ce => ({
+      ...ce,
+      id: ce.id.replace(`${groupId}-`, ''),
+      source: ce.source.replace(`${groupId}-`, ''),
+      target: ce.target.replace(`${groupId}-`, ''),
+      parentId: undefined
+    }));
+
+    const subflowNode: Node = {
+      ...groupNode,
+      type: 'subflow',
+      style: { ...groupNode.style, width: undefined, height: undefined, background: undefined },
+      data: { 
+        ...groupNode.data, 
+        workflowOverride: { nodes: localNodes, edges: localEdges } 
+      }
+    };
+
+    set({
+      nodes: nodes.filter(n => n.parentId !== groupId).map(n => n.id === groupId ? subflowNode : n),
+      edges: edges.filter(e => (e as any).parentId !== groupId),
+      lastAction: Date.now()
+    });
+  },
+
+  onNodeDragStop: (event, draggedNode) => {
+    const { nodes } = get();
+    if (draggedNode.type === 'group') return; // Groups can't be parented to others here
+
+    // Find if node dropped inside a Group
+    const groupNode = nodes.find(n => 
+      n.type === 'group' && 
+      n.id !== draggedNode.id &&
+      draggedNode.position.x >= n.position.x &&
+      draggedNode.position.x <= n.position.x + (n.style?.width as number || 400) &&
+      draggedNode.position.y >= n.position.y &&
+      draggedNode.position.y <= n.position.y + (n.style?.height as number || 300)
+    );
+
+    if (groupNode && draggedNode.parentId !== groupNode.id) {
+      // Move into group
+      set({
+        nodes: nodes.map(n => n.id === draggedNode.id ? {
+          ...n,
+          parentId: groupNode.id,
+          extent: 'parent' as const,
+          position: {
+            x: draggedNode.position.x - groupNode.position.x,
+            y: draggedNode.position.y - groupNode.position.y
+          },
+          data: { ...n.data, parent_node_id: groupNode.id }
+        } : n)
+      });
+    } else if (!groupNode && draggedNode.parentId) {
+      // Move out of group
+      const parentNode = nodes.find(n => n.id === draggedNode.parentId);
+      if (parentNode) {
+        set({
+          nodes: nodes.map(n => n.id === draggedNode.id ? {
+            ...n,
+            parentId: undefined,
+            extent: undefined,
+            position: {
+              x: draggedNode.position.x + parentNode.position.x,
+              y: draggedNode.position.y + parentNode.position.y
+            },
+            data: { ...n.data, parent_node_id: undefined }
+          } : n)
+        });
+      }
     }
   },
 }));

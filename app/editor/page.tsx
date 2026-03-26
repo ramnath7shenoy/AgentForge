@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 
 import FlowCanvas from "@/components/flow/canvas/FlowCanvas";
+import ThemeToggle from "@/components/ui/ThemeToggle";
 import NodeSidebar from "@/components/flow/sidebar/NodeSidebar";
 import NodeSettingsSidebar from "@/components/flow/sidebar/NodeSettingsSidebar";
 import MissionBriefing from "@/components/ui/tutorial/MissionBriefing";
@@ -72,7 +73,8 @@ function EditorContent() {
     tutorialStep,
     setTutorialStep,
     completeTutorial,
-    running,
+    runClientFlow,
+    running: isRunning,
     clearCanvas,
     undo,
     past,
@@ -286,14 +288,14 @@ function EditorContent() {
   }, [finalResult, tutorialStep, setTutorialStep]);
 
   useEffect(() => {
-    if (running) setShowTerminal(true);
-  }, [running]);
+    if (isRunning) setShowTerminal(true);
+  }, [isRunning]);
 
   useEffect(() => {
-    if (!running) return;
+    if (!isRunning) return;
     const interval = setInterval(() => isAwaitingApproval(), 200);
     return () => clearInterval(interval);
-  }, [running]);
+  }, [isRunning]);
 
   // Click outside handler for menus
   useEffect(() => {
@@ -418,7 +420,7 @@ function EditorContent() {
   const handleGenerateAI = async () => {
     if (!aiPrompt.trim()) return;
     if (!geminiKey.trim()) {
-      alert("Please enter a Gemini API Key to use the AI Architect.");
+      alert("Please enter an API Key to use Agent Configuration.");
       return;
     }
     setIsGenerating(true);
@@ -589,13 +591,7 @@ function EditorContent() {
             </div>
 
             {/* Theme Toggle */}
-            <button
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="p-1.5 rounded-full text-slate-400 hover:text-indigo-400 transition-colors"
-              title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
-            >
-              {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-            </button>
+            <ThemeToggle />
           </div>
 
           {/* Vertical separator */}
@@ -651,16 +647,28 @@ function EditorContent() {
 
           {/* Run Flow */}
           <button
-            onClick={() => simulateFlow(startNodeId)}
+            onClick={() => runClientFlow("Initial Input")}
+            disabled={isRunning}
             className={cn(
               "flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold transition-all active:scale-95",
-              tutorialStep === 6
-                ? "bg-gradient-to-br from-indigo-600 to-violet-700 text-white ring-4 ring-indigo-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(99,102,241,0.5)] z-10"
-                : "bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white shadow-lg shadow-indigo-500/20"
+              isRunning ? "opacity-75 cursor-wait bg-indigo-500" : (
+                tutorialStep === 6
+                  ? "bg-gradient-to-br from-indigo-600 to-violet-700 text-white ring-4 ring-indigo-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(99,102,241,0.5)] z-10"
+                  : "bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white shadow-lg shadow-indigo-500/20"
+              )
             )}
           >
-            <Play size={13} className="fill-current" />
-            Run Flow
+            {isRunning ? (
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <span>Running...</span>
+              </div>
+            ) : (
+              <>
+                <Play size={13} className="fill-current" />
+                Run Flow
+              </>
+            )}
           </button>
 
           {/* Publish */}
@@ -1089,7 +1097,7 @@ function EditorContent() {
         )}
       </AnimatePresence>
 
-      {/* AI ARCHITECT MODAL */}
+      {/* AGENT CONFIGURATION MODAL */}
       <AnimatePresence>
         {showAIModal && (
           <motion.div
@@ -1112,7 +1120,7 @@ function EditorContent() {
                   <Wand2 size={24} className="text-white" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-white tracking-tight">AI Workflow Architect</h2>
+                  <h2 className="text-xl font-bold text-white tracking-tight">Agent Configuration</h2>
                   <p className="text-xs text-slate-500">Describe your automation and the AI will build the flow for you.</p>
                 </div>
               </div>
@@ -1120,7 +1128,7 @@ function EditorContent() {
               <div className="flex flex-col gap-4 mb-6">
                 <input
                   type="password"
-                  placeholder="Paste your Gemini AI API Key here (starts with AIza...)"
+                  placeholder="Paste your API Key here..."
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-200 outline-none focus:border-indigo-500 transition-all placeholder:text-slate-700"
                   value={geminiKey}
                   onChange={(e) => setGeminiKey(e.target.value)}

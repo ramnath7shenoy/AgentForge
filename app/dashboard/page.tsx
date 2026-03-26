@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { getUserFlows, publishFlow, deleteFlow } from "@/app/actions/flow";
 import { getProjects, createProject, deleteProject } from "@/app/actions/project";
 import { motion, AnimatePresence } from "framer-motion";
+import { useFlowStore } from "@/stores/flowStore";
 
 interface FlowRecord {
   id: string;
@@ -52,6 +53,7 @@ interface ProjectRecord {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { theme } = useFlowStore();
   const logs = useLogStore((s) => s.logs);
   const vaultEntries = useVaultStore((s) => s.entries);
   const [mounted, setMounted] = useState(false);
@@ -153,7 +155,10 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="dark min-h-screen bg-background text-foreground relative z-10 flex flex-col">
+    <div className={cn(
+      "min-h-screen bg-background text-foreground relative z-10 flex flex-col transition-colors duration-300",
+      theme === "dark" ? "dark" : ""
+    )}>
       <Navbar />
 
       <div className="flex-1 max-w-7xl w-full mx-auto px-6 py-8 flex gap-8">
