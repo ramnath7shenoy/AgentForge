@@ -32,6 +32,11 @@ const WebhookNode = ({ id, data, selected }: NodeProps) => {
       </span>
 
       <Handle
+        type="target"
+        position={Position.Top}
+        className="!w-4 !h-4 !bg-purple-500 !border-4 !border-white dark:!border-[#0b0e14] !shadow-lg !left-1/2 !-translate-x-1/2"
+      />
+      <Handle
         type="source"
         position={Position.Bottom}
         className="!w-4 !h-4 !bg-purple-500 !border-4 !border-white dark:!border-[#0b0e14] !shadow-lg !left-1/2 !-translate-x-1/2"

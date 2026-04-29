@@ -47,7 +47,7 @@ const categories = [
   {
     name: "Intelligence",
     nodes: [
-      { type: "ai", label: "Agent Brain", icon: <Brain size={14} className="text-purple-500" /> },
+      { type: "ai", label: "Agent Configuration", icon: <Brain size={14} className="text-purple-500" /> },
       { type: "vault", label: "Knowledge Vault", icon: <Database size={14} className="text-cyan-400" /> },
     ]
   },

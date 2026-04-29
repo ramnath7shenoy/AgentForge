@@ -12,10 +12,15 @@ interface VaultState {
   addEntry: (key: string, value: string) => void;
   removeEntry: (key: string) => void;
   getKeys: () => string[];
+  // Session key for AI Architect — persists in memory until page reload.
+  // Lets users build multiple workflows without re-pasting their key each time.
+  architectKey: string;
+  setArchitectKey: (key: string) => void;
 }
 
 export const useVaultStore = create<VaultState>((set, get) => ({
   entries: [],
+  architectKey: "",
 
   addEntry: (key, value) => {
     set((s) => ({
@@ -30,4 +35,6 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   },
 
   getKeys: () => get().entries.map(e => e.key),
+
+  setArchitectKey: (key) => set({ architectKey: key }),
 }));

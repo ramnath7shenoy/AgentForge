@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useLogStore, LogType } from "@/stores/useLogStore";
 import { useFlowStore } from "@/stores/flowStore";
-import { Trash2, Terminal as TerminalIcon, Braces, Search, Download, Sparkles } from "lucide-react";
+import { Trash2, Terminal as TerminalIcon, Download, Sparkles, Copy, CheckCheck, Bot, Clock, Workflow, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const colorMap: Record<LogType, string> = {
@@ -22,9 +22,10 @@ const badgeMap: Record<LogType, string> = {
 
 export default function ResponseGallery() {
   const { logs, clearLogs } = useLogStore();
-  const { currentContext, finalResult, running } = useFlowStore();
-  const [activeTab, setActiveTab] = useState<"terminal" | "state" | "result">("terminal");
+  const { currentContext, finalResult, running, nodes, activeProject } = useFlowStore();
+  const [activeTab, setActiveTab] = useState<"terminal" | "result">("terminal");
   const [stateSearch, setStateSearch] = useState("");
+  const [copied, setCopied] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -110,10 +111,6 @@ export default function ResponseGallery() {
           <TabButton active={activeTab === "terminal"} onClick={() => setActiveTab("terminal")} color="indigo">
             <TerminalIcon size={10} /> Terminal
           </TabButton>
-          <TabButton active={activeTab === "state"} onClick={() => setActiveTab("state")} color="cyan">
-            <Braces size={10} /> State
-            {currentContext && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />}
-          </TabButton>
           <TabButton active={activeTab === "result"} onClick={() => setActiveTab("result")} color="emerald">
             <Sparkles size={10} /> Final Result
             {finalResult && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
@@ -154,89 +151,46 @@ export default function ResponseGallery() {
         </div>
       )}
 
-      {/* State Tab */}
-      {activeTab === "state" && (
-        <div className="flex-1 overflow-y-auto p-4 scrollbar-hide">
-          {stateData ? (
-            <div className="space-y-3">
-              <div className="relative">
-                <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
-                <input
-                  type="text"
-                  placeholder="Filter keys..."
-                  value={stateSearch}
-                  onChange={(e) => setStateSearch(e.target.value)}
-                  className="w-full bg-[#0b0e14] border border-slate-800 rounded-xl pl-8 pr-3 py-2 text-[11px] font-mono text-slate-300 outline-none focus:border-cyan-500/30 transition-colors placeholder:text-slate-700"
-                />
-              </div>
-              {Object.keys(filterState(stateData.variables as Record<string, unknown>)).length > 0 && (
-                <div>
-                  <h4 className="text-[9px] font-bold uppercase tracking-widest text-cyan-400 mb-2">Variables</h4>
-                  <pre className="bg-[#0b0e14] rounded-xl border border-slate-800 p-3 text-[10px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed overflow-auto">
-                    {JSON.stringify(filterState(stateData.variables as Record<string, unknown>), null, 2)}
-                  </pre>
-                </div>
-              )}
-              <div>
-                <h4 className="text-[9px] font-bold uppercase tracking-widest text-indigo-400 mb-2">Node Outputs</h4>
-                {Object.entries(filterState(stateData.nodes as Record<string, unknown>)).map(([nodeId, data]) => (
-                  <div key={nodeId} className="mb-2 bg-[#0b0e14] rounded-xl border border-slate-800 p-3 overflow-auto">
-                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block mb-1">{nodeId}</span>
-                    <pre className="text-[10px] font-mono text-slate-400 whitespace-pre-wrap leading-relaxed">
-                      {typeof data === "string" ? data : JSON.stringify(data, null, 2)}
-                    </pre>
-                  </div>
-                ))}
-                {Object.keys(filterState(stateData.nodes as Record<string, unknown>)).length === 0 && (
-                  <p className="text-[10px] text-slate-700 italic text-center py-4">{stateSearch ? "No matching keys" : "No node outputs yet"}</p>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-slate-700 gap-2">
-              <Braces size={24} className="opacity-20" />
-              <span className="text-[10px] italic">Run a flow to see live state</span>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Final Result Tab */}
       {activeTab === "result" && (
         <div className="flex-1 overflow-y-auto p-4 scrollbar-hide">
           {finalResult ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Execution Complete</span>
-                  <span className={cn(
-                    "text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ml-2",
-                    finalResult.type === "text" ? "bg-blue-500/10 text-blue-400" :
-                    finalResult.type === "file" ? "bg-emerald-500/10 text-emerald-400" :
-                    "bg-purple-500/10 text-purple-400"
-                  )}>{finalResult.type}</span>
-                </div>
-                <button
-                  onClick={handleDownloadReport}
-                  className="flex items-center gap-1 text-[9px] text-indigo-400 hover:text-indigo-300 transition-colors px-3 py-1.5 rounded-lg hover:bg-indigo-500/10 border border-indigo-500/20 font-bold uppercase tracking-wider"
-                >
-                  <Download size={10} /> Download Report
-                </button>
-              </div>
-              <div className="bg-[#0b0e14] rounded-xl border border-slate-800 p-4 overflow-auto">
-                <pre className="text-[12px] font-mono text-slate-200 whitespace-pre-wrap leading-relaxed">
-                  {typeof finalResult.payload === "string" ? finalResult.payload : JSON.stringify(finalResult.payload, null, 2)}
-                </pre>
-              </div>
-              <div className="flex items-center gap-2 text-[9px] text-slate-600">
-                <span>{logs.length} log entries</span>
-                <span>·</span>
-                <span>{logs.filter(l => l.type === "ERROR").length} errors</span>
-                <span>·</span>
-                <span>{logs.filter(l => l.type === "SUCCESS").length} successes</span>
-              </div>
-            </div>
+            <WorkflowReport
+              finalResult={finalResult}
+              logs={logs}
+              nodes={nodes}
+              projectName={activeProject?.name}
+              copied={copied}
+              onCopy={() => {
+                const agentCount = nodes.filter(n => n.type === "ai").length;
+                const hasErrors = logs.some(l => l.type === "ERROR");
+                const execMs = logs.length >= 2
+                  ? logs[logs.length - 1].timestamp - logs[0].timestamp
+                  : 0;
+                const execSecs = (execMs / 1000).toFixed(1);
+                const projectLabel = activeProject?.name || "Untitled Flow";
+                const raw = typeof finalResult.payload === "string"
+                  ? finalResult.payload
+                  : JSON.stringify(finalResult.payload, null, 2);
+
+                const summary = [
+                  `✅ Workflow: ${projectLabel}`,
+                  `⏱️ Execution Time: ${execSecs}s`,
+                  `🤖 Agents Involved: ${agentCount}`,
+                  `📊 Status: ${hasErrors ? "Partial" : "Complete"}`,
+                  "",
+                  "─── Output ───",
+                  raw,
+                ].join("\n");
+
+                navigator.clipboard.writeText(summary).then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                });
+              }}
+              onDownload={handleDownloadReport}
+            />
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-slate-700 gap-2">
               <Sparkles size={24} className="opacity-20" />
@@ -245,6 +199,142 @@ export default function ResponseGallery() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// WorkflowReport — structured result view for the Final Result tab
+// ─────────────────────────────────────────────────────────────────────
+function WorkflowReport({
+  finalResult,
+  logs,
+  nodes,
+  projectName,
+  copied,
+  onCopy,
+  onDownload,
+}: {
+  finalResult: { type: string; payload: any };
+  logs: { timestamp: number; type: string }[];
+  nodes: { type?: string | null }[];
+  projectName: string | undefined;
+  copied: boolean;
+  onCopy: () => void;
+  onDownload: () => void;
+}) {
+  const agentCount = nodes.filter(n => n.type === "ai").length;
+  const hasErrors = logs.some(l => l.type === "ERROR");
+  const execMs = logs.length >= 2
+    ? logs[logs.length - 1].timestamp - logs[0].timestamp
+    : 0;
+  const execSecs = (execMs / 1000).toFixed(1);
+  const status = hasErrors ? "Partial" : "Complete";
+  const rawOutput = typeof finalResult.payload === "string"
+    ? finalResult.payload
+    : JSON.stringify(finalResult.payload, null, 2);
+
+  return (
+    <div className="space-y-4">
+      {/* ── Workflow Report header ── */}
+      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-2.5">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
+            Workflow Report
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={onCopy}
+              className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg border transition-all"
+              style={copied
+                ? { color: "#4ade80", borderColor: "rgba(74,222,128,.3)", background: "rgba(74,222,128,.08)" }
+                : { color: "#818cf8", borderColor: "rgba(99,102,241,.25)", background: "transparent" }}
+            >
+              {copied ? <CheckCheck size={10} /> : <Copy size={10} />}
+              {copied ? "Copied!" : "Copy Summary"}
+            </button>
+            <button
+              onClick={onDownload}
+              className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-slate-300 transition-colors px-2.5 py-1.5 rounded-lg border border-white/8 hover:bg-white/5 font-bold uppercase tracking-wider"
+            >
+              <Download size={10} /> Export
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <ReportStat
+            icon={<Workflow size={11} className="text-violet-400" />}
+            label="Workflow"
+            value={projectName || "Untitled Flow"}
+            color="violet"
+          />
+          <ReportStat
+            icon={<Clock size={11} className="text-blue-400" />}
+            label="Execution Time"
+            value={`${execSecs}s`}
+            color="blue"
+          />
+          <ReportStat
+            icon={<Bot size={11} className="text-amber-400" />}
+            label="Agents Involved"
+            value={String(agentCount)}
+            color="amber"
+          />
+          <ReportStat
+            icon={<BarChart3 size={11} className={hasErrors ? "text-rose-400" : "text-emerald-400"} />}
+            label="Status"
+            value={status}
+            color={hasErrors ? "rose" : "emerald"}
+          />
+        </div>
+      </div>
+
+      {/* ── Raw output ── */}
+      <div className="bg-[#0b0e14] rounded-xl border border-slate-800 p-4 overflow-auto">
+        <pre className="text-[12px] font-mono text-slate-200 whitespace-pre-wrap leading-relaxed">
+          {rawOutput}
+        </pre>
+      </div>
+
+      <div className="flex items-center gap-2 text-[9px] text-slate-600">
+        <span>{logs.length} log entries</span>
+        <span>·</span>
+        <span className={hasErrors ? "text-rose-500" : ""}>
+          {logs.filter(l => l.type === "ERROR").length} errors
+        </span>
+        <span>·</span>
+        <span>{logs.filter(l => l.type === "SUCCESS").length} successes</span>
+      </div>
+    </div>
+  );
+}
+
+function ReportStat({
+  icon,
+  label,
+  value,
+  color,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  color: string;
+}) {
+  const bg: Record<string, string> = {
+    violet: "bg-violet-500/8 border-violet-500/20",
+    blue:   "bg-blue-500/8 border-blue-500/20",
+    amber:  "bg-amber-500/8 border-amber-500/20",
+    emerald:"bg-emerald-500/8 border-emerald-500/20",
+    rose:   "bg-rose-500/8 border-rose-500/20",
+  };
+  return (
+    <div className={cn("flex items-start gap-2 rounded-lg border px-3 py-2", bg[color] || bg.violet)}>
+      <div className="mt-0.5 shrink-0">{icon}</div>
+      <div className="min-w-0">
+        <p className="text-[8px] font-bold uppercase tracking-widest text-slate-500 mb-0.5">{label}</p>
+        <p className="text-[11px] font-semibold text-slate-200 truncate">{value}</p>
+      </div>
     </div>
   );
 }

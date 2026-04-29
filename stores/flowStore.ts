@@ -1,6 +1,8 @@
 "use client";
 
 import { create } from "zustand";
+import type { ChatMessage } from "@/lib/flow/clientExecutor";
+import type { NodeExecutionStatus } from "@/types/flowStoreTypes";
 import { 
   Node, 
   Edge, 
@@ -23,7 +25,13 @@ export interface ExtendedFlowState extends FlowState {
   projects: any[];
   setProjects: (projects: any[]) => void;
   executionResult: Record<string, any> | null;
+  executionState: ExecutionContext | null;
   isRunning: boolean;
+  isChatOpen: boolean;
+  setIsChatOpen: (isOpen: boolean) => void;
+  chatHistory: ChatMessage[];
+  clearChatHistory: () => void;
+  addMessage: (role: 'user' | 'assistant', content: string) => void;
   runClientFlow: (initialInput: string) => Promise<void>;
   updateNodeData: (nodeId: string, newData: Partial<NodeData>) => void;
   addNode: (node: Node<NodeData>) => void;
@@ -31,6 +39,9 @@ export interface ExtendedFlowState extends FlowState {
   unwrapSubagent: (nodeId: string) => void;
   wrapSubagent: (groupId: string) => void;
   onNodeDragStop: (event: React.MouseEvent, node: Node) => void;
+  nodeStatuses: Record<string, NodeExecutionStatus>;
+  setNodeStatus: (nodeId: string, status: NodeExecutionStatus) => void;
+  nodeOutputs: Record<string, FlowPacket>;
 }
 
 import {
@@ -47,15 +58,11 @@ import { useLogStore } from "@/stores/useLogStore";
 // Helper for visual execution feedback
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Global approval signal for the Safety Gatekeeper
-let approvalResolve: ((approved: boolean) => void) | null = null;
-export function sendApprovalSignal(approved: boolean) {
-  if (approvalResolve) {
-    approvalResolve(approved);
-    approvalResolve = null;
-  }
-}
-export function isAwaitingApproval() { return approvalResolve !== null; }
+// Approval gate — delegates to the shared approvalGate module to avoid the
+// flowStore ↔ clientExecutor circular dependency.
+import { resolveApproval, isApprovalPending, waitForApproval } from "@/lib/approvalGate";
+export function sendApprovalSignal(approved: boolean) { resolveApproval(approved); }
+export function isAwaitingApproval() { return isApprovalPending(); }
 
 export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
   nodes: [],
@@ -77,6 +84,18 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
   activeProject: null,
   projects: [],
   executionResult: {},
+  executionState: null,
+  isChatOpen: false,
+  setIsChatOpen: (isOpen: boolean) => set({ isChatOpen: isOpen }),
+  nodeStatuses: {} as Record<string, NodeExecutionStatus>,
+  setNodeStatus: (nodeId, status) =>
+    set((s) => ({ nodeStatuses: { ...s.nodeStatuses, [nodeId]: status } })),
+  nodeOutputs: {} as Record<string, FlowPacket>,
+  chatHistory: [],
+  clearChatHistory: () => set({ chatHistory: [] }),
+  addMessage: (role, content) => set((state) => ({
+    chatHistory: [...state.chatHistory, { role, content }]
+  })),
 
   // --- HISTORY STATE ---
   past: [],
@@ -106,6 +125,9 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
   },
 
   // --- STANDARD ACTIONS ---
+  // chatHistory is intentionally NOT cleared here so conversation persists
+  // across node reloads and AI-Build regenerations within the same session.
+  // Use clearChatHistory() or clearCanvas() for an explicit conversation reset.
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
@@ -123,6 +145,8 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
     set({ 
       nodes: [], 
       edges: [], 
+      chatHistory: [],
+      isChatOpen: false,
       selectedNodeId: null, 
       finalResult: null,
       executionLogs: [],
@@ -208,35 +232,157 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
   },
 
   runClientFlow: async (initialInput: string) => {
-    set({ running: true, isRunning: true, executionResult: {} });
-    
-    // Fresh snapshot inside the function
-    const { nodes, edges } = get();
-    console.log("🚀 Starting Flow with Nodes:", nodes);
-    
-    const addLog = useLogStore.getState().addLog;
-    
-    const result = await executeGraph(nodes, edges, initialInput, (message, type, nodeId) => {
-      addLog(type || "INFO", message, nodeId);
-      
-      // Also highlight nodes in real-time if nodeId is provided
-      if (nodeId) {
-        set((s) => ({
-          highlightedNodeId: nodeId,
-          executedNodeIds: s.executedNodeIds.includes(nodeId) 
-            ? s.executedNodeIds 
-            : [...s.executedNodeIds, nodeId],
-        }));
+    // Guard: if the walker is suspended at an approval gate, route this message
+    // to the gate instead of restarting the graph from scratch.
+    if (isApprovalPending()) {
+      const text = (initialInput || "").trim();
+      if (text) {
+        set((s) => ({ chatHistory: [...s.chatHistory, { role: 'user' as const, content: text }] }));
       }
+      const APPROVAL_WORDS = ['go', 'post', 'yes', 'approve', 'send', 'confirm', 'publish', 'proceed', 'ok'];
+      const words = text.toLowerCase().split(/\W+/);
+      resolveApproval(APPROVAL_WORDS.some((w) => words.includes(w)));
+      return;
+    }
+
+    // Capture nodes/edges and the pre-execution conversation history.
+    // chatHistory here is intentionally the PREVIOUS turns — it is passed
+    // to executeGraph so the AI has memory of prior exchanges, but it must
+    // NOT be used to build the new state at the end (that snapshot is stale).
+    const { nodes, edges, chatHistory } = get();
+
+    set({
+      running: true,
+      isRunning: true,
+      executionResult: {},
+      executedNodeIds: [],
+      nodeStatuses: {},
+      nodeOutputs: {},
     });
 
-    set({ 
-      executionResult: result.context.nodes as any, 
-      running: false,
-      isRunning: false,
-      highlightedNodeId: null,
-      finalResult: result.context.variables.output || Object.values(result.context.nodes).pop() || null
+    const addLog = useLogStore.getState().addLog;
+    addLog("INFO", "🚀 Syncing latest canvas state...");
+
+    if (chatHistory.length > 0) {
+      addLog("INFO", `💬 Memory: ${chatHistory.length} previous messages loaded.`);
+    }
+
+    // Open the chat panel on the very first conversation turn.
+    if (chatHistory.length === 0) {
+      set({ isChatOpen: true });
+    }
+
+    // ── Push the user message BEFORE execution ──────────────────────────────
+    // This guarantees the user bubble appears above the assistant reply even
+    // though addMessage('assistant', …) is called asynchronously inside the
+    // output node during execution.
+    const userText = (initialInput || "").trim();
+    if (userText && userText !== "Initial Input") {
+      set((s) => ({
+        chatHistory: [...s.chatHistory, { role: 'user' as const, content: userText }],
+      }));
+    }
+
+    // Record chat length after the user message so we can detect whether an
+    // assistant reply was added during execution (used for the fallback below).
+    const historyLengthBeforeExec = get().chatHistory.length;
+
+    // Pre-check: warn if no API key is available anywhere.
+    // Accepts ANY non-empty vault entry (Gemini, Groq, OpenAI, Anthropic, custom name).
+    const vaultEntries = (await import("@/stores/vaultStore")).useVaultStore.getState().entries;
+    const hasAnyVaultKey = vaultEntries.some(e => e.value?.trim());
+    const hasNodeLevelKeys = nodes.some(n =>
+      (n.type === 'ai_agent' || n.type === 'agent-brain' || n.type === 'llm' || n.type === 'ai') &&
+      n.data?.apiKey?.trim()
+    );
+
+    if (!hasAnyVaultKey && !hasNodeLevelKeys) {
+      addLog("ERROR", "❌ No API Key found in Secret Vault or Node Config. Open the Vault panel and add a Gemini, OpenAI, Groq, or Anthropic key.");
+      set({ running: false, isRunning: false });
+      return;
+    }
+
+    const result = await executeGraph(
+      nodes,
+      edges,
+      initialInput,
+      (message, type, nodeId) => {
+        addLog(type || "INFO", message, nodeId);
+        if (nodeId) {
+          set((s) => ({
+            highlightedNodeId: nodeId,
+            executedNodeIds: s.executedNodeIds.includes(nodeId)
+              ? s.executedNodeIds
+              : [...s.executedNodeIds, nodeId],
+          }));
+        }
+      },
+      chatHistory, // snapshot of PREVIOUS turns — correct for AI memory context
+      {
+        onNodeStatusChange: (nodeId, status) => {
+          set((s) => ({
+            nodeStatuses: { ...s.nodeStatuses, [nodeId]: status },
+            ...(status === "running" ? { highlightedNodeId: nodeId } : {}),
+          }));
+        },
+        onNodeComplete: (nodeId, packet) => {
+          set((s) => ({
+            nodeOutputs: { ...s.nodeOutputs, [nodeId]: packet },
+          }));
+        },
+      }
+    );
+
+    const finalState = result.context;
+    const finalPacket =
+      finalState.variables.output ||
+      Object.values(finalState.nodes).pop() ||
+      null;
+
+    // Auto-clear input nodes so the chat box is ready for the next turn.
+    const clearedNodes = nodes.map((n) =>
+      n.type === 'input'
+        ? { ...n, data: { ...n.data, packet: { type: 'text' as const, payload: '' } } }
+        : n
+    );
+
+    // ── Functional set: reads the LIVE chatHistory ───────────────────────────
+    // By using (state) => … here we read the Zustand state at the moment of
+    // this set call — AFTER execution — so any addMessage() calls made during
+    // execution (e.g. by the output node) are already present in state.chatHistory
+    // and are NOT overwritten.
+    set((state) => {
+      let liveHistory = state.chatHistory;
+
+      // Fallback: if the walker ran but no output node called addMessage() for
+      // this turn (e.g. the graph has no output node), surface the final result
+      // as an assistant message so the chat is never blank.
+      const addedThisTurn = liveHistory.slice(historyLengthBeforeExec);
+      const assistantReplied = addedThisTurn.some((m) => m.role === 'assistant');
+
+      if (!assistantReplied && finalPacket?.payload) {
+        const text =
+          typeof finalPacket.payload === 'string'
+            ? finalPacket.payload
+            : JSON.stringify(finalPacket.payload);
+        if (text.trim()) {
+          liveHistory = [...liveHistory, { role: 'assistant' as const, content: text }];
+        }
+      }
+
+      return {
+        executionResult: finalState.nodes as any,
+        executionState: finalState,
+        running: false,
+        isRunning: false,
+        highlightedNodeId: null,
+        finalResult: finalPacket,
+        chatHistory: liveHistory,
+        nodes: clearedNodes,
+      };
     });
+
+    addLog("SUCCESS", `🏁 Flow Finished. Memory: ${get().chatHistory.length} messages.`);
   },
 
   // --- FLOW EXECUTION LOGIC ---
@@ -592,10 +738,8 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
         const addLog = useLogStore.getState().addLog;
         addLog("WARN", `⏸ Paused at Safety Gate: ${node.data.label || "Approval"}`, node.id);
 
-        // Wait for global approval signal
-        const approved = await new Promise<boolean>((resolve) => {
-          approvalResolve = resolve;
-        });
+        // Wait for global approval signal (via approvalGate module)
+        const approved = await waitForApproval();
 
         if (!approved) {
           addLog("ERROR", `✗ Flow aborted by user at: ${node.data.label || "Approval"}`, node.id);

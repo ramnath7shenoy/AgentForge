@@ -29,20 +29,24 @@ interface NodeSettingsSidebarProps {
 }
 
 const MODEL_PRESETS: Record<string, string[]> = {
-  gemini: ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest", "gemini-2.0-flash-exp"],
+  gemini: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
   openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
-  anthropic: ["claude-3-5-sonnet-latest", "claude-3-opus-latest"]
+  anthropic: ["claude-3-5-sonnet-latest", "claude-3-opus-latest"],
+  groq: ["mixtral-8x7b-32768", "llama3-70b-8192", "gemma-7b-it"]
 };
 
 const HUMAN_LABELS: Record<string, string> = {
-  "gemini-1.5-flash-latest": "Gemini 1.5 Flash",
-  "gemini-1.5-pro-latest": "Gemini 1.5 Pro",
-  "gemini-2.0-flash-exp": "Gemini 2.0 Flash (Exp)",
+  "gemini-2.5-flash": "Gemini 2.5 Flash",
+  "gemini-2.5-pro": "Gemini 2.5 Pro",
+  "gemini-2.0-flash": "Gemini 2.0 Flash",
   "gpt-4o": "GPT-4o",
   "gpt-4o-mini": "GPT-4o Mini",
   "gpt-4-turbo": "GPT-4 Turbo",
   "claude-3-5-sonnet-latest": "Claude 3.5 Sonnet",
-  "claude-3-opus-latest": "Claude 3 Opus"
+  "claude-3-opus-latest": "Claude 3 Opus",
+  "mixtral-8x7b-32768": "Mixtral 8x7B",
+  "llama3-70b-8192": "Llama 3 70B",
+  "gemma-7b-it": "Gemma 7B"
 };
 
 const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = true }) => {
@@ -392,6 +396,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         <Zap size={16} />
         <h3 className="text-sm font-bold uppercase tracking-tight">Integration</h3>
       </div>
+
       <div className="flex flex-col gap-2">
         <label className="text-[10px] font-bold uppercase text-slate-500">What are we doing here?</label>
         <select
@@ -409,6 +414,40 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           <option value="Fetch Data">Fetch Data</option>
         </select>
       </div>
+
+      {/* URL / Endpoint — required for ALL connection types */}
+      {selectedNode.data.connectionType && (
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500 flex items-center gap-1">
+            <Globe size={10} className="text-emerald-500" />
+            {selectedNode.data.connectionType === "Send to Slack" ? "Slack Webhook URL" : "Endpoint URL"}
+            <span className="text-rose-400 ml-0.5">*</span>
+          </label>
+          <input
+            type="url"
+            className={cn(
+              "rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all border font-mono",
+              "bg-background border-border text-foreground focus:border-emerald-500",
+              !selectedNode.data.url && "border-rose-500/40"
+            )}
+            placeholder={
+              selectedNode.data.connectionType === "Send to Slack"
+                ? "https://hooks.slack.com/services/…"
+                : selectedNode.data.connectionType === "Get from Website"
+                ? "https://example.com/data.json"
+                : "https://api.example.com/endpoint"
+            }
+            value={selectedNode.data.url || ""}
+            onChange={(e) => updateNodeData(selectedNode.id, { url: e.target.value })}
+          />
+          {!selectedNode.data.url && (
+            <p className="text-[10px] text-rose-400 font-medium">
+              Required — flow will error without a URL.
+            </p>
+          )}
+        </div>
+      )}
+
       {selectedNode.data.connectionType === "Post to API" && (
         <div className="flex flex-col gap-2">
           <label className="text-[10px] font-bold uppercase text-slate-500">Authorization Token</label>
@@ -428,7 +467,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-2 text-blue-500">
         <Brain size={16} />
-        <h3 className="text-sm font-bold uppercase tracking-tight">Agent Brain</h3>
+        <h3 className="text-sm font-bold uppercase tracking-tight">Agent Configuration</h3>
       </div>
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
@@ -451,22 +490,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
             <option value="gemini">Google Gemini</option>
             <option value="openai">OpenAI (GPT)</option>
             <option value="anthropic">Anthropic (Claude)</option>
-          </select>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <label className="text-[10px] font-bold uppercase text-slate-500">Model Name</label>
-          <select
-            className={cn(
-              "rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all border",
-              "bg-background border-border text-foreground"
-            )}
-            value={selectedNode.data.modelName || ""}
-            onChange={(e) => updateNodeData(selectedNode.id, { modelName: e.target.value })}
-          >
-            {(MODEL_PRESETS[selectedNode.data.provider || "gemini"] || []).map(m => (
-              <option key={m} value={m}>{HUMAN_LABELS[m] || m}</option>
-            ))}
+            <option value="groq">Groq (Ultra-Fast)</option>
           </select>
         </div>
       </div>
@@ -506,7 +530,12 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
               setApiKeySaved(true);
               setTimeout(() => setApiKeySaved(false), 2000);
             }}
-            placeholder="Paste your provider key here..."
+            placeholder={
+              selectedNode.data.provider === 'groq' ? "Enter your Groq API key (gsk_...)" :
+              selectedNode.data.provider === 'openai' ? "Enter your OpenAI key (sk-...)" :
+              selectedNode.data.provider === 'anthropic' ? "Enter your Anthropic key (sk-ant-...)" :
+              "Enter your Google AI API key (v1)..."
+            }
             theme={theme}
           />
         </div>

@@ -27,7 +27,6 @@ import {
   Globe,
   Lock,
   Sparkles,
-  Wand2,
   History
 } from "lucide-react";
 
@@ -38,10 +37,13 @@ import NodeSettingsSidebar from "@/components/flow/sidebar/NodeSettingsSidebar";
 import MissionBriefing from "@/components/ui/tutorial/MissionBriefing";
 import ResponseGallery from "@/components/flow/ResponseGallery";
 import ApprovalBanner from "@/components/flow/ApprovalBanner";
+import ChatHub from "@/components/flow/chat/ChatHub";
 
 import { useFlowStore, isAwaitingApproval } from "@/stores/flowStore";
 import { saveFlow, getLatestFlow, publishFlow } from "@/app/actions/flow";
 import { generateWorkflow } from "@/app/actions/ai-architect";
+import type { ArchitectProvider } from "@/app/actions/ai-architect";
+import AIArchitectModal from "@/components/flow/AIArchitectModal";
 import { FLOW_TEMPLATES } from "@/lib/constants/templates";
 import { getSnapshots, saveSnapshot, deleteSnapshot, FlowSnapshot } from "@/lib/versionSnapshots";
 import { cn } from "@/lib/utils";
@@ -112,10 +114,8 @@ function EditorContent() {
   const [publicEditable, setPublicEditable] = useState(false);
   const [flowName, setFlowName] = useState("Untitled Agent");
 
-  // AI Architect States
+  // Agent Configuration States
   const [showAIModal, setShowAIModal] = useState(false);
-  const [aiPrompt, setAiPrompt] = useState("");
-  const [geminiKey, setGeminiKey] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
 
   // Get auth user on mount
@@ -287,9 +287,12 @@ function EditorContent() {
     if (tutorialStep === 6 && finalResult) setTutorialStep(7);
   }, [finalResult, tutorialStep, setTutorialStep]);
 
+  // Terminal surfaces only when an output node fires (finalResult is set),
+  // not while the walker is merely running. This decouples the terminal
+  // visibility from execution state so chat can work without it.
   useEffect(() => {
-    if (isRunning) setShowTerminal(true);
-  }, [isRunning]);
+    if (finalResult) setShowTerminal(true);
+  }, [finalResult]);
 
   useEffect(() => {
     if (!isRunning) return;
@@ -417,24 +420,43 @@ function EditorContent() {
     return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
   };
 
-  const handleGenerateAI = async () => {
-    if (!aiPrompt.trim()) return;
-    if (!geminiKey.trim()) {
-      alert("Please enter an API Key to use Agent Configuration.");
+  const handleGenerateAI = async (prompt: string, pastedKey: string, provider: ArchitectProvider) => {
+    const vaultStore = (await import("@/stores/vaultStore")).useVaultStore.getState();
+
+    const providerVaultKeys: Record<ArchitectProvider, string[]> = {
+      gemini: ["GEMINI_API_KEY", "API_KEY"],
+      groq:   ["GROQ_API_KEY",   "API_KEY"],
+      openai: ["OPENAI_API_KEY", "API_KEY"],
+    };
+
+    // JIT: explicit paste takes priority, then vault lookup
+    let jitKey: string | null = pastedKey.trim() || null;
+    if (!jitKey) {
+      for (const keyName of providerVaultKeys[provider]) {
+        const entry = vaultStore.entries.find((e: any) => e.key === keyName);
+        if (entry?.value) { jitKey = entry.value; break; }
+      }
+    }
+
+    if (!jitKey) {
+      alert(`Please paste an API key or add ${providerVaultKeys[provider][0]} to the Vault.`);
       return;
     }
+
     setIsGenerating(true);
-    setShowAIModal(false);
-    
-    const result = await generateWorkflow(aiPrompt, geminiKey);
-    if (result.success && result.data?.nodes) {
-      setNodes(result.data.nodes);
-      setEdges(result.data.edges);
-    } else {
-      alert(result.error || "Failed to generate workflow via AI.");
+
+    try {
+      const result = await generateWorkflow({ prompt, provider, decryptedKey: jitKey });
+      if (result.success && result.data?.nodes) {
+        setNodes(result.data.nodes);
+        setEdges(result.data.edges);
+      } else {
+        alert(result.error || "Failed to generate workflow via AI.");
+      }
+    } finally {
+      jitKey = null;
+      setIsGenerating(false);
     }
-    setIsGenerating(false);
-    setAiPrompt("");
   };
 
   return (
@@ -607,7 +629,7 @@ function EditorContent() {
             Templates
           </button>
 
-          {/* AI Architect (Magic Wand) — breathing glow */}
+          {/* Agent Configuration (Magic Wand) — breathing glow */}
           <motion.button
             onClick={() => setShowAIModal(true)}
             animate={{
@@ -628,7 +650,7 @@ function EditorContent() {
                 ? "bg-violet-600/20 border-violet-500/40 text-violet-300"
                 : "bg-violet-600/10 hover:bg-violet-600/30 border-violet-500/20 text-violet-400 hover:text-white"
             )}
-            title="AI Workflow Architect"
+            title="Agent Configuration"
           >
             <motion.div
               animate={{
@@ -987,11 +1009,14 @@ function EditorContent() {
               localStorage.removeItem('agentforge_onboarding_complete');
               setTutorialStep(1);
             }}
-            className="fixed bottom-6 right-6 z-50 bg-slate-800/50 backdrop-blur-md p-3 rounded-full border border-slate-700 text-slate-400 hover:text-indigo-400 transition-all shadow-2xl group active:scale-95"
+            className="fixed bottom-6 right-6 z-[50] bg-slate-800/50 backdrop-blur-md p-3 rounded-full border border-slate-700 text-slate-400 hover:text-indigo-400 transition-all shadow-2xl group active:scale-95"
             title="Restart Mission"
           >
             <HelpCircle size={20} className="group-hover:rotate-12 transition-transform" />
           </button>
+
+          {/* CHAT HUB */}
+          <ChatHub />
         </main>
 
         {/* RIGHT SIDEBAR TOGGLE */}
@@ -1098,78 +1123,11 @@ function EditorContent() {
       </AnimatePresence>
 
       {/* AGENT CONFIGURATION MODAL */}
-      <AnimatePresence>
-        {showAIModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-xl p-6"
-            onClick={() => setShowAIModal(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              transition={{ type: "spring", stiffness: 300, damping: 25 }}
-              className="w-full max-w-xl bg-slate-900 border border-white/10 rounded-3xl shadow-2xl overflow-hidden p-8"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                  <Wand2 size={24} className="text-white" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-white tracking-tight">Agent Configuration</h2>
-                  <p className="text-xs text-slate-500">Describe your automation and the AI will build the flow for you.</p>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-4 mb-6">
-                <input
-                  type="password"
-                  placeholder="Paste your API Key here..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-200 outline-none focus:border-indigo-500 transition-all placeholder:text-slate-700"
-                  value={geminiKey}
-                  onChange={(e) => setGeminiKey(e.target.value)}
-                />
-                <textarea
-                  autoFocus
-                  className="w-full h-32 bg-slate-950 border border-slate-800 rounded-2xl p-4 text-sm text-slate-200 outline-none focus:border-indigo-500 transition-all resize-none placeholder:text-slate-700"
-                  placeholder="e.g. A customer support bot that analyzes sentiment and routes negative inquiries to human agents, while thanking positive ones."
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                      handleGenerateAI();
-                    }
-                  }}
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">⌘+Enter to build</span>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => setShowAIModal(false)}
-                    className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleGenerateAI}
-                    disabled={!aiPrompt.trim()}
-                    className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-500/20"
-                  >
-                    <Sparkles size={14} />
-                    Build Workflow
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <AIArchitectModal
+        open={showAIModal}
+        onClose={() => setShowAIModal(false)}
+        onSubmit={handleGenerateAI}
+      />
 
       <MissionBriefing />
     </div>

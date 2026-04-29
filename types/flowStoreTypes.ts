@@ -49,6 +49,11 @@ export interface NodeData {
   days?: string[];
   timezone?: string;
 
+  // 6. WEBHOOK (Outgoing HTTP Action)
+  url?: string;
+  method?: string;
+  payload?: string;
+
   // Internal legacy mapping
   uploadedFileName?: string;
 
@@ -63,7 +68,7 @@ export interface NodeData {
 
   // AI Logic
   apiKey?: string;
-  provider?: 'gemini' | 'openai' | 'anthropic';
+  provider?: 'gemini' | 'openai' | 'anthropic' | 'groq' | 'auto';
   modelName?: string;
   model?: string; // Keeping for backward compatibility if needed
 
@@ -80,6 +85,8 @@ export interface NodeData {
 }
 
 export type ExecutionStatus = "pending" | "success" | "error";
+
+export type NodeExecutionStatus = "idle" | "running" | "success" | "error" | "skipped";
 
 export interface ExecutionLogEntry {
   nodeId: string;
@@ -145,4 +152,8 @@ export interface FlowState {
   // Subagent Expansion
   unwrapSubagent: (nodeId: string) => void;
   wrapSubagent: (groupId: string) => void;
+
+  // Per-node execution status for UI feedback
+  nodeStatuses: Record<string, NodeExecutionStatus>;
+  setNodeStatus: (nodeId: string, status: NodeExecutionStatus) => void;
 }
