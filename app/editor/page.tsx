@@ -32,6 +32,8 @@ import {
 } from "lucide-react";
 
 import FlowCanvas from "@/components/flow/canvas/FlowCanvas";
+import FlowCollaboration from "@/components/flow/collaboration/FlowCollaboration";
+import CollaborationStatus from "@/components/flow/collaboration/CollaborationStatus";
 import NodeSidebar from "@/components/flow/sidebar/NodeSidebar";
 import NodeSettingsSidebar from "@/components/flow/sidebar/NodeSettingsSidebar";
 import MissionBriefing from "@/components/ui/tutorial/MissionBriefing";
@@ -50,6 +52,23 @@ import { createClient } from "@/lib/supabase/client";
 import { getProjects } from "@/app/actions/project";
 
 const LS_GUEST_FLOW_KEY = "agentforge_guest_flow";
+
+function getDisplayName(user: any) {
+  const metadataName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.user_metadata?.preferred_username;
+
+  if (typeof metadataName === "string" && metadataName.trim()) {
+    return metadataName.trim();
+  }
+
+  if (typeof user?.email === "string" && user.email) {
+    return user.email.split("@")[0]?.replace(/[._-]+/g, " ").trim() || user.email;
+  }
+
+  return null;
+}
 
 function EditorContent() {
   const router = useRouter();
@@ -309,6 +328,7 @@ function EditorContent() {
   if (!mounted) return null;
 
   const startNodeId = Array.isArray(nodes) && nodes.length > 0 ? nodes[0].id : "";
+  const collaborationEnabled = hasHydrated && !!currentFlowId && !!userId;
 
   const handleSaveSnapshot = () => {
     const name = `v${snapshots.length + 1} — ${new Date().toLocaleTimeString()}`;
@@ -440,6 +460,11 @@ function EditorContent() {
       "flex flex-col h-screen w-full transition-colors duration-300",
       theme === "dark" ? "dark bg-background text-foreground" : "bg-background text-foreground"
     )}>
+      <FlowCollaboration
+        flowId={currentFlowId}
+        enabled={collaborationEnabled}
+        displayName={getDisplayName(user)}
+      />
 
       {/* HEADER */}
       <header className="flex items-center justify-between border-b border-border px-4 py-2 bg-background/40 backdrop-blur-xl z-50 shadow-sm relative">
@@ -489,6 +514,8 @@ function EditorContent() {
                 {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Error"}
               </span>
             )}
+
+            <CollaborationStatus enabled={collaborationEnabled} />
           </div>
 
           {/* ── GLASSMORPHISM PILL ── */}
@@ -903,7 +930,10 @@ function EditorContent() {
 
         {/* CANVAS */}
         <main className="flex-1 relative bg-background">
-          <FlowCanvas setSelectedNodeId={setSelectedNodeId} />
+          <FlowCanvas
+            setSelectedNodeId={setSelectedNodeId}
+            collaborationEnabled={collaborationEnabled}
+          />
 
           {/* SHIMMER OVERLAY (Generating AI) */}
           <AnimatePresence>
