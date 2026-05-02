@@ -1,0 +1,160 @@
+'use server'
+
+import prisma from "@/lib/prisma";
+import { createClient } from "@/lib/supabase/server";
+import * as xService from "@/lib/providers/xService";
+import * as slackService from "@/lib/providers/slackService";
+import * as discordService from "@/lib/providers/discordService";
+import * as githubService from "@/lib/providers/githubService";
+import * as notionService from "@/lib/providers/notionService";
+
+async function getAuthUser() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  return user;
+}
+
+export async function getIntegrations() {
+  const user = await getAuthUser();
+  if (!user) return { error: "Unauthorized", integrations: [] };
+
+  const integrations = await prisma.integration.findMany({
+    where: { userId: user.id },
+    select: { id: true, provider: true, metadata: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
+  return { integrations };
+}
+
+export async function upsertIntegration(
+  provider: string,
+  accessToken: string,
+  refreshToken?: string,
+  metadata?: Record<string, unknown>
+) {
+  const user = await getAuthUser();
+  if (!user) return { error: "Unauthorized" };
+
+  const integration = await prisma.integration.upsert({
+    where: { userId_provider: { userId: user.id, provider } },
+    create: {
+      userId: user.id,
+      provider,
+      accessToken,
+      refreshToken: refreshToken ?? null,
+      metadata: (metadata ?? {}) as any,
+    },
+    update: {
+      accessToken,
+      ...(refreshToken !== undefined ? { refreshToken } : {}),
+      ...(metadata !== undefined ? { metadata: metadata as any } : {}),
+    },
+  });
+  return { integration };
+}
+
+export async function deleteIntegration(provider: string) {
+  const user = await getAuthUser();
+  if (!user) return { error: "Unauthorized" };
+
+  await prisma.integration.delete({
+    where: { userId_provider: { userId: user.id, provider } },
+  });
+  return { ok: true };
+}
+
+export async function executeAppAction(
+  provider: string,
+  action: string,
+  resolvedInputs: Record<string, string>
+): Promise<{ result: string }> {
+  const user = await getAuthUser();
+  if (!user) throw new Error("Unauthorized — please sign in.");
+
+  const integration = await prisma.integration.findUnique({
+    where: { userId_provider: { userId: user.id, provider } },
+  });
+
+  if (!integration) {
+    throw new Error(
+      `No "${provider}" integration connected. Go to Settings → Integrations to connect it.`
+    );
+  }
+
+  const token = integration.accessToken;
+
+  switch (provider) {
+    case "x": {
+      if (action === "create_tweet") {
+        const result = await xService.createTweet(token, resolvedInputs.text ?? "");
+        return { result };
+      }
+      if (action === "send_dm") {
+        const result = await xService.sendDM(token, resolvedInputs.recipientId ?? "", resolvedInputs.text ?? "");
+        return { result };
+      }
+      break;
+    }
+
+    case "discord": {
+      if (action === "send_channel_message") {
+        const result = await discordService.sendChannelMessage(token, resolvedInputs.channelId ?? "", resolvedInputs.content ?? "");
+        return { result };
+      }
+      if (action === "send_dm") {
+        const result = await discordService.sendDM(token, resolvedInputs.userId ?? "", resolvedInputs.content ?? "");
+        return { result };
+      }
+      break;
+    }
+
+    case "slack": {
+      if (action === "send_message") {
+        const result = await slackService.sendMessage(token, resolvedInputs.channel ?? "", resolvedInputs.text ?? "");
+        return { result };
+      }
+      if (action === "send_dm") {
+        const result = await slackService.sendDM(token, resolvedInputs.userId ?? "", resolvedInputs.text ?? "");
+        return { result };
+      }
+      break;
+    }
+
+    case "github": {
+      if (action === "create_issue") {
+        const result = await githubService.createIssue(
+          token,
+          resolvedInputs.repo ?? "",
+          resolvedInputs.title ?? "",
+          resolvedInputs.body
+        );
+        return { result };
+      }
+      if (action === "create_comment") {
+        const result = await githubService.createComment(
+          token,
+          resolvedInputs.repo ?? "",
+          resolvedInputs.issueNumber ?? "",
+          resolvedInputs.body ?? ""
+        );
+        return { result };
+      }
+      break;
+    }
+
+    case "notion": {
+      if (action === "create_page") {
+        const result = await notionService.createPage(
+          token,
+          resolvedInputs.databaseId ?? "",
+          resolvedInputs.title ?? "",
+          resolvedInputs.content
+        );
+        return { result };
+      }
+      break;
+    }
+  }
+
+  throw new Error(`Unknown action "${action}" for provider "${provider}".`);
+}

@@ -12,8 +12,8 @@ export default function VaultNode({ id, data, selected }: NodeProps) {
         <Database size={14} fill="currentColor" />
         <span>Knowledge Vault</span>
       </div>
-      <p className="text-[10px] opacity-70 font-medium">
-        {data.persistence || "Short-term"}
+      <p className="text-[10px] opacity-70 font-medium line-clamp-2 italic">
+        {data.instructions || "Search query or {{node-id}}..."}
       </p>
 
       <Handle 

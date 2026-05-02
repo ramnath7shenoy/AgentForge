@@ -50,7 +50,7 @@ import { cn } from "@/lib/utils";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ReactFlowProvider } from "reactflow";
 import { createClient } from "@/lib/supabase/client";
-import { getProjects } from "@/app/actions/project";
+import { getProjects, saveAsTemplate, getCustomTemplates, deleteCustomTemplate } from "@/app/actions/project";
 
 const LS_GUEST_FLOW_KEY = "agentforge_guest_flow";
 
@@ -104,6 +104,9 @@ function EditorContent() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [customTemplates, setCustomTemplates] = useState<any[]>([]);
+  const [templateName, setTemplateName] = useState("");
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
 
   // Auth & Sharing States
   const [user, setUser] = useState<any>(null);
@@ -132,6 +135,11 @@ function EditorContent() {
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (showTemplateModal && userId) loadCustomTemplates();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showTemplateModal, userId]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -413,6 +421,42 @@ function EditorContent() {
         setSaveStatus("saved");
       }
     }, 100);
+  };
+
+  const loadCustomTemplates = async () => {
+    if (!userId) return;
+    const { templates } = await getCustomTemplates();
+    setCustomTemplates(templates || []);
+  };
+
+  const handleSaveAsTemplate = async () => {
+    const name = templateName.trim();
+    if (!name || !userId) return;
+    setIsSavingTemplate(true);
+    const { error } = await saveAsTemplate(name, nodes as any, edges as any);
+    setIsSavingTemplate(false);
+    if (!error) {
+      setTemplateName("");
+      loadCustomTemplates();
+    }
+  };
+
+  const handleLoadCustomTemplate = (tmpl: any) => {
+    if (nodes.length > 0) {
+      const ok = confirm(`Loading "${tmpl.name}" will replace your current canvas. Continue?`);
+      if (!ok) return;
+    }
+    const n = Array.isArray(tmpl.nodes) ? tmpl.nodes : [];
+    const e = Array.isArray(tmpl.edges) ? tmpl.edges : [];
+    setNodes(n);
+    setEdges(e);
+    setShowTemplateModal(false);
+  };
+
+  const handleDeleteCustomTemplate = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await deleteCustomTemplate(id);
+    setCustomTemplates((prev) => prev.filter((t) => t.id !== id));
   };
 
   const formatTs = (ts: number) => {
@@ -1116,6 +1160,77 @@ function EditorContent() {
                     </button>
                   </div>
                 ))}
+
+                {/* Custom Templates */}
+                {userId && (
+                  <>
+                    <div className="border-t border-slate-800 pt-4 mt-2">
+                      <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-widest mb-3">My Templates</p>
+
+                      {/* Save current canvas */}
+                      <div className="flex gap-2 mb-3">
+                        <input
+                          type="text"
+                          value={templateName}
+                          onChange={(e) => setTemplateName(e.target.value)}
+                          placeholder="Template name…"
+                          className="flex-1 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                          onKeyDown={(e) => { if (e.key === "Enter") handleSaveAsTemplate(); }}
+                        />
+                        <button
+                          onClick={handleSaveAsTemplate}
+                          disabled={!templateName.trim() || isSavingTemplate}
+                          className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-bold rounded-lg transition-all flex-shrink-0"
+                        >
+                          {isSavingTemplate ? "Saving…" : "Save Canvas"}
+                        </button>
+                      </div>
+
+                      {/* Saved custom templates list */}
+                      {customTemplates.length === 0 ? (
+                        <p className="text-[11px] text-slate-600 italic">No saved templates yet.</p>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-2">
+                          {customTemplates.map((tmpl) => (
+                            <div
+                              key={tmpl.id}
+                              className="flex items-center justify-between p-3 bg-slate-900/50 border border-slate-800 rounded-xl hover:border-indigo-500/40 hover:bg-slate-800/50 transition-all group cursor-pointer"
+                              onClick={() => handleLoadCustomTemplate(tmpl)}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 bg-cyan-600/15 border border-cyan-500/20 rounded-xl flex items-center justify-center text-lg flex-shrink-0">
+                                  🗂️
+                                </div>
+                                <div>
+                                  <h3 className="text-sm font-bold text-white group-hover:text-indigo-300 transition-colors">
+                                    {tmpl.name}
+                                  </h3>
+                                  <p className="text-[10px] text-slate-600 font-mono">
+                                    {Array.isArray(tmpl.nodes) ? tmpl.nodes.length : 0} nodes · {Array.isArray(tmpl.edges) ? tmpl.edges.length : 0} edges
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0 ml-4">
+                                <button
+                                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-all"
+                                  onClick={(e) => { e.stopPropagation(); handleLoadCustomTemplate(tmpl); }}
+                                >
+                                  Load
+                                </button>
+                                <button
+                                  className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all"
+                                  onClick={(e) => handleDeleteCustomTemplate(tmpl.id, e)}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </motion.div>
           </motion.div>

@@ -59,7 +59,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
       {
         id: "r-input-1",
         type: "input",
-        position: { x: 60, y: 220 },
+        position: { x: 60, y: 200 },
         data: {
           label: "Research Topic",
           packet: { type: "text", payload: "The impact of AI on the future of work" },
@@ -68,38 +68,35 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
       {
         id: "r-ai-1",
         type: "ai",
-        position: { x: 340, y: 120 },
+        position: { x: 380, y: 200 },
         data: {
           label: "Researcher",
-          model: "gpt-4o-mini",
           instructions: "You are an expert researcher. Investigate this topic thoroughly and list key findings:\n\n{{input}}",
         },
       },
       {
         id: "r-ai-2",
         type: "ai",
-        position: { x: 340, y: 340 },
+        position: { x: 700, y: 200 },
         data: {
           label: "Summarizer",
-          model: "gpt-4o-mini",
-          instructions: "You are a concise writer. Summarize the following research findings into an executive summary:\n\n{{r-ai-1}}",
+          instructions: "You are a concise writer. Summarize the following research findings into an executive summary:\n\n{{r-ai-1.output}}",
         },
       },
       {
         id: "r-output-1",
         type: "output",
-        position: { x: 640, y: 220 },
+        position: { x: 1020, y: 200 },
         data: {
           label: "Research Report",
-          resultFormat: "RESEARCH FINDINGS:\n{{r-ai-1}}\n\nEXECUTIVE SUMMARY:\n{{r-ai-2}}",
+          resultFormat: "{{r-ai-2}}",
         },
       },
     ],
     edges: [
       { id: "re-1", source: "r-input-1", target: "r-ai-1" },
-      { id: "re-2", source: "r-input-1", target: "r-ai-2" },
-      { id: "re-3", source: "r-ai-1", target: "r-output-1" },
-      { id: "re-4", source: "r-ai-2", target: "r-output-1" },
+      { id: "re-2", source: "r-ai-1", target: "r-ai-2" },
+      { id: "re-3", source: "r-ai-2", target: "r-output-1" },
     ],
   },
   {

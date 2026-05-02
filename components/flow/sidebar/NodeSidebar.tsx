@@ -1,13 +1,13 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { 
-  Zap, 
-  Brain, 
-  Split, 
-  Play, 
-  MessageSquare, 
-  Save, 
+import {
+  Zap,
+  Brain,
+  Split,
+  Play,
+  MessageSquare,
+  Save,
   Upload,
   Trash2,
   Search,
@@ -23,7 +23,8 @@ import {
   LayoutGrid,
   ChevronsUpDown,
   Check,
-  FolderKanban
+  FolderKanban,
+  PlugZap
 } from "lucide-react";
 import { useFlowStore } from "@/stores/flowStore";
 import { useRouter } from "next/navigation";
@@ -63,6 +64,7 @@ const categories = [
   {
     name: "Actions & Output",
     nodes: [
+      { type: "appaction", label: "App Action", icon: <PlugZap size={14} className="text-violet-400" /> },
       { type: "action", label: "Integration", icon: <Zap size={14} className="text-emerald-500" /> },
       { type: "output", label: "Final Result", icon: <MessageSquare size={14} className="text-pink-500" /> },
     ]

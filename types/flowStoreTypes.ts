@@ -23,7 +23,11 @@ export interface NodeData {
   
   // 2. ACTION (Natural Integration)
   // "What are we doing here?"
-  connectionType?: string; 
+  connectionType?: string;
+  headers?: Array<{ key: string; value: string }>;
+  authType?: 'none' | 'bearer' | 'basic';
+  authValue?: string;
+  bodyMapping?: string;
   
   // 3. AI (Brain)
   // "What should the brain focus on?"
@@ -71,6 +75,11 @@ export interface NodeData {
   provider?: 'gemini' | 'openai' | 'anthropic' | 'groq' | 'auto';
   modelName?: string;
   model?: string; // Keeping for backward compatibility if needed
+
+  // App Action (Universal Connector)
+  appProvider?: string;               // e.g. "x", "slack", "github", "notion"
+  appAction?: string;                 // e.g. "create_tweet", "send_message"
+  appInputs?: Record<string, string>; // field key → template string (supports {{node-id}})
 
   // Local Edit Protection (Unwrapped Subagents)
   localOverride?: {

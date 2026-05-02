@@ -42,6 +42,8 @@ export interface ExtendedFlowState extends FlowState {
   nodeStatuses: Record<string, NodeExecutionStatus>;
   setNodeStatus: (nodeId: string, status: NodeExecutionStatus) => void;
   nodeOutputs: Record<string, FlowPacket>;
+  // Maps nodeId → [parentNodeIds] — computed at flow start for UI and reactive engine
+  dependencyMap: Record<string, string[]>;
 }
 
 import {
@@ -61,6 +63,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Approval gate — delegates to the shared approvalGate module to avoid the
 // flowStore ↔ clientExecutor circular dependency.
 import { resolveApproval, isApprovalPending, waitForApproval } from "@/lib/approvalGate";
+import { buildDependencyMap } from "@/lib/flow/clientExecutor";
 export function sendApprovalSignal(approved: boolean) { resolveApproval(approved); }
 export function isAwaitingApproval() { return isApprovalPending(); }
 
@@ -88,9 +91,12 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
   isChatOpen: false,
   setIsChatOpen: (isOpen: boolean) => set({ isChatOpen: isOpen }),
   nodeStatuses: {} as Record<string, NodeExecutionStatus>,
+  // setNodeStatus is called by the Reactive Engine via onNodeStatusChange callback.
+  // Zustand subscriptions propagate this to all UI consumers automatically.
   setNodeStatus: (nodeId, status) =>
     set((s) => ({ nodeStatuses: { ...s.nodeStatuses, [nodeId]: status } })),
   nodeOutputs: {} as Record<string, FlowPacket>,
+  dependencyMap: {} as Record<string, string[]>,
   chatHistory: [],
   clearChatHistory: () => set({ chatHistory: [] }),
   addMessage: (role, content) => set((state) => ({
@@ -251,6 +257,9 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
     // NOT be used to build the new state at the end (that snapshot is stale).
     const { nodes, edges, chatHistory } = get();
 
+    // Build dependency map before execution — used by UI (manifest, node badges)
+    const depMap = buildDependencyMap(edges);
+
     set({
       running: true,
       isRunning: true,
@@ -258,6 +267,7 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
       executedNodeIds: [],
       nodeStatuses: {},
       nodeOutputs: {},
+      dependencyMap: depMap,
     });
 
     const addLog = useLogStore.getState().addLog;

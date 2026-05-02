@@ -35,6 +35,7 @@ import WebhookNode from "../nodes/WebhookNode";
 import SubflowNode from "../nodes/SubflowNode";
 import ApprovalNode from "../nodes/ApprovalNode";
 import GroupNode from "../nodes/GroupNode";
+import AppActionNode from "../nodes/AppActionNode";
 
 interface FlowCanvasProps {
   setSelectedNodeId: (id: string | null) => void;
@@ -76,6 +77,7 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
     subflow: SubflowNode,
     approval: ApprovalNode,
     group: GroupNode,
+    appaction: AppActionNode,
   }), []);
 
   const onNodesChange = useCallback((c: NodeChange[]) => {

@@ -3,8 +3,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useLogStore, LogType } from "@/stores/useLogStore";
 import { useFlowStore } from "@/stores/flowStore";
-import { Trash2, Terminal as TerminalIcon, Download, Sparkles, Copy, CheckCheck, Bot, Clock, Workflow, BarChart3 } from "lucide-react";
+import { Trash2, Terminal as TerminalIcon, Download, Sparkles, Copy, CheckCheck, Bot, Clock, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { NodeExecutionStatus } from "@/types/flowStoreTypes";
 
 const colorMap: Record<LogType, string> = {
   INFO: "text-slate-500 dark:text-slate-400",
@@ -22,7 +23,7 @@ const badgeMap: Record<LogType, string> = {
 
 export default function ResponseGallery() {
   const { logs, clearLogs } = useLogStore();
-  const { currentContext, finalResult, running, nodes, activeProject } = useFlowStore();
+  const { currentContext, finalResult, running, nodes, activeProject, nodeStatuses, executedNodeIds } = useFlowStore();
   const [activeTab, setActiveTab] = useState<"terminal" | "result">("terminal");
   const [stateSearch, setStateSearch] = useState("");
   const [copied, setCopied] = useState(false);
@@ -155,32 +156,46 @@ export default function ResponseGallery() {
       {/* Final Result Tab */}
       {activeTab === "result" && (
         <div className="flex-1 overflow-y-auto p-4 scrollbar-hide">
-          {finalResult ? (
-            <WorkflowReport
+          {finalResult || Object.keys(nodeStatuses).length > 0 ? (
+            <ExecutionManifest
               finalResult={finalResult}
               logs={logs}
               nodes={nodes}
+              nodeStatuses={nodeStatuses}
+              executedNodeIds={executedNodeIds}
               projectName={activeProject?.name}
               copied={copied}
               onCopy={() => {
-                const agentCount = nodes.filter(n => n.type === "ai").length;
                 const hasErrors = logs.some(l => l.type === "ERROR");
                 const execMs = logs.length >= 2
                   ? logs[logs.length - 1].timestamp - logs[0].timestamp
                   : 0;
                 const execSecs = (execMs / 1000).toFixed(1);
                 const projectLabel = activeProject?.name || "Untitled Flow";
-                const raw = typeof finalResult.payload === "string"
-                  ? finalResult.payload
-                  : JSON.stringify(finalResult.payload, null, 2);
+                const raw = finalResult
+                  ? (typeof finalResult.payload === "string"
+                    ? finalResult.payload
+                    : JSON.stringify(finalResult.payload, null, 2))
+                  : "";
+
+                const nodeLines = executedNodeIds
+                  .map(id => {
+                    const node = nodes.find(n => n.id === id);
+                    const status = nodeStatuses[id] || "idle";
+                    const icon = status === "success" ? "✓" : status === "error" ? "✗" : "⏭";
+                    return `  ${icon} ${node?.data?.label || id} [${(node?.type || "node").toUpperCase()}]`;
+                  })
+                  .join("\n");
 
                 const summary = [
-                  `✅ Workflow: ${projectLabel}`,
-                  `⏱️ Execution Time: ${execSecs}s`,
-                  `🤖 Agents Involved: ${agentCount}`,
-                  `📊 Status: ${hasErrors ? "Partial" : "Complete"}`,
-                  "",
-                  "─── Output ───",
+                  `Execution Manifest — ${projectLabel}`,
+                  `Status: ${hasErrors ? "Partial" : "Action Complete"}`,
+                  `Time: ${execSecs}s`,
+                  ``,
+                  `Nodes:`,
+                  nodeLines,
+                  ``,
+                  `─── Final Output ───`,
                   raw,
                 ].join("\n");
 
@@ -194,7 +209,7 @@ export default function ResponseGallery() {
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-slate-700 gap-2">
               <Sparkles size={24} className="opacity-20" />
-              <span className="text-[10px] italic">Run a flow to see the final result</span>
+              <span className="text-[10px] italic">Run a flow to see the execution manifest</span>
             </div>
           )}
         </div>
@@ -204,97 +219,129 @@ export default function ResponseGallery() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// WorkflowReport — structured result view for the Final Result tab
+// ExecutionManifest — per-node status list + final output
 // ─────────────────────────────────────────────────────────────────────
-function WorkflowReport({
+function ExecutionManifest({
   finalResult,
   logs,
   nodes,
+  nodeStatuses,
+  executedNodeIds,
   projectName,
   copied,
   onCopy,
   onDownload,
 }: {
-  finalResult: { type: string; payload: any };
+  finalResult: { type: string; payload: any } | null;
   logs: { timestamp: number; type: string }[];
-  nodes: { type?: string | null }[];
+  nodes: { id: string; type?: string | null; data?: { label?: string } }[];
+  nodeStatuses: Record<string, NodeExecutionStatus>;
+  executedNodeIds: string[];
   projectName: string | undefined;
   copied: boolean;
   onCopy: () => void;
   onDownload: () => void;
 }) {
-  const agentCount = nodes.filter(n => n.type === "ai").length;
   const hasErrors = logs.some(l => l.type === "ERROR");
   const execMs = logs.length >= 2
     ? logs[logs.length - 1].timestamp - logs[0].timestamp
     : 0;
   const execSecs = (execMs / 1000).toFixed(1);
-  const status = hasErrors ? "Partial" : "Complete";
-  const rawOutput = typeof finalResult.payload === "string"
-    ? finalResult.payload
-    : JSON.stringify(finalResult.payload, null, 2);
+  const agentCount = nodes.filter(n => n.type === "ai").length;
+
+  // Order: execution sequence first, then any remaining with a status
+  const orderedIds = [
+    ...executedNodeIds,
+    ...nodes
+      .filter(n => !executedNodeIds.includes(n.id) && nodeStatuses[n.id] && nodeStatuses[n.id] !== "idle")
+      .map(n => n.id),
+  ];
+  const manifestNodes = orderedIds
+    .map(id => nodes.find(n => n.id === id))
+    .filter(Boolean) as typeof nodes;
+
+  const rawOutput = finalResult
+    ? (typeof finalResult.payload === "string"
+      ? finalResult.payload
+      : JSON.stringify(finalResult.payload, null, 2))
+    : null;
 
   return (
-    <div className="space-y-4">
-      {/* ── Workflow Report header ── */}
-      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-2.5">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
-            Workflow Report
-          </span>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={onCopy}
-              className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg border transition-all"
-              style={copied
-                ? { color: "#4ade80", borderColor: "rgba(74,222,128,.3)", background: "rgba(74,222,128,.08)" }
-                : { color: "#818cf8", borderColor: "rgba(99,102,241,.25)", background: "transparent" }}
-            >
-              {copied ? <CheckCheck size={10} /> : <Copy size={10} />}
-              {copied ? "Copied!" : "Copy Summary"}
-            </button>
-            <button
-              onClick={onDownload}
-              className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-slate-300 transition-colors px-2.5 py-1.5 rounded-lg border border-white/8 hover:bg-white/5 font-bold uppercase tracking-wider"
-            >
-              <Download size={10} /> Export
-            </button>
+    <div className="space-y-3">
+      {/* ── Header ── */}
+      <div className="rounded-xl border border-zinc-300 dark:border-zinc-700/50 bg-zinc-50 dark:bg-zinc-900/60 p-4">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <p className="text-[8px] font-black uppercase tracking-widest text-zinc-500 dark:text-zinc-500 mb-0.5">
+              Execution Manifest
+            </p>
+            <p className="text-[13px] font-semibold text-zinc-800 dark:text-slate-200 truncate">
+              {projectName || "Untitled Flow"}
+            </p>
           </div>
+          <span className={cn(
+            "flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-bold shrink-0 border",
+            hasErrors
+              ? "bg-amber-500/10 text-amber-500 border-amber-500/25 dark:text-amber-400"
+              : "bg-emerald-500/10 text-emerald-600 border-emerald-500/25 dark:text-emerald-400"
+          )}>
+            {hasErrors ? "⚠ Partial" : "✓ Action Complete"}
+          </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <ReportStat
-            icon={<Workflow size={11} className="text-violet-400" />}
-            label="Workflow"
-            value={projectName || "Untitled Flow"}
-            color="violet"
-          />
-          <ReportStat
-            icon={<Clock size={11} className="text-blue-400" />}
-            label="Execution Time"
-            value={`${execSecs}s`}
-            color="blue"
-          />
-          <ReportStat
-            icon={<Bot size={11} className="text-amber-400" />}
-            label="Agents Involved"
-            value={String(agentCount)}
-            color="amber"
-          />
-          <ReportStat
-            icon={<BarChart3 size={11} className={hasErrors ? "text-rose-400" : "text-emerald-400"} />}
-            label="Status"
-            value={status}
-            color={hasErrors ? "rose" : "emerald"}
-          />
+        <div className="flex items-center gap-3 text-[9px] text-zinc-500 dark:text-slate-500">
+          <span className="flex items-center gap-1"><Clock size={9} /> {execSecs}s</span>
+          <span>·</span>
+          <span className="flex items-center gap-1"><Bot size={9} /> {agentCount} AI agent{agentCount !== 1 ? "s" : ""}</span>
+          <span>·</span>
+          <span className="flex items-center gap-1"><Workflow size={9} /> {manifestNodes.length} nodes</span>
         </div>
       </div>
 
-      {/* ── Raw output ── */}
-      <div className="bg-[#0b0e14] rounded-xl border border-slate-800 p-4 overflow-auto">
-        <pre className="text-[12px] font-mono text-slate-200 whitespace-pre-wrap leading-relaxed">
-          {rawOutput}
-        </pre>
+      {/* ── Per-node status list ── */}
+      {manifestNodes.length > 0 && (
+        <div className="space-y-1">
+          {manifestNodes.map(node => (
+            <NodeStatusRow
+              key={node.id}
+              label={node.data?.label || node.id}
+              type={node.type || "node"}
+              status={nodeStatuses[node.id] || "idle"}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* ── Final output ── */}
+      {rawOutput && (
+        <div className="bg-zinc-900 dark:bg-[#0b0e14] rounded-xl border border-zinc-700 dark:border-slate-800 p-4 overflow-auto">
+          <p className="text-[8px] font-bold uppercase tracking-widest text-zinc-500 dark:text-slate-600 mb-2">
+            Final Output
+          </p>
+          <pre className="text-[11px] font-mono text-zinc-100 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
+            {rawOutput}
+          </pre>
+        </div>
+      )}
+
+      {/* ── Actions ── */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onCopy}
+          className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg border transition-all"
+          style={copied
+            ? { color: "#4ade80", borderColor: "rgba(74,222,128,.3)", background: "rgba(74,222,128,.08)" }
+            : { color: "#818cf8", borderColor: "rgba(99,102,241,.25)", background: "transparent" }}
+        >
+          {copied ? <CheckCheck size={10} /> : <Copy size={10} />}
+          {copied ? "Copied!" : "Copy Manifest"}
+        </button>
+        <button
+          onClick={onDownload}
+          className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-slate-300 transition-colors px-2.5 py-1.5 rounded-lg border border-white/8 hover:bg-white/5 font-bold uppercase tracking-wider"
+        >
+          <Download size={10} /> Export
+        </button>
       </div>
 
       <div className="flex items-center gap-2 text-[9px] text-slate-600">
@@ -310,31 +357,33 @@ function WorkflowReport({
   );
 }
 
-function ReportStat({
-  icon,
+const NODE_STATUS_CONFIG: Record<NodeExecutionStatus, { icon: string; rowClass: string; iconClass: string }> = {
+  idle:    { icon: "○", rowClass: "border-transparent bg-transparent",                                       iconClass: "text-slate-600" },
+  running: { icon: "⟳", rowClass: "border-blue-500/20 bg-blue-500/8 dark:bg-blue-500/5",                    iconClass: "text-blue-400 animate-spin" },
+  success: { icon: "✓", rowClass: "border-emerald-500/20 bg-emerald-500/8 dark:bg-emerald-500/5",            iconClass: "text-emerald-400" },
+  error:   { icon: "✗", rowClass: "border-rose-500/20 bg-rose-500/8 dark:bg-rose-500/5",                     iconClass: "text-rose-400" },
+  skipped: { icon: "⏭", rowClass: "border-zinc-600/20 bg-zinc-500/5 dark:bg-zinc-800/40",                   iconClass: "text-slate-600" },
+};
+
+function NodeStatusRow({
   label,
-  value,
-  color,
+  type,
+  status,
 }: {
-  icon: React.ReactNode;
   label: string;
-  value: string;
-  color: string;
+  type: string;
+  status: NodeExecutionStatus;
 }) {
-  const bg: Record<string, string> = {
-    violet: "bg-violet-500/8 border-violet-500/20",
-    blue:   "bg-blue-500/8 border-blue-500/20",
-    amber:  "bg-amber-500/8 border-amber-500/20",
-    emerald:"bg-emerald-500/8 border-emerald-500/20",
-    rose:   "bg-rose-500/8 border-rose-500/20",
-  };
+  const cfg = NODE_STATUS_CONFIG[status] || NODE_STATUS_CONFIG.idle;
   return (
-    <div className={cn("flex items-start gap-2 rounded-lg border px-3 py-2", bg[color] || bg.violet)}>
-      <div className="mt-0.5 shrink-0">{icon}</div>
-      <div className="min-w-0">
-        <p className="text-[8px] font-bold uppercase tracking-widest text-slate-500 mb-0.5">{label}</p>
-        <p className="text-[11px] font-semibold text-slate-200 truncate">{value}</p>
-      </div>
+    <div className={cn("flex items-center gap-2.5 px-3 py-2 rounded-lg border text-[11px] transition-colors", cfg.rowClass)}>
+      <span className={cn("font-bold w-4 text-center flex-shrink-0 text-[12px]", cfg.iconClass)}>
+        {cfg.icon}
+      </span>
+      <span className="flex-1 text-zinc-800 dark:text-slate-300 font-medium truncate">{label}</span>
+      <span className="text-[8px] font-bold uppercase tracking-wider text-zinc-500 dark:text-slate-600 shrink-0">
+        {type}
+      </span>
     </div>
   );
 }

@@ -126,16 +126,19 @@ const applySeqAttn = (
 // ─────────────────────────────────────────────────────────────────────
 // Model Registry & Provider Detection
 // ─────────────────────────────────────────────────────────────────────
+// Smart Resolve registry — first model per provider is the JIT default.
+// Resolution: gsk_ → Groq/llama-3.3-70b | sk- → OpenAI/gpt-4o | AIza → Gemini/gemini-2.0-flash
 const MODEL_REGISTRY: Record<string, string[]> = {
-  gemini: ["gemini-2.5-flash", "gemini-2.0-flash-001", "gemini-1.5-flash"],
-  groq: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"],
+  gemini: ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash"],
+  groq:   ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"],
   openai: ["gpt-4o", "gpt-4-turbo"],
 };
 
 const detectProvider = (key: string): string => {
   if (key.startsWith("gsk_")) return "groq";
   if (key.startsWith("sk-")) return "openai";
-  return "gemini";
+  if (key.startsWith("AIza")) return "gemini";
+  return "gemini"; // default for any other format (e.g. older Gemini key formats)
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -492,6 +495,10 @@ async function executeNode(
         context.variables.__exit__ = { type: "text", payload: "exit" };
       }
 
+      // G. Sync AI response to Chat Hub — every AI Brain turn is visible in real time
+      const { useFlowStore: _fs } = await import("@/stores/flowStore");
+      _fs.getState().addMessage("assistant", responseText);
+
       return { type: "text", payload: responseText };
     }
 
@@ -518,15 +525,10 @@ async function executeNode(
       const packet: FlowPacket = { type: "text", payload: resolvedOutput };
       context.variables.output = packet;
 
-      // Push result to Chat Hub — skip if the resolved template is blank
-      if (resolvedOutput.trim()) {
-        const flowStore = (await import("@/stores/flowStore")).useFlowStore.getState();
-        flowStore.addMessage("assistant", resolvedOutput);
-        flowStore.setIsChatOpen(true);
-        sendLog("📤 Result sent to Chat Hub.", "SUCCESS", current.id);
-      } else {
-        sendLog("⚠️ Output node resolved to empty string — skipping addMessage.", "WARN", current.id);
-      }
+      // Open Chat Hub so the user sees all AI Brain messages that were synced upstream
+      const flowStore = (await import("@/stores/flowStore")).useFlowStore.getState();
+      flowStore.setIsChatOpen(true);
+      sendLog("📤 Flow complete — Chat Hub opened.", "SUCCESS", current.id);
 
       return packet;
     }
@@ -544,22 +546,17 @@ async function executeNode(
       const connectionType = current.data?.connectionType || "";
       const endpointUrl = current.data?.url?.trim() || "";
 
-      // ── Config validation ─────────────────────────────────────────────
-      // Any connection type that sends or fetches data requires a URL.
-      // Throw immediately so the error is surfaced in the execution log
-      // rather than silently doing nothing.
       if (!connectionType) {
         throw new Error("Integration node has no connection type configured. Open node settings to select one.");
       }
       if (!endpointUrl) {
         throw new Error(
-          `Missing API Endpoint. Please configure the node. ` +
-          `Open the "${current.data?.label || "Integration"}" node settings and add a URL.`
+          `Missing API Endpoint. Open the "${current.data?.label || "Integration"}" node settings and add a URL.`
         );
       }
 
-      // ── Resolve payload template ──────────────────────────────────────
-      const rawTemplate = current.data?.instructions || "";
+      // ── Resolve body template (bodyMapping takes precedence over instructions) ──
+      const rawTemplate = current.data?.bodyMapping || current.data?.instructions || "";
       const incomingEdge = edges.find((e) => e.target === current.id);
       const upstreamPacket = incomingEdge ? context.nodes[incomingEdge.source] : null;
 
@@ -571,7 +568,8 @@ async function executeNode(
             if (parts.length === 1) return getRawValue(val);
             for (let i = 1; i < parts.length; i++) {
               if (val == null) break;
-              val = val[parts[i]];
+              const prop = parts[i] === "output" ? "payload" : parts[i];
+              val = val[prop];
             }
             return val != null ? getRawValue(val) : "";
           })
@@ -579,9 +577,32 @@ async function executeNode(
         ? getRawValue(upstreamPacket)
         : "";
 
-      const isGetRequest =
-        connectionType === "Get from Website" || connectionType === "Fetch Data";
-      const method = current.data?.method || (isGetRequest ? "GET" : "POST");
+      const isGetLike = connectionType === "Get from Website" || connectionType === "Fetch Data";
+      const method = (current.data?.method || (isGetLike ? "GET" : "POST")).toUpperCase();
+      const isBodyless = method === "GET" || method === "HEAD" || method === "OPTIONS";
+
+      // ── Build headers: Content-Type + custom + auth ───────────────────
+      const fetchHeaders: Record<string, string> = { "Content-Type": "application/json" };
+
+      // Custom header rows
+      (current.data?.headers || []).forEach((h: { key: string; value: string }) => {
+        if (h.key?.trim()) fetchHeaders[h.key.trim()] = h.value || "";
+      });
+
+      // Auth
+      const authType = current.data?.authType || "none";
+      const authValue = (current.data?.authValue || current.data?.persistence || "").trim();
+      if (authValue) {
+        if (authType === "bearer") {
+          fetchHeaders["Authorization"] = `Bearer ${authValue}`;
+        } else if (authType === "basic") {
+          // authValue expected as "user:password" or a pre-encoded base64 string
+          const encoded = typeof btoa !== "undefined"
+            ? btoa(authValue)
+            : Buffer.from(authValue).toString("base64");
+          fetchHeaders["Authorization"] = `Basic ${encoded}`;
+        }
+      }
 
       sendLog(
         `🔗 Integration [${connectionType}] → ${method} ${endpointUrl}`,
@@ -592,11 +613,8 @@ async function executeNode(
       // ── Real HTTP dispatch ────────────────────────────────────────────
       let responseText: string;
       try {
-        const fetchOptions: RequestInit = {
-          method,
-          headers: { "Content-Type": "application/json" },
-        };
-        if (!isGetRequest && resolvedPayload) {
+        const fetchOptions: RequestInit = { method, headers: fetchHeaders };
+        if (!isBodyless && resolvedPayload) {
           fetchOptions.body = resolvedPayload;
         }
 
@@ -613,13 +631,8 @@ async function executeNode(
           ? JSON.stringify(await res.json())
           : await res.text();
 
-        sendLog(
-          `✅ Integration [${connectionType}]: ${res.status} OK`,
-          "SUCCESS",
-          current.id
-        );
+        sendLog(`✅ Integration [${connectionType}]: ${res.status} OK`, "SUCCESS", current.id);
       } catch (err: any) {
-        // Distinguish CORS/network errors from HTTP error responses
         if (err.message.startsWith("Integration request failed:")) throw err;
         throw new Error(
           `Integration [${connectionType}] network error: ${err.message}. ` +
@@ -628,6 +641,52 @@ async function executeNode(
       }
 
       return { type: "text", payload: responseText };
+    }
+
+    case "appaction": {
+      const appProvider = current.data?.appProvider?.trim();
+      const appAction = current.data?.appAction?.trim();
+      const appInputs = current.data?.appInputs || {};
+
+      if (!appProvider || !appAction) {
+        throw new Error(
+          `App Action node "${current.data?.label || current.id}" is not configured. ` +
+          `Open its settings to select an app and action.`
+        );
+      }
+
+      // Resolve {{node-id}} templates in every input field
+      const resolvedInputs: Record<string, string> = {};
+      for (const [fieldKey, rawTemplate] of Object.entries(appInputs)) {
+        resolvedInputs[fieldKey] = (rawTemplate as string).replace(
+          /\{\{(.*?)\}\}/g,
+          (_: string, path: string) => {
+            const parts = path.trim().split(".");
+            let val: any = context.nodes[parts[0]] || context.variables[parts[0]];
+            if (val === undefined) return "";
+            if (parts.length === 1) return getRawValue(val);
+            for (let i = 1; i < parts.length; i++) {
+              if (val == null) break;
+              const prop = parts[i] === "output" ? "payload" : parts[i];
+              val = val[prop];
+            }
+            return val != null ? getRawValue(val) : "";
+          }
+        );
+      }
+
+      sendLog(
+        `🔌 App Action [${appProvider}/${appAction}] — dispatching via server action`,
+        "INFO",
+        current.id
+      );
+
+      // Token lives server-side only — delegated to the server action
+      const { executeAppAction } = await import("@/app/actions/integration");
+      const { result } = await executeAppAction(appProvider, appAction, resolvedInputs);
+
+      sendLog(`✅ App Action [${appProvider}/${appAction}]: ${result}`, "SUCCESS", current.id);
+      return { type: "text", payload: result };
     }
 
     case "approval": {
@@ -784,17 +843,35 @@ async function executeNode(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// buildDependencyMap — exported utility for the store / UI
+// Returns nodeId → [parentNodeIds] for every node.
+// ─────────────────────────────────────────────────────────────────────
+export function buildDependencyMap(edges: Edge[]): Record<string, string[]> {
+  const map: Record<string, string[]> = {};
+  edges.forEach((e) => {
+    if (!map[e.target]) map[e.target] = [];
+    map[e.target].push(e.source);
+  });
+  return map;
+}
+
 // ═════════════════════════════════════════════════════════════════════
-// WALKER ENGINE v2 — Dependency-Aware Wave-Parallel BFS Executor
+// REACTIVE ENGINE — Topological Watcher (Event-Driven Choreography)
 //
-// Correctness guarantees:
-//   1. In-degree map: seeded once, decremented synchronously after each
-//      wave completes — no mutex needed (JS single-threaded between awaits).
-//   2. Removed the broken parentsFinished double-check that dropped nodes.
-//   3. Short-circuit: on node failure, all transitive descendants are
-//      marked SKIPPED via callback, preventing wasted API budget.
-//   4. JIT SecretVault: key decrypted only at the fetch call site,
-//      nullified in finally immediately after the promise settles.
+// Architecture: replaces the central BFS while-loop with pure event-
+// driven dispatch. Each node fires immediately when ALL predecessor
+// outputs are in context — no wave batching, no polling.
+//
+// Guarantees:
+//   1. A node dispatches only after every parent edge source has a
+//      completed output in context.nodes.
+//   2. Concurrency is natural: nodes with satisfied deps run in parallel
+//      without explicit wave coordination.
+//   3. Short-circuit: on failure, all transitive descendants are marked
+//      SKIPPED without blocking other branches.
+//   4. Exit signal: checked at dispatch time — already-running nodes
+//      complete normally; newly ready nodes are not started.
 // ═════════════════════════════════════════════════════════════════════
 export async function executeGraph(
   nodes: Node<NodeData>[],
@@ -817,110 +894,88 @@ export async function executeGraph(
 
   const { onNodeStatusChange, onNodeComplete } = options;
 
-  sendLog("🚀 Walker Engine v2 started (Wave-Parallel BFS)...", "INFO");
+  sendLog("🚀 Reactive Engine started (Topological Watcher)...", "INFO");
 
-  // ─── 1. Build adjacency list and in-degree map ───
-  const adj = new Map<string, string[]>();
-  const inDegree = new Map<string, number>();
+  // ─── 1. Build adjacency and remaining-dependency maps ───
+  const adj = new Map<string, string[]>();         // parent → [children]
+  const remainingDeps = new Map<string, number>(); // child → unsatisfied parent count
 
   nodes.forEach((n) => {
     adj.set(n.id, []);
-    inDegree.set(n.id, 0);
+    remainingDeps.set(n.id, 0);
   });
   edges.forEach((e) => {
     adj.get(e.source)?.push(e.target);
-    inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
+    remainingDeps.set(e.target, (remainingDeps.get(e.target) || 0) + 1);
   });
 
-  // ─── 2. Seed: only nodes with inDegree === 0 (roots / triggers) ───
-  let currentWave: Node<NodeData>[] = nodes.filter(
-    (n) => inDegree.get(n.id) === 0
-  );
   const executed = new Set<string>();
   const skipped = new Set<string>();
+  const inflight = new Set<string>();
+  const nodeById = new Map<string, Node<NodeData>>();
+  nodes.forEach((n) => nodeById.set(n.id, n));
 
-  if (currentWave.length === 0) {
-    sendLog(
-      "No root nodes found — all nodes have dependencies (possible cycle).",
-      "ERROR"
+  // ─── 2. Completion tracking ───
+  let pendingCount = 0;
+  let resolveAll!: () => void;
+  const allDone = new Promise<void>((res) => { resolveAll = res; });
+
+  function checkDone() {
+    if (pendingCount !== 0 || inflight.size !== 0) return;
+    const unreachable = nodes.filter(
+      (n) => !executed.has(n.id) && !skipped.has(n.id)
     );
-    return { success: false, context, logs };
+    if (unreachable.length > 0) {
+      sendLog(
+        `⚠️ ${unreachable.length} node(s) unreachable (disconnected or cycle): ` +
+        unreachable.map((n) => n.data?.label || n.id).join(", "),
+        "WARN"
+      );
+    }
+    resolveAll();
   }
 
-  sendLog(
-    `📋 Root nodes: ${currentWave.map((n) => n.data?.label || n.id).join(", ")}`,
-    "INFO"
-  );
+  // ─── 3. dispatchNode — the core reactive trigger ───
+  function dispatchNode(node: Node<NodeData>) {
+    if (executed.has(node.id) || skipped.has(node.id) || inflight.has(node.id)) return;
 
-  // ─── 3. Wave loop ───
-  while (currentWave.length > 0) {
-    // Remove any nodes that were short-circuited before this wave started
-    const activeWave = currentWave.filter((n) => !skipped.has(n.id));
-    if (activeWave.length === 0) break;
-
-    // Respect exit signal from AI node in prior wave
+    // Exit signal: don't start new work, mark as skipped
     if (context.variables.__exit__) {
-      sendLog("🛑 Exit signal received. Halting walker.", "WARN");
-      break;
+      sendLog(
+        `🛑 Exit signal — skipping ${node.data?.label || node.id}`,
+        "WARN",
+        node.id
+      );
+      skipped.add(node.id);
+      onNodeStatusChange?.(node.id, "skipped");
+      return;
     }
 
-    sendLog(
-      `⚡ Wave: [${activeWave.map((n) => n.data?.label || n.id).join(", ")}]`,
-      "INFO"
-    );
+    inflight.add(node.id);
+    pendingCount++;
+    onNodeStatusChange?.(node.id, "running");
+    sendLog(`⚡ Dispatching: ${node.data?.label || node.id}`, "INFO", node.id);
 
-    activeWave.forEach((n) => onNodeStatusChange?.(n.id, "running"));
-
-    // Execute all nodes in this wave in parallel
-    const results = await Promise.allSettled(
-      activeWave.map((node) =>
-        executeNode(
-          node,
-          context,
-          edges,
-          initialInput,
-          chatHistory,
-          sendLog
-        ).then((packet) => ({ node, packet }))
-      )
-    );
-
-    // ─── 4. Atomic in-degree update ───
-    // This forEach block is synchronous — JS event loop cannot interleave
-    // another microtask here, so inDegree reads and writes are race-free.
-    const nextWave: Node<NodeData>[] = [];
-
-    results.forEach((result, idx) => {
-      const node = activeWave[idx];
-
-      if (result.status === "fulfilled") {
-        const { packet } = result.value;
+    executeNode(node, context, edges, initialInput, chatHistory, sendLog)
+      .then((packet) => {
         context.nodes[node.id] = packet;
         executed.add(node.id);
         onNodeStatusChange?.(node.id, "success");
         onNodeComplete?.(node.id, packet);
-        sendLog(
-          `✅ Completed: ${node.data?.label || node.id}`,
-          "SUCCESS",
-          node.id
-        );
+        sendLog(`✅ Completed: ${node.data?.label || node.id}`, "SUCCESS", node.id);
 
-        // Decrement each child's in-degree; enqueue when it reaches zero
+        // Reactively dispatch every child whose deps are now fully satisfied
         for (const childId of adj.get(node.id) || []) {
-          const newDeg = (inDegree.get(childId) || 1) - 1;
-          inDegree.set(childId, newDeg);
-
-          if (newDeg === 0) {
-            const childNode = nodes.find((n) => n.id === childId);
-            if (childNode && !executed.has(childId) && !skipped.has(childId)) {
-              nextWave.push(childNode);
-            }
+          const newDeps = (remainingDeps.get(childId) || 1) - 1;
+          remainingDeps.set(childId, newDeps);
+          if (newDeps === 0) {
+            const child = nodeById.get(childId);
+            if (child && !skipped.has(childId)) dispatchNode(child);
           }
         }
-      } else {
-        // ─── 5. Short-circuit: cascade SKIPPED to all descendants ───
-        const errMsg =
-          (result.reason as Error)?.message || String(result.reason);
+      })
+      .catch((err) => {
+        const errMsg = (err as Error)?.message || String(err);
         sendLog(
           `❌ Error in ${node.data?.label || node.id}: ${errMsg}`,
           "ERROR",
@@ -928,36 +983,43 @@ export async function executeGraph(
         );
         onNodeStatusChange?.(node.id, "error");
 
+        // Cascade SKIPPED to all transitive descendants
         const descendants = getDescendants(node.id, adj);
         descendants.forEach((descId) => {
           if (!executed.has(descId)) {
             skipped.add(descId);
             onNodeStatusChange?.(descId, "skipped");
-            sendLog(
-              `⏭ Skipping ${descId} (upstream failure short-circuit)`,
-              "WARN",
-              descId
-            );
+            sendLog(`⏭ Skipping ${descId} (upstream failure)`, "WARN", descId);
           }
         });
-      }
-    });
-
-    currentWave = nextWave;
+      })
+      .finally(() => {
+        inflight.delete(node.id);
+        pendingCount--;
+        checkDone();
+      });
   }
 
-  // ─── 6. Cycle / isolation detection ───
-  const unreachable = nodes.filter(
-    (n) => !executed.has(n.id) && !skipped.has(n.id)
+  // ─── 4. Seed: dispatch all root nodes immediately ───
+  const roots = nodes.filter((n) => remainingDeps.get(n.id) === 0);
+
+  if (roots.length === 0) {
+    sendLog("No root nodes found — all nodes have dependencies (possible cycle).", "ERROR");
+    return { success: false, context, logs };
+  }
+
+  sendLog(
+    `📋 Root nodes: ${roots.map((n) => n.data?.label || n.id).join(", ")}`,
+    "INFO"
   );
-  if (unreachable.length > 0) {
-    sendLog(
-      `⚠️ ${unreachable.length} nodes unreachable (disconnected or cycle): ${unreachable
-        .map((n) => n.data?.label || n.id)
-        .join(", ")}`,
-      "WARN"
-    );
-  }
+
+  roots.forEach((root) => dispatchNode(root));
+
+  // Safety: if all root dispatchNode calls were no-ops (e.g. all pre-skipped)
+  if (pendingCount === 0 && inflight.size === 0) resolveAll();
+
+  // ─── 5. Await all async chains to settle ───
+  await allDone;
 
   const hasErrors = skipped.size > 0;
   sendLog(

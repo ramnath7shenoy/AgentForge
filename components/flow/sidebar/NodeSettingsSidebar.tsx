@@ -1,14 +1,14 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useFlowStore } from "@/stores/flowStore";
 import { NodeData } from "@/types/flowStoreTypes";
-import { 
-  Split, 
-  Settings, 
-  Terminal, 
-  Zap, 
-  Brain, 
+import {
+  Split,
+  Settings,
+  Terminal,
+  Zap,
+  Brain,
   MessageSquare,
   Plus,
   Trash2,
@@ -19,35 +19,20 @@ import {
   Upload,
   Globe,
   Briefcase,
-  ShieldAlert
+  ShieldAlert,
+  PlugZap
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import VaultInput from "@/components/ui/VaultInput";
+import { APP_REGISTRY, getApp, getAction } from "@/lib/providers";
 
 interface NodeSettingsSidebarProps {
   isOwner?: boolean;
 }
 
-const MODEL_PRESETS: Record<string, string[]> = {
-  gemini: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
-  openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
-  anthropic: ["claude-3-5-sonnet-latest", "claude-3-opus-latest"],
-  groq: ["mixtral-8x7b-32768", "llama3-70b-8192", "gemma-7b-it"]
-};
-
-const HUMAN_LABELS: Record<string, string> = {
-  "gemini-2.5-flash": "Gemini 2.5 Flash",
-  "gemini-2.5-pro": "Gemini 2.5 Pro",
-  "gemini-2.0-flash": "Gemini 2.0 Flash",
-  "gpt-4o": "GPT-4o",
-  "gpt-4o-mini": "GPT-4o Mini",
-  "gpt-4-turbo": "GPT-4 Turbo",
-  "claude-3-5-sonnet-latest": "Claude 3.5 Sonnet",
-  "claude-3-opus-latest": "Claude 3 Opus",
-  "mixtral-8x7b-32768": "Mixtral 8x7B",
-  "llama3-70b-8192": "Llama 3 70B",
-  "gemma-7b-it": "Gemma 7B"
-};
+// Provider and model selection are handled JIT by the Reactive Engine.
+// The engine reads the vault key prefix (gsk_ → Groq, sk- → OpenAI, AIza → Gemini)
+// and auto-selects the best model. No manual config needed per node.
 
 const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = true }) => {
   const nodes = useFlowStore((state) => state.nodes);
@@ -71,6 +56,18 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
       setSidebarTab("settings");
     }
   }, [isOwner, sidebarTab]);
+
+  // Connection status for the selected appProvider — must be here (before early return) to obey Rules of Hooks
+  const [appConnected, setAppConnected] = React.useState<boolean | null>(null);
+  const appProviderKey = selectedNode?.type === "appaction" ? (selectedNode.data.appProvider || "") : "";
+  React.useEffect(() => {
+    if (!appProviderKey) { setAppConnected(null); return; }
+    import("@/app/actions/integration").then(({ getIntegrations }) =>
+      getIntegrations().then((res) => {
+        setAppConnected((res.integrations ?? []).some((i) => i.provider === appProviderKey));
+      })
+    );
+  }, [appProviderKey]);
 
   if (!selectedNode) {
     return (
@@ -390,135 +387,230 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
     </div>
   );
 
-  const renderActionNodeSettings = () => (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2 text-emerald-500">
-        <Zap size={16} />
-        <h3 className="text-sm font-bold uppercase tracking-tight">Integration</h3>
-      </div>
+  const renderActionNodeSettings = () => {
+    const headers: Array<{ key: string; value: string }> = selectedNode.data.headers || [];
+    const authType = selectedNode.data.authType || 'none';
 
-      <div className="flex flex-col gap-2">
-        <label className="text-[10px] font-bold uppercase text-slate-500">What are we doing here?</label>
-        <select
-          className={cn(
-            "rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all border",
-            "bg-background border-border text-foreground focus:border-emerald-500"
-          )}
-          value={selectedNode.data.connectionType || ""}
-          onChange={(e) => updateNodeData(selectedNode.id, { connectionType: e.target.value })}
-        >
-          <option value="">Choose an action...</option>
-          <option value="Send to Slack">Send to Slack</option>
-          <option value="Get from Website">Get from Website</option>
-          <option value="Post to API">Post to API</option>
-          <option value="Fetch Data">Fetch Data</option>
-        </select>
-      </div>
+    const addHeader = () =>
+      updateNodeData(selectedNode.id, { headers: [...headers, { key: '', value: '' }] });
 
-      {/* URL / Endpoint — required for ALL connection types */}
-      {selectedNode.data.connectionType && (
+    const removeHeader = (idx: number) =>
+      updateNodeData(selectedNode.id, { headers: headers.filter((_, i) => i !== idx) });
+
+    const updateHeader = (idx: number, field: 'key' | 'value', val: string) => {
+      const next = headers.map((h, i) => (i === idx ? { ...h, [field]: val } : h));
+      updateNodeData(selectedNode.id, { headers: next });
+    };
+
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-2 text-emerald-500">
+          <Zap size={16} />
+          <h3 className="text-sm font-bold uppercase tracking-tight">Universal Integration</h3>
+        </div>
+
+        {/* Connection Type */}
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Connection type</label>
+          <select
+            className={cn(
+              "rounded-lg p-2 text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all border",
+              "bg-background border-border text-foreground focus:border-emerald-500"
+            )}
+            value={selectedNode.data.connectionType || ""}
+            onChange={(e) => updateNodeData(selectedNode.id, { connectionType: e.target.value })}
+          >
+            <option value="">Choose an action...</option>
+            <option value="REST API">REST API</option>
+            <option value="Send to Slack">Send to Slack</option>
+            <option value="Discord Webhook">Discord Webhook</option>
+            <option value="Twitter/X API">Twitter/X API</option>
+            <option value="Get from Website">Get from Website</option>
+            <option value="Post to API">Post to API</option>
+            <option value="Fetch Data">Fetch Data</option>
+            <option value="Custom Webhook">Custom Webhook</option>
+          </select>
+        </div>
+
+        {/* Method + URL row */}
         <div className="flex flex-col gap-2">
           <label className="text-[10px] font-bold uppercase text-slate-500 flex items-center gap-1">
             <Globe size={10} className="text-emerald-500" />
-            {selectedNode.data.connectionType === "Send to Slack" ? "Slack Webhook URL" : "Endpoint URL"}
+            Endpoint URL
             <span className="text-rose-400 ml-0.5">*</span>
           </label>
-          <input
-            type="url"
-            className={cn(
-              "rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all border font-mono",
-              "bg-background border-border text-foreground focus:border-emerald-500",
-              !selectedNode.data.url && "border-rose-500/40"
-            )}
-            placeholder={
-              selectedNode.data.connectionType === "Send to Slack"
-                ? "https://hooks.slack.com/services/…"
-                : selectedNode.data.connectionType === "Get from Website"
-                ? "https://example.com/data.json"
-                : "https://api.example.com/endpoint"
-            }
-            value={selectedNode.data.url || ""}
-            onChange={(e) => updateNodeData(selectedNode.id, { url: e.target.value })}
-          />
+          <div className="flex gap-2">
+            <select
+              className={cn(
+                "rounded-lg px-2 py-2 text-xs font-bold focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all border flex-shrink-0 w-24",
+                "bg-background border-border text-emerald-400 focus:border-emerald-500"
+              )}
+              value={selectedNode.data.method || "POST"}
+              onChange={(e) => updateNodeData(selectedNode.id, { method: e.target.value })}
+            >
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PUT">PUT</option>
+              <option value="PATCH">PATCH</option>
+              <option value="DELETE">DELETE</option>
+            </select>
+            <input
+              type="url"
+              className={cn(
+                "flex-1 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all border font-mono",
+                "bg-background border-border text-foreground focus:border-emerald-500",
+                !selectedNode.data.url && "border-rose-500/40"
+              )}
+              placeholder="https://api.example.com/endpoint"
+              value={selectedNode.data.url || ""}
+              onChange={(e) => updateNodeData(selectedNode.id, { url: e.target.value })}
+            />
+          </div>
           {!selectedNode.data.url && (
-            <p className="text-[10px] text-rose-400 font-medium">
-              Required — flow will error without a URL.
-            </p>
+            <p className="text-[10px] text-rose-400 font-medium">Required — flow will error without a URL.</p>
           )}
         </div>
-      )}
 
-      {selectedNode.data.connectionType === "Post to API" && (
+        {/* Auth */}
         <div className="flex flex-col gap-2">
-          <label className="text-[10px] font-bold uppercase text-slate-500">Authorization Token</label>
-          <VaultInput
-            value={selectedNode.data.persistence || ""}
-            onChange={(val) => updateNodeData(selectedNode.id, { persistence: val })}
-            placeholder="Bearer token or vault key..."
-            theme={theme}
-            isOwner={isOwner}
-          />
+          <label className="text-[10px] font-bold uppercase text-slate-500">Authentication</label>
+          <select
+            className={cn(
+              "rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all border",
+              "bg-background border-border text-foreground focus:border-emerald-500"
+            )}
+            value={authType}
+            onChange={(e) => updateNodeData(selectedNode.id, { authType: e.target.value as any })}
+          >
+            <option value="none">None</option>
+            <option value="bearer">Bearer Token</option>
+            <option value="basic">Basic Auth</option>
+          </select>
+          {authType !== 'none' && (
+            <VaultInput
+              value={selectedNode.data.authValue || selectedNode.data.persistence || ""}
+              onChange={(val) => updateNodeData(selectedNode.id, { authValue: val, persistence: val })}
+              placeholder={authType === 'bearer' ? "Bearer token or vault key..." : "user:password or vault key..."}
+              theme={theme}
+              isOwner={isOwner}
+            />
+          )}
         </div>
-      )}
-    </div>
-  );
+
+        {/* Custom Headers */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] font-bold uppercase text-slate-500">Custom Headers</label>
+            <button
+              onClick={addHeader}
+              className="flex items-center gap-1 text-[9px] font-bold text-emerald-500 hover:text-emerald-400 transition-colors bg-emerald-500/5 px-2 py-1 rounded border border-emerald-500/20 hover:border-emerald-500/40"
+            >
+              <Plus size={9} />
+              Add
+            </button>
+          </div>
+          {headers.length === 0 && (
+            <p className="text-[10px] text-slate-600 italic">No custom headers — Content-Type: application/json is sent by default.</p>
+          )}
+          {headers.map((h, i) => (
+            <div key={i} className="flex gap-1.5 items-center">
+              <input
+                className={cn(
+                  "flex-1 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-emerald-500/20 outline-none border font-mono",
+                  "bg-background border-border text-foreground focus:border-emerald-500"
+                )}
+                placeholder="X-Header-Key"
+                value={h.key}
+                onChange={(e) => updateHeader(i, 'key', e.target.value)}
+              />
+              <input
+                className={cn(
+                  "flex-1 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-emerald-500/20 outline-none border",
+                  "bg-background border-border text-foreground focus:border-emerald-500"
+                )}
+                placeholder="value or {{node-id}}"
+                value={h.value}
+                onChange={(e) => updateHeader(i, 'value', e.target.value)}
+              />
+              <button
+                onClick={() => removeHeader(i)}
+                className="p-1.5 text-slate-600 hover:text-rose-400 transition-colors flex-shrink-0"
+              >
+                <Trash2 size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* Body Mapping */}
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Body / Payload Template</label>
+          <textarea
+            rows={4}
+            className={cn(
+              "rounded-lg p-3 text-xs focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all placeholder:text-muted-foreground resize-none font-mono border",
+              "bg-background border-border text-foreground"
+            )}
+            placeholder={'{"message": "{{r-ai-1.output}}", "source": "agentforge"}'}
+            value={(selectedNode.data.bodyMapping as string) || (selectedNode.data.instructions as string) || ""}
+            onChange={(e) => updateNodeData(selectedNode.id, { bodyMapping: e.target.value, instructions: e.target.value })}
+          />
+          <p className="text-[9px] text-slate-500 italic">
+            Reference upstream nodes with <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">{"{{node-id}}"}</code> or <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">{"{{node-id.output}}"}</code>
+          </p>
+        </div>
+      </div>
+    );
+  };
 
   const renderAINodeSettings = () => (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-2 text-blue-500">
         <Brain size={16} />
-        <h3 className="text-sm font-bold uppercase tracking-tight">Agent Configuration</h3>
-      </div>
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <label className="text-[10px] font-bold uppercase text-slate-500">Model Provider</label>
-          <select
-            className={cn(
-              "rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all border",
-              "bg-background border-border text-foreground"
-            )}
-            value={selectedNode.data.provider || "gemini"}
-            onChange={(e) => {
-              const provider = e.target.value;
-              const defaultModel = MODEL_PRESETS[provider]?.[0] || "";
-              updateNodeData(selectedNode.id, { 
-                provider: provider as any,
-                modelName: defaultModel
-              });
-            }}
-          >
-            <option value="gemini">Google Gemini</option>
-            <option value="openai">OpenAI (GPT)</option>
-            <option value="anthropic">Anthropic (Claude)</option>
-            <option value="groq">Groq (Ultra-Fast)</option>
-          </select>
-        </div>
+        <h3 className="text-sm font-bold uppercase tracking-tight">Agent Brain</h3>
       </div>
 
-      <div className="flex flex-col gap-2 relative">
-        <label className="text-[10px] font-bold uppercase text-slate-500">Assistant Instructions</label>
+      {/* Auto-detect badge */}
+      <div className={cn(
+        "flex items-center gap-2 px-3 py-2 rounded-lg border text-[10px]",
+        "bg-blue-500/5 border-blue-500/20 text-blue-400"
+      )}>
+        <span className="font-bold">⚡ Auto</span>
+        <span className="text-blue-300/70">
+          Provider &amp; model resolved from your Vault key at runtime —
+          no manual config needed.
+        </span>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <label className="text-[10px] font-bold uppercase text-slate-500">Instructions</label>
         <textarea
-          rows={4}
+          rows={7}
           className={cn(
-            "rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all placeholder:text-muted-foreground resize-none font-mono text-xs border relative z-10",
+            "rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all placeholder:text-muted-foreground resize-none font-mono text-xs border",
             "bg-background border-border text-foreground"
           )}
-          placeholder="e.g. You are a helpful assistant..."
+          placeholder={"You are a helpful assistant.\n\nUser message: {{input-1}}\n\nRespond concisely."}
           value={(selectedNode.data.instructions as string) || ""}
-          onChange={(e) => {
-            updateNodeData(selectedNode.id, { instructions: e.target.value });
-          }}
+          onChange={(e) => updateNodeData(selectedNode.id, { instructions: e.target.value })}
         />
+        <p className="text-[9px] text-slate-500 italic">
+          Reference upstream nodes with <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">{"{{node-id}}"}</code>
+        </p>
       </div>
+
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <label className="text-[10px] font-bold uppercase text-slate-500">API Key</label>
+          <label className="text-[10px] font-bold uppercase text-slate-500">Node-Level API Key</label>
           {apiKeySaved && (
             <span className="text-[9px] font-bold text-emerald-500 animate-pulse uppercase tracking-widest">
               ✓ Saved
             </span>
           )}
         </div>
+        <p className="text-[9px] text-slate-500 italic -mt-1">
+          Optional — overrides the Vault key for this node only.
+        </p>
         <div className={cn(
           "transition-all duration-300 rounded-lg",
           apiKeySaved ? "ring-2 ring-emerald-500/50" : ""
@@ -530,12 +622,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
               setApiKeySaved(true);
               setTimeout(() => setApiKeySaved(false), 2000);
             }}
-            placeholder={
-              selectedNode.data.provider === 'groq' ? "Enter your Groq API key (gsk_...)" :
-              selectedNode.data.provider === 'openai' ? "Enter your OpenAI key (sk-...)" :
-              selectedNode.data.provider === 'anthropic' ? "Enter your Anthropic key (sk-ant-...)" :
-              "Enter your Google AI API key (v1)..."
-            }
+            placeholder="gsk_… or sk-… or AIza… (auto-detected)"
             theme={theme}
           />
         </div>
@@ -715,6 +802,140 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
   );
 
 
+  const renderAppActionNodeSettings = () => {
+    const appProvider = selectedNode.data.appProvider || "";
+    const appAction = selectedNode.data.appAction || "";
+    const appInputs: Record<string, string> = selectedNode.data.appInputs || {};
+
+    const app = appProvider ? getApp(appProvider) : undefined;
+    const action = app && appAction ? getAction(app.id, appAction) : undefined;
+
+    const updateInput = (key: string, value: string) =>
+      updateNodeData(selectedNode.id, { appInputs: { ...appInputs, [key]: value } });
+
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-2 text-violet-400">
+          <PlugZap size={16} />
+          <h3 className="text-sm font-bold uppercase tracking-tight">App Action</h3>
+        </div>
+
+        {/* Select App (Account) */}
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Select Account</label>
+          <select
+            className={cn(
+              "rounded-lg p-2 text-sm focus:ring-2 focus:ring-violet-500/20 outline-none transition-all border",
+              "bg-background border-border text-foreground focus:border-violet-500"
+            )}
+            value={appProvider}
+            onChange={(e) => updateNodeData(selectedNode.id, { appProvider: e.target.value, appAction: "", appInputs: {} })}
+          >
+            <option value="">Choose an app...</option>
+            {APP_REGISTRY.map((a) => (
+              <option key={a.id} value={a.id}>{a.icon} {a.name}</option>
+            ))}
+          </select>
+
+          {/* Connection status badge */}
+          {app && appConnected !== null && (
+            <div className={cn(
+              "flex items-center justify-between px-2.5 py-1.5 rounded-lg border text-[10px] font-semibold",
+              appConnected
+                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                : "bg-rose-500/10 border-rose-500/20 text-rose-400"
+            )}>
+              <div className="flex items-center gap-1.5">
+                <span className={cn("w-1.5 h-1.5 rounded-full", appConnected ? "bg-emerald-400" : "bg-rose-400")} />
+                {appConnected ? `${app.name} connected` : `${app.name} not connected`}
+              </div>
+              {!appConnected && (
+                <a
+                  href="/dashboard/integrations"
+                  target="_blank"
+                  className="underline underline-offset-2 hover:text-rose-300 transition-colors"
+                >
+                  Connect →
+                </a>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Select Action */}
+        {app && (
+          <div className="flex flex-col gap-2">
+            <label className="text-[10px] font-bold uppercase text-slate-500">Select Action</label>
+            <select
+              className={cn(
+                "rounded-lg p-2 text-sm focus:ring-2 focus:ring-violet-500/20 outline-none transition-all border",
+                "bg-background border-border text-foreground focus:border-violet-500"
+              )}
+              value={appAction}
+              onChange={(e) => updateNodeData(selectedNode.id, { appAction: e.target.value, appInputs: {} })}
+            >
+              <option value="">Choose an action...</option>
+              {app.actions.map((a) => (
+                <option key={a.id} value={a.id}>{a.label} — {a.description}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Dynamic Input Fields */}
+        {action && (
+          <div className="flex flex-col gap-3">
+            <label className="text-[10px] font-bold uppercase text-slate-500">Input Mapping</label>
+            <p className="text-[10px] text-muted-foreground -mt-1">
+              Use <code className="bg-muted px-1 rounded text-[9px]">{"{{node-id}}"}</code> to inject upstream node output.
+            </p>
+            {action.fields.map((field) => (
+              <div key={field.key} className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-slate-400 flex items-center gap-1">
+                  {field.label}
+                  {field.required && <span className="text-rose-400">*</span>}
+                </label>
+                {field.type === "textarea" ? (
+                  <textarea
+                    rows={3}
+                    className={cn(
+                      "rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-violet-500/20 outline-none transition-all border resize-none font-mono",
+                      "bg-background border-border text-foreground focus:border-violet-500"
+                    )}
+                    placeholder={field.placeholder}
+                    value={appInputs[field.key] || ""}
+                    onChange={(e) => updateInput(field.key, e.target.value)}
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    className={cn(
+                      "rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-violet-500/20 outline-none transition-all border font-mono",
+                      "bg-background border-border text-foreground focus:border-violet-500"
+                    )}
+                    placeholder={field.placeholder}
+                    value={appInputs[field.key] || ""}
+                    onChange={(e) => updateInput(field.key, e.target.value)}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!app && (
+          <div className="text-[10px] text-muted-foreground italic px-3 py-2 rounded-lg border border-dashed border-border text-center">
+            Connect your apps in{" "}
+            <a href="/dashboard/integrations" target="_blank" className="text-violet-400 underline underline-offset-2 hover:text-violet-300">
+              Dashboard → Integrations
+            </a>
+            , then select one above.
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const logEntry = executionLogs?.find((l: any) => l.nodeId === selectedNode.id);
   const nodeOutput = currentContext?.nodes?.[selectedNode.id];
   const hasData = logEntry || nodeOutput;
@@ -777,6 +998,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
               {selectedNode.type === "gatekeeper" && renderGatekeeperNodeSettings()}
               {selectedNode.type === "processor" && renderProcessorNodeSettings()}
               {selectedNode.type === "action" && renderActionNodeSettings()}
+              {selectedNode.type === "appaction" && renderAppActionNodeSettings()}
               {selectedNode.type === "ai" && renderAINodeSettings()}
               {selectedNode.type === "router" && renderRouterNodeSettings()}
               {selectedNode.type === "output" && renderOutputNodeSettings()}

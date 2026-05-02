@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(npx tsc *)",
-      "Bash(xargs head *)"
+      "Bash(xargs head *)",
+      "Bash(npx prisma *)",
+      "Bash(npx next *)"
     ]
   }
 }
