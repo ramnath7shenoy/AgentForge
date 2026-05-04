@@ -22,12 +22,17 @@
 ```
 app/
   actions/
-    ai-architect.ts     # Server action: NL prompt → validated flow JSON (11-node schema)
+    ai-architect.ts     # Server action: NL prompt → validated flow JSON (12-node schema)
+    integration.ts      # OAuth integration actions: getIntegrations, upsertIntegration, deleteIntegration, executeAppAction
     auth.ts, flow.ts, project.ts
-  api/execute/route.ts  # POST endpoint for server-side flow execution
+  api/
+    execute/route.ts    # POST endpoint for server-side flow execution
+    vector-search/      # BM25 lexical search endpoint — ranks doc chunks by relevance (no external dep)
   editor/page.tsx       # Main canvas page (FlowCanvas + all panels)
   publish/page.tsx      # Code export page (polyglot compile to TS/JS/Python)
-  dashboard/page.tsx    # Project management
+  dashboard/
+    page.tsx            # Project management
+    integrations/page.tsx  # OAuth integration management UI (X, Slack, Discord, GitHub, Notion)
   view/[id]/page.tsx    # Public read-only flow viewer
 
 components/
@@ -35,7 +40,7 @@ components/
     nodes/              # One file per node type (see Node Types table below)
     canvas/             # FlowCanvas (editable), ReadOnlyCanvas
     chat/               # ChatHub — floating chat panel + approval routing
-    sidebar/            # NodeSettingsSidebar, NodeSidebar
+    sidebar/            # NodeSettingsSidebar (includes appaction settings panel), NodeSidebar
     AIArchitectModal.tsx        # AI workflow generator modal
     ResponseGallery.tsx         # Terminal | Result | State tabs
     ExecutionLogPanel.tsx
@@ -46,7 +51,16 @@ components/
 
 lib/
   flow/
-    clientExecutor.ts   # Reactive Engine — topological event-driven executor (main path)
+    clientExecutor.ts   # Reactive Engine — topological event-driven executor (main path); includes appaction handler
+    layoutEngine.ts     # Dagre-based auto-layout (TB/LR); skips group containers
+    validators.ts       # Kahn's algorithm cycle detection — call before adding edges
+  providers/
+    index.ts            # APP_REGISTRY definition + getApp/getAction lookups
+    xService.ts         # X (Twitter): tweet posting
+    slackService.ts     # Slack: message sending
+    discordService.ts   # Discord: message/DM sending
+    githubService.ts    # GitHub: issue creation
+    notionService.ts    # Notion: page creation
   codegen/
     templates.ts        # Polyglot codegen helpers (library metadata, HTTP blocks, template lifting)
   constants/
@@ -72,6 +86,9 @@ stores/
 types/
   flowStoreTypes.ts     # NodeData, FlowPacket, FlowState, ExecutionContext
   dataTypes.ts
+
+prisma/
+  schema.prisma         # Includes Integration model: { id, userId, provider, accessToken, refreshToken, metadata }
 ```
 
 ---
@@ -86,7 +103,8 @@ NodeData          { label, instructions, provider, modelName, apiKey,
                     gatekeeperMessage, timeoutMinutes,     // approval node
                     verification,                          // gatekeeper node
                     batchLogic,                            // processor node
-                    subflowId, workflowOverride }          // subflow node
+                    subflowId, workflowOverride,           // subflow node
+                    appProvider, appAction, appInputs }    // appaction node (provider: "x"|"slack"|"discord"|"github"|"notion"; appInputs supports {{node-id}} refs)
 
 ExecutionContext   { variables: Record<string,FlowPacket>,
                     nodes: Record<string,FlowPacket>,
@@ -217,7 +235,7 @@ Full conversation history is passed as-is from `chatHistory`.
 
 ## Node Types
 
-### 11 Canonical Types (AI Architect schema)
+### 12 Canonical Types (AI Architect schema)
 | Sidebar Name | nodeType | Purpose |
 |---|---|---|
 | Starting Point | `input` | User message entry — default root for all chat flows |
@@ -229,7 +247,8 @@ Full conversation history is passed as-is from `chatHistory`.
 | Safety Gatekeeper | `gatekeeper` | AI critic or human content review |
 | Approval Gate | `approval` | Human-in-the-loop pause; resumes on "go"/"approve" in chat |
 | Logic Processor | `processor` | Data transform / batch loop |
-| Integration | `action` | Outgoing HTTP call; requires `url` field or throws at runtime |
+| Integration | `action` | Outgoing HTTP call (generic REST); requires `url` field or throws at runtime |
+| App Action | `appaction` | OAuth-connected app action (X/Slack/Discord/GitHub/Notion); auth sourced from user integrations automatically |
 | Final Result | `output` | Terminal node; feeds result into ChatHub via `addMessage` |
 
 ### Additional Implementation Types (not in architect schema)
@@ -239,19 +258,62 @@ Full conversation history is passed as-is from `chatHistory`.
 | `group` | GroupNode.tsx | Container that wraps/unwraps sub-agent node groups |
 | `text` | TextNode.tsx | Static annotation/label node (canvas only, not executed) |
 
+`AppActionNode.tsx` — canvas node for `appaction` type; shows app icon + action label; live connectivity status dot; alert badge if app/action not configured.
+
 Legacy aliases handled in executor: `ai_agent`, `agent-brain`, `llm` all route to the `ai` handler.
 
 ---
 
 ## AI Architect (`app/actions/ai-architect.ts`)
 - Provider-agnostic server action: takes `{ prompt, provider, model, decryptedKey }`.
-- Strict 11-type schema enforced in the system prompt; illegal types silently filtered server-side before returning.
+- Strict 12-type schema enforced in the system prompt; illegal types (including old aliases) silently filtered server-side before returning.
 - **MANDATORY RULE**: root must be `input` for user-facing flows; `trigger` only for scheduled.
 - **MANDATORY RULE**: every `ai` node must include `provider: "auto"` — no explicit provider/model/apiKey.
 - **MANDATORY RULE**: if Node B's instructions reference `{{node-a}}`, the ONLY incoming edge to Node B must be from `node-a` — no shortcut edges.
 - **MANDATORY RULE**: Approval gate MUST precede any action node that posts/sends data.
+- **MANDATORY RULE**: use `appaction` (not `action`) for social/productivity apps (X, Slack, Discord, GitHub, Notion); `appaction` nodes auto-source auth from user integrations — no explicit token.
 - Output contract: raw JSON object — no markdown fences, no extra keys.
 - Default models: Gemini `gemini-2.5-flash`, Groq `llama-3.3-70b-versatile`, OpenAI `gpt-4o`.
+
+---
+
+## Graph Utilities
+
+### Auto-Layout (`lib/flow/layoutEngine.ts`)
+Dagre-based layout engine. Call with nodes/edges + direction (`"TB"` or `"LR"`). Returns repositioned nodes with `targetPosition`/`sourcePosition` set for ReactFlow handles. Group containers are skipped during layout.
+
+### Cycle Detection (`lib/flow/validators.ts`)
+Kahn's algorithm on the edge list. Returns `true` if cycles exist. Call before committing a new edge to the canvas to prevent invalid DAGs.
+
+### Vector Search (`app/api/vector-search/route.ts`)
+POST `{ query, chunks, topK }` → ranked matches. BM25 scoring (TF-IDF variant) with no external dependencies. Used by the Vault node for local document retrieval.
+
+---
+
+## App Integrations (`lib/providers/` + `app/actions/integration.ts`)
+
+OAuth-connected external app actions. Token management is entirely server-side; nodes reference integrations by `appProvider` + `appAction` name.
+
+**Supported apps** (via `lib/providers/`):
+| Provider | Actions |
+|---|---|
+| X (Twitter) | `create_tweet` |
+| Slack | `send_message` |
+| Discord | `send_message`, `send_dm` |
+| GitHub | `create_issue` |
+| Notion | `create_page` |
+
+**`APP_REGISTRY`** in `lib/providers/index.ts` — source of truth for app metadata + available actions. `getApp(provider)` and `getAction(provider, action)` are the lookup helpers used by the sidebar and executor.
+
+**`app/actions/integration.ts`** — server actions:
+- `getIntegrations()` — fetch user's connected providers
+- `upsertIntegration(provider, accessToken, refreshToken?)` — store/update token
+- `deleteIntegration(provider)` — revoke connection
+- `executeAppAction(provider, action, inputs)` — dispatch to the appropriate service adapter
+
+**Prisma model**: `Integration { id, userId, provider, accessToken, refreshToken, metadata }` with unique constraint `(userId, provider)`.
+
+**Management UI**: `app/dashboard/integrations/page.tsx` — token input forms, live connection status, connect/disconnect actions.
 
 ---
 

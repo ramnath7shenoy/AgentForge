@@ -238,10 +238,17 @@ async function dispatchLLM(
   });
 
   const data = await response.json();
-  if (!response.ok)
-    throw new Error(
-      data.error?.message || `${provider.toUpperCase()} API Error`
-    );
+  if (!response.ok) {
+    if (response.status === 429)
+      throw new Error(
+        `Rate limit exceeded (429) on ${provider.toUpperCase()}. Wait a moment or switch providers.`
+      );
+    if (response.status >= 500)
+      throw new Error(
+        `${provider.toUpperCase()} server error (${response.status}). Try again later.`
+      );
+    throw new Error(data.error?.message || `${provider.toUpperCase()} API Error ${response.status}`);
+  }
 
   if (provider === "gemini") return data.candidates[0].content.parts[0].text;
   if (provider === "anthropic") return data.content[0].text;
@@ -316,6 +323,44 @@ function assertTemplateDeps(
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Timeout Utility — races a promise against a deadline
+// ─────────────────────────────────────────────────────────────────────
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timed out after ${ms / 1000}s — ${label}`)), ms)
+    ),
+  ]);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Router Condition Evaluator
+// Supports: contains X | = X | > N | < N | true/always/otherwise/else
+// Falls through to substring match for unrecognised patterns.
+// ─────────────────────────────────────────────────────────────────────
+function evaluateRouterCondition(condition: string, inputText: string): boolean {
+  const cond = condition.trim().toLowerCase();
+  if (!cond || ["true", "always", "otherwise", "else", "default"].includes(cond)) return true;
+
+  const input = inputText.toLowerCase();
+
+  const containsM = cond.match(/^contains\s+['"]?(.+?)['"]?$/);
+  if (containsM) return input.includes(containsM[1].trim());
+
+  const equalsM = cond.match(/^(?:==?|equals?)\s+['"]?(.+?)['"]?$/);
+  if (equalsM) return input === equalsM[1].trim();
+
+  const gtM = cond.match(/^>\s*(\d+(?:\.\d+)?)$/);
+  if (gtM) return parseFloat(inputText) > parseFloat(gtM[1]);
+
+  const ltM = cond.match(/^<\s*(\d+(?:\.\d+)?)$/);
+  if (ltM) return parseFloat(inputText) < parseFloat(ltM[1]);
+
+  return input.includes(cond);
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Short-Circuit Helper: Transitive descendant finder (DFS)
 // Returns every node reachable from startId, used to propagate SKIPPED.
 // ─────────────────────────────────────────────────────────────────────
@@ -351,6 +396,30 @@ async function executeNode(
   switch (current.type) {
     case "trigger": {
       return { type: "text", payload: `Triggered with: ${initialInput}` };
+    }
+
+    case "webhook": {
+      // sampleData is a plain-English string describing what the agent will receive.
+      // The engine passes it directly as the input text to downstream AI Brain nodes.
+      const sampleText = (current.data as any)?.sampleData?.trim();
+
+      if (!sampleText) {
+        // Guard: execution should have been blocked by the pre-run check in flowStore,
+        // but if we reach here without sample data throw a clear, actionable error.
+        throw new Error(
+          `Please tell the agent what to work on by typing in the "${current.data?.label || "Webhook"}" node's Sample Input box.`
+        );
+      }
+
+      sendLog(
+        `🌐 Webhook: sample input → "${sampleText.slice(0, 60)}${sampleText.length > 60 ? "…" : ""}"`,
+        "INFO",
+        current.id
+      );
+
+      const packet: FlowPacket = { type: "text", payload: sampleText };
+      context.variables.input = packet;
+      return packet;
     }
 
     case "input": {
@@ -449,13 +518,17 @@ async function executeNode(
             );
             // Pass the full chatHistory; dispatchLLM builds the provider-native
             // messages/contents array — no manual history string injection here.
-            responseText = await dispatchLLM(
-              resolvedProvider,
-              model,
-              jitKey,
-              resolvedPrompt,
-              chatHistory,
-              (msg, type) => sendLog(msg, type, current.id)
+            responseText = await withTimeout(
+              dispatchLLM(
+                resolvedProvider,
+                model,
+                jitKey,
+                resolvedPrompt,
+                chatHistory,
+                (msg, type) => sendLog(msg, type, current.id)
+              ),
+              30_000,
+              `${resolvedProvider.toUpperCase()}/${model}`
             );
             if (responseText) {
               success = true;
@@ -504,7 +577,9 @@ async function executeNode(
 
     case "output": {
       const outputFormat = current.data?.resultFormat || "";
-      assertTemplateDeps(outputFormat, context, current.data?.label || "Output");
+      // Note: assertTemplateDeps intentionally omitted here — the engine pre-seeds
+      // ghost packets for skipped-branch refs before this node is dispatched, so
+      // the template resolves gracefully even when some parents were inactive.
       const resolvedOutput = outputFormat.replace(
         /\{\{(.*?)\}\}/g,
         (_: string, path: string) => {
@@ -522,7 +597,25 @@ async function executeNode(
         }
       );
 
-      const packet: FlowPacket = { type: "text", payload: resolvedOutput };
+      // Fallback: if the entire template resolved to empty (all refs came from
+      // skipped branches), use the most recent non-empty output from any
+      // successfully executed node instead of returning a blank result.
+      let finalOutput = resolvedOutput;
+      if (!finalOutput.trim()) {
+        const realOutputs = Object.values(context.nodes).filter(
+          (v) => v?.payload != null && String(v.payload).trim() !== ""
+        );
+        if (realOutputs.length > 0) {
+          finalOutput = getRawValue(realOutputs[realOutputs.length - 1]);
+          sendLog(
+            `ℹ️ Output template resolved empty — using last active upstream result as fallback`,
+            "INFO",
+            current.id
+          );
+        }
+      }
+
+      const packet: FlowPacket = { type: "text", payload: finalOutput };
       context.variables.output = packet;
 
       // Open Chat Hub so the user sees all AI Brain messages that were synced upstream
@@ -531,6 +624,37 @@ async function executeNode(
       sendLog("📤 Flow complete — Chat Hub opened.", "SUCCESS", current.id);
 
       return packet;
+    }
+
+    case "decision":
+    case "router": {
+      const routes: string[] = current.data?.routes || ["Path A", "Path B"];
+      const conditions: Record<string, string> = current.data?.conditions || {};
+
+      // Resolve upstream input text for condition matching
+      const incomingEdge = edges.find((e) => e.target === current.id);
+      const upstreamPacket = incomingEdge ? context.nodes[incomingEdge.source] : null;
+      const inputText = upstreamPacket ? getRawValue(upstreamPacket) : initialInput;
+
+      // Pick the first route whose condition matches; last route is the fallback
+      let selectedRoute = routes[routes.length - 1];
+      for (const route of routes) {
+        if (evaluateRouterCondition(conditions[route] || "otherwise", inputText)) {
+          selectedRoute = route;
+          break;
+        }
+      }
+
+      sendLog(
+        `🔀 Router: "${selectedRoute}" selected (${routes.length} branches)`,
+        "INFO",
+        current.id
+      );
+      return {
+        type: "text",
+        payload: inputText,
+        meta: { selectedRoute: selectedRoute.toLowerCase() },
+      };
     }
 
     case "processor": {
@@ -770,6 +894,29 @@ async function executeNode(
         "INFO",
         current.id
       );
+
+      // RAG: search over knowledgeBase chunks if populated (node settings can supply them)
+      const knowledgeBase: string[] = (current.data as any)?.knowledgeBase ?? [];
+      if (knowledgeBase.length > 0 && query) {
+        try {
+          const res = await fetch("/api/vector-search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query, chunks: knowledgeBase, topK: 3 }),
+          });
+          if (res.ok) {
+            const { matches } = await res.json();
+            if (matches?.length > 0) {
+              const context_text = matches.map((m: { text: string }) => m.text).join("\n\n---\n\n");
+              sendLog(`📚 Vault: ${matches.length} chunk(s) retrieved`, "SUCCESS", current.id);
+              return { type: "text", payload: context_text };
+            }
+          }
+        } catch {
+          sendLog("⚠️ Vault vector-search failed — returning raw query", "WARN", current.id);
+        }
+      }
+
       return { type: "text", payload: query ? `[Vault] ${query}` : "[Vault] No query provided" };
     }
 
@@ -857,21 +1004,23 @@ export function buildDependencyMap(edges: Edge[]): Record<string, string[]> {
 }
 
 // ═════════════════════════════════════════════════════════════════════
-// REACTIVE ENGINE — Topological Watcher (Event-Driven Choreography)
+// REACTIVE ENGINE — Smart Merge Mode (Event-Driven Choreography)
 //
-// Architecture: replaces the central BFS while-loop with pure event-
-// driven dispatch. Each node fires immediately when ALL predecessor
-// outputs are in context — no wave batching, no polling.
+// Architecture: pure event-driven dispatch. Each node fires when ALL
+// predecessor edges have resolved (success OR skipped/failed).
 //
 // Guarantees:
-//   1. A node dispatches only after every parent edge source has a
-//      completed output in context.nodes.
-//   2. Concurrency is natural: nodes with satisfied deps run in parallel
-//      without explicit wave coordination.
-//   3. Short-circuit: on failure, all transitive descendants are marked
-//      SKIPPED without blocking other branches.
-//   4. Exit signal: checked at dispatch time — already-running nodes
-//      complete normally; newly ready nodes are not started.
+//   1. A node is skipped ONLY when ALL of its parents were skipped/failed.
+//      If even ONE parent succeeded, the node runs using available data.
+//   2. Multi-branch merges work correctly: a node fed by a skipped branch
+//      AND an active branch will wait for both, then dispatch normally.
+//   3. Router/decision nodes resolve each child edge independently —
+//      selected route → "success" contribution, other routes → "skipped"
+//      contribution — so only true dead-ends propagate the skip.
+//   4. Failed nodes act like skipped nodes for downstream merging:
+//      descendants can still run if they have other live parents.
+//   5. Exit signal: newly ready nodes are not started; in-flight nodes
+//      complete normally.
 // ═════════════════════════════════════════════════════════════════════
 export async function executeGraph(
   nodes: Node<NodeData>[],
@@ -894,11 +1043,18 @@ export async function executeGraph(
 
   const { onNodeStatusChange, onNodeComplete } = options;
 
-  sendLog("🚀 Reactive Engine started (Topological Watcher)...", "INFO");
+  sendLog("🚀 Reactive Engine started (Smart Merge mode)...", "INFO");
 
-  // ─── 1. Build adjacency and remaining-dependency maps ───
-  const adj = new Map<string, string[]>();         // parent → [children]
-  const remainingDeps = new Map<string, number>(); // child → unsatisfied parent count
+  // ─── 1. Build adjacency, dep counts, and per-child parent-outcome tracking ───
+  const adj = new Map<string, string[]>();          // parent → [children]
+  const remainingDeps = new Map<string, number>();  // child → unresolved parent count
+
+  // For each child: which parents resolved as success vs skipped/failed.
+  // A child dispatches only when remainingDeps reaches 0 AND succeeded.size > 0.
+  const parentOutcomes = new Map<string, {
+    succeeded: Set<string>;
+    skippedOrFailed: Set<string>;
+  }>();
 
   nodes.forEach((n) => {
     adj.set(n.id, []);
@@ -907,15 +1063,18 @@ export async function executeGraph(
   edges.forEach((e) => {
     adj.get(e.source)?.push(e.target);
     remainingDeps.set(e.target, (remainingDeps.get(e.target) || 0) + 1);
+    if (!parentOutcomes.has(e.target)) {
+      parentOutcomes.set(e.target, { succeeded: new Set(), skippedOrFailed: new Set() });
+    }
   });
 
   const executed = new Set<string>();
-  const skipped = new Set<string>();
+  const skipped  = new Set<string>();
   const inflight = new Set<string>();
   const nodeById = new Map<string, Node<NodeData>>();
   nodes.forEach((n) => nodeById.set(n.id, n));
 
-  // ─── 2. Completion tracking ───
+  // ─── 2. Completion gate ───
   let pendingCount = 0;
   let resolveAll!: () => void;
   const allDone = new Promise<void>((res) => { resolveAll = res; });
@@ -935,19 +1094,91 @@ export async function executeGraph(
     resolveAll();
   }
 
-  // ─── 3. dispatchNode — the core reactive trigger ───
+  // ─── 3. Smart merge resolution ───
+  // Called by every node (or router edge) when it resolves.
+  // Tracks per-child parent outcomes; decides dispatch vs. skip only when
+  // the last unresolved parent for that child reports in.
+  function resolveParentForChild(
+    parentId: string,
+    childId: string,
+    outcome: "success" | "skipped"
+  ) {
+    const outcomes = parentOutcomes.get(childId);
+    if (!outcomes) return; // root nodes have no parent tracking
+
+    if (outcome === "success") {
+      outcomes.succeeded.add(parentId);
+    } else {
+      outcomes.skippedOrFailed.add(parentId);
+    }
+
+    const newDeps = (remainingDeps.get(childId) || 1) - 1;
+    remainingDeps.set(childId, newDeps);
+
+    if (newDeps === 0) {
+      decideChild(childId);
+    }
+  }
+
+  // Called when a child's last parent has resolved.
+  // Sink nodes (output type) always dispatch — they collect the full flow report.
+  // Non-sink nodes dispatch if ≥1 parent succeeded; skip and cascade otherwise.
+  function decideChild(childId: string) {
+    const child = nodeById.get(childId);
+    if (!child || executed.has(childId) || skipped.has(childId) || inflight.has(childId)) return;
+
+    const isSink = child.type === "output";
+
+    const outcomes = parentOutcomes.get(childId) || {
+      succeeded: new Set<string>(),
+      skippedOrFailed: new Set<string>(),
+    };
+
+    const allParentsInactive = outcomes.succeeded.size === 0;
+    const shouldSkip = !isSink && (context.variables.__exit__ || allParentsInactive);
+
+    if (shouldSkip) {
+      skipped.add(childId);
+      onNodeStatusChange?.(childId, "skipped");
+      sendLog(
+        `⏭ "${child.data?.label || childId}" skipped — no active paths reached this node`,
+        "WARN",
+        childId
+      );
+      // Cascade: notify this node's children so they can make their own decision
+      for (const grandchildId of adj.get(childId) || []) {
+        resolveParentForChild(childId, grandchildId, "skipped");
+      }
+    } else {
+      // Inject ghost empty packets for any refs that were on pruned branches
+      // so assertTemplateDeps doesn't throw for legitimately skipped upstream nodes.
+      const template =
+        (child.data as any)?.instructions ||
+        (child.data as any)?.resultFormat || "";
+      for (const m of template.matchAll(/\{\{([^}]+)\}\}/g)) {
+        const ref = (m[1] as string).trim().split(".")[0];
+        if ((skipped.has(ref) || executed.has(ref)) && !context.nodes[ref] && !context.variables[ref]) {
+          context.nodes[ref] = { type: "text", payload: "" };
+        }
+      }
+      dispatchNode(child);
+    }
+  }
+
+  // ─── 4. Node dispatcher ───
   function dispatchNode(node: Node<NodeData>) {
     if (executed.has(node.id) || skipped.has(node.id) || inflight.has(node.id)) return;
 
-    // Exit signal: don't start new work, mark as skipped
-    if (context.variables.__exit__) {
-      sendLog(
-        `🛑 Exit signal — skipping ${node.data?.label || node.id}`,
-        "WARN",
-        node.id
-      );
+    const isSink = node.type === "output";
+
+    // Sink nodes bypass the exit signal — they always run to produce the flow report.
+    if (context.variables.__exit__ && !isSink) {
+      sendLog(`🛑 Exit signal — skipping ${node.data?.label || node.id}`, "WARN", node.id);
       skipped.add(node.id);
       onNodeStatusChange?.(node.id, "skipped");
+      for (const childId of adj.get(node.id) || []) {
+        resolveParentForChild(node.id, childId, "skipped");
+      }
       return;
     }
 
@@ -964,34 +1195,58 @@ export async function executeGraph(
         onNodeComplete?.(node.id, packet);
         sendLog(`✅ Completed: ${node.data?.label || node.id}`, "SUCCESS", node.id);
 
-        // Reactively dispatch every child whose deps are now fully satisfied
-        for (const childId of adj.get(node.id) || []) {
-          const newDeps = (remainingDeps.get(childId) || 1) - 1;
-          remainingDeps.set(childId, newDeps);
-          if (newDeps === 0) {
-            const child = nodeById.get(childId);
-            if (child && !skipped.has(childId)) dispatchNode(child);
+        if (node.type === "router" || node.type === "decision") {
+          // Per-edge resolution: only the selected handle contributes "success".
+          // Non-selected handles contribute "skipped" — but if that child node also
+          // has another active parent, it will still run (smart merge).
+          const selectedHandle =
+            ((packet as any).meta?.selectedRoute as string | undefined)?.toLowerCase().trim() || "";
+          for (const childId of adj.get(node.id) || []) {
+            const connectingEdge = edges.find(
+              (e) => e.source === node.id && e.target === childId
+            );
+            // If an edge has no sourceHandle set, treat it as a default/passthrough edge
+            // and never deactivate it — avoids "handle '' not selected" false negatives.
+            const rawHandle = connectingEdge?.sourceHandle;
+            const edgeHandle = rawHandle?.toLowerCase().trim() || null;
+            const isSelected =
+              !selectedHandle ||   // router produced no route signal → all branches active
+              !edgeHandle ||       // edge has no handle → always active (default/passthrough)
+              edgeHandle === selectedHandle;
+            if (!isSelected) {
+              sendLog(
+                `✂️ Branch deactivated: "${nodeById.get(childId)?.data?.label || childId}" ` +
+                `(handle "${edgeHandle}" not selected; active: "${selectedHandle}")`,
+                "INFO",
+                childId
+              );
+            }
+            resolveParentForChild(node.id, childId, isSelected ? "success" : "skipped");
+          }
+        } else {
+          // Normal node: all children receive a "success" contribution
+          for (const childId of adj.get(node.id) || []) {
+            resolveParentForChild(node.id, childId, "success");
           }
         }
       })
       .catch((err) => {
         const errMsg = (err as Error)?.message || String(err);
-        sendLog(
-          `❌ Error in ${node.data?.label || node.id}: ${errMsg}`,
-          "ERROR",
-          node.id
-        );
+        sendLog(`❌ Error in ${node.data?.label || node.id}: ${errMsg}`, "ERROR", node.id);
         onNodeStatusChange?.(node.id, "error");
 
-        // Cascade SKIPPED to all transitive descendants
-        const descendants = getDescendants(node.id, adj);
-        descendants.forEach((descId) => {
-          if (!executed.has(descId)) {
-            skipped.add(descId);
-            onNodeStatusChange?.(descId, "skipped");
-            sendLog(`⏭ Skipping ${descId} (upstream failure)`, "WARN", descId);
-          }
-        });
+        // Store an error packet so downstream nodes (especially sinks) can reference
+        // this node's output without crashing — they'll read the error message as text.
+        const errorPacket = { type: "text" as const, payload: `[Error: ${errMsg}]` };
+        context.nodes[node.id] = errorPacket;
+        executed.add(node.id);
+        onNodeComplete?.(node.id, errorPacket);
+
+        // Contribute "success" to children so they are not pruned solely because
+        // this node failed — the error packet is valid data they can act on.
+        for (const childId of adj.get(node.id) || []) {
+          resolveParentForChild(node.id, childId, "success");
+        }
       })
       .finally(() => {
         inflight.delete(node.id);
@@ -1000,7 +1255,7 @@ export async function executeGraph(
       });
   }
 
-  // ─── 4. Seed: dispatch all root nodes immediately ───
+  // ─── 5. Seed: dispatch all root nodes immediately ───
   const roots = nodes.filter((n) => remainingDeps.get(n.id) === 0);
 
   if (roots.length === 0) {
@@ -1015,19 +1270,19 @@ export async function executeGraph(
 
   roots.forEach((root) => dispatchNode(root));
 
-  // Safety: if all root dispatchNode calls were no-ops (e.g. all pre-skipped)
+  // Safety: if all roots were synchronously skipped (e.g. exit signal pre-set)
   if (pendingCount === 0 && inflight.size === 0) resolveAll();
 
-  // ─── 5. Await all async chains to settle ───
+  // ─── 6. Await all async chains to settle ───
   await allDone;
 
-  const hasErrors = skipped.size > 0;
+  const hasSkipped = skipped.size > 0;
   sendLog(
-    hasErrors
-      ? "🏁 Flow finished — some nodes were skipped due to upstream failures."
+    hasSkipped
+      ? "🏁 Flow finished — some branches were inactive (expected for conditional flows)."
       : "🏁 Flow execution finished successfully.",
-    hasErrors ? "WARN" : "SUCCESS"
+    hasSkipped ? "WARN" : "SUCCESS"
   );
 
-  return { success: !hasErrors, context, logs };
+  return { success: !hasSkipped, context, logs };
 }

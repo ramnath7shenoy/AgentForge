@@ -44,6 +44,13 @@ export interface ExtendedFlowState extends FlowState {
   nodeOutputs: Record<string, FlowPacket>;
   // Maps nodeId → [parentNodeIds] — computed at flow start for UI and reactive engine
   dependencyMap: Record<string, string[]>;
+  autoSave: () => void;
+  restoreAutoSave: () => boolean;
+  clearAutoSave: () => void;
+  webhookPayloadWarning: { nodeId: string; label: string } | null;
+  setWebhookPayloadWarning: (v: { nodeId: string; label: string } | null) => void;
+  layoutDirection: LayoutDirection;
+  applyAutoLayout: (direction: LayoutDirection) => void;
 }
 
 import {
@@ -52,6 +59,7 @@ import {
 } from "@/lib/executionEngine";
 
 import { executeGraph } from "@/lib/flow/clientExecutor";
+import { applyDagreLayout, LayoutDirection } from "@/lib/flow/layoutEngine";
 
 import { resolveTemplates } from "@/lib/template";
 import { getSavedAgents } from "@/lib/savedAgents";
@@ -67,7 +75,12 @@ import { buildDependencyMap } from "@/lib/flow/clientExecutor";
 export function sendApprovalSignal(approved: boolean) { resolveApproval(approved); }
 export function isAwaitingApproval() { return isApprovalPending(); }
 
+export const AUTOSAVE_KEY = "agentforge_flow_autosave";
+
 export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
+  webhookPayloadWarning: null as { nodeId: string; label: string } | null,
+  setWebhookPayloadWarning: (v: { nodeId: string; label: string } | null) =>
+    set({ webhookPayloadWarning: v } as any),
   nodes: [],
   edges: [],
   theme: "dark", 
@@ -102,6 +115,45 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
   addMessage: (role, content) => set((state) => ({
     chatHistory: [...state.chatHistory, { role, content }]
   })),
+
+  autoSave: () => {
+    if (typeof window === "undefined") return;
+    const { nodes, edges, chatHistory, activeProject } = get();
+    try {
+      localStorage.setItem(
+        AUTOSAVE_KEY,
+        JSON.stringify({ nodes, edges, chatHistory, activeProject, savedAt: Date.now() })
+      );
+    } catch {
+      // Quota exceeded — silently skip
+    }
+  },
+
+  restoreAutoSave: () => {
+    if (typeof window === "undefined") return false;
+    try {
+      const raw = localStorage.getItem(AUTOSAVE_KEY);
+      if (!raw) return false;
+      const { nodes, edges, chatHistory } = JSON.parse(raw);
+      if (!nodes?.length && !edges?.length) return false;
+      set({ nodes: nodes ?? [], edges: edges ?? [], chatHistory: chatHistory ?? [] });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  clearAutoSave: () => {
+    if (typeof window !== "undefined") localStorage.removeItem(AUTOSAVE_KEY);
+  },
+
+  layoutDirection: "TB" as LayoutDirection,
+  applyAutoLayout: (direction: LayoutDirection) => {
+    const { nodes, edges } = get();
+    const layoutedNodes = applyDagreLayout(nodes, edges, direction);
+    get().takeSnapshot();
+    set({ nodes: layoutedNodes, layoutDirection: direction });
+  },
 
   // --- HISTORY STATE ---
   past: [],
@@ -249,6 +301,23 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
       const words = text.toLowerCase().split(/\W+/);
       resolveApproval(APPROVAL_WORDS.some((w) => words.includes(w)));
       return;
+    }
+
+    // Pre-run: if any webhook node has no sampleData, surface a warning modal.
+    {
+      const allNodes = get().nodes;
+      const offender = allNodes.find(
+        (n) => n.type === "webhook" && !(n.data as any)?.sampleData?.trim()
+      );
+      if (offender) {
+        set({
+          webhookPayloadWarning: {
+            nodeId: offender.id,
+            label: (offender.data as any)?.label || "Webhook",
+          },
+        } as any);
+        return;
+      }
     }
 
     // Capture nodes/edges and the pre-execution conversation history.

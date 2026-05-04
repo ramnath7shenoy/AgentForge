@@ -195,7 +195,11 @@ appaction — Universal connector for social media and productivity apps. Use th
 webhook — INCOMING HTTP endpoint only. Receives POST requests to trigger this flow.
   Use for: third-party webhooks, Zapier, Make.com, CI pipeline triggers.
   DO NOT use for outgoing calls — use "action" for that.
-  data: { "label": string }
+  MANDATORY: Always include a realistic "sampleData" JSON string so the user can run the flow immediately without a real POST request.
+  data: {
+    "label": string,
+    "sampleData": string   ← stringified JSON matching a real payload for this use case (e.g. GitHub push event, Stripe charge, Zapier zap)
+  }
 
 approval — Human-in-the-loop pause. Blocks execution until the user approves or aborts.
   The flow pauses and shows an ApprovalBanner on the canvas. The user can also type
@@ -226,8 +230,12 @@ output — Displays the final result. EXACTLY ONE per flow. Terminal node.
   "source": "source-node-id",
   "target": "target-node-id",
   "type": "smoothstep",
-  "animated": true
+  "animated": true,
+  "sourceHandle": "<route-name>"   ← REQUIRED on edges leaving a "router" node; must match one of the node's "routes" values exactly (case-insensitive). Omit on all other edge types.
 }
+For router edges, each outgoing edge MUST include "sourceHandle" set to the route name it represents.
+  ✗ WRONG: { "source": "triage", "target": "escalation-ai" }                    ← missing sourceHandle
+  ✓ CORRECT: { "source": "triage", "target": "escalation-ai", "sourceHandle": "urgent" }
 
 ## LAYOUT RULES
 • Primary axis: left to right. x increments of 300 (x: 0, 300, 600, 900 …).
@@ -242,6 +250,17 @@ For any chatbot, assistant, or conversational agent:
 The output node feeds the AI response into the chat panel, which becomes the next turn's context.
 NEVER omit the output node — without it the user sees nothing.
 NEVER wire the ai node back to itself (no cycles) — conversation history is maintained automatically.
+
+## DECISION NODE BRANCH RULE
+When using a "router" node, BOTH branches must eventually connect to a meaningful downstream node
+(usually the "output" node or the next logical step in the flow). Do NOT leave a branch dangling
+or dead-ended unless the explicit goal of that branch is to stop the flow early.
+
+  ✗ WRONG: non-urgent branch ends with no outgoing edge
+  ✓ CORRECT: non-urgent branch connects directly to "output" or to the next shared step
+
+The non-urgent / false / else path should bypass intermediate approval/action nodes and connect
+directly to the final result node — this keeps the flow complete without requiring unnecessary gates.
 
 ## MANDATORY RULES
 1. Root node (inDegree = 0) must be "input" for any user-facing or chat-driven flow.
@@ -381,6 +400,54 @@ AI output with safety gatekeeper:
                   verification:"Critic AI",
                   instructions:"Ensure no harmful content or PII.")
     → output(id:"result", resultFormat:"{{responder}}")
+
+Crisis Sentinel — triage alert with conditional escalation (CORRECT branch wiring):
+Both branches converge on the SAME "notify" appaction node. The difference is:
+  - urgent path:     triage → escalation-ai → gate(approval) → notify
+  - non-urgent path: triage → notify  (directly, no approval needed)
+The smart merge engine waits for all parents to resolve, then dispatches notify as soon
+as the ACTIVE branch completes. The inactive branch is automatically skipped.
+
+{
+  "nodes": [
+    { "id": "monitor-input", "type": "input",    "position": { "x": 0,    "y": 200 },
+      "data": { "label": "Incoming Alert" } },
+    { "id": "classifier",    "type": "ai",       "position": { "x": 300,  "y": 200 },
+      "data": { "label": "Crisis Classifier",
+                "instructions": "Classify this alert as URGENT or NON-URGENT. Reply with only one word.\n\nAlert: {{monitor-input}}" } },
+    { "id": "triage",        "type": "router",   "position": { "x": 600,  "y": 200 },
+      "data": { "label": "Triage Decision",
+                "routes": ["urgent", "non-urgent"],
+                "conditions": { "urgent": "URGENT", "non-urgent": "else" } } },
+    { "id": "escalation-ai", "type": "ai",       "position": { "x": 900,  "y": 50 },
+      "data": { "label": "Escalation Drafter",
+                "instructions": "Draft an urgent escalation Slack message for this crisis alert: {{monitor-input}}" } },
+    { "id": "gate",          "type": "approval", "position": { "x": 1200, "y": 50 },
+      "data": { "label": "Approve Escalation",
+                "gatekeeperMessage": "URGENT alert detected. Approve sending Slack escalation?",
+                "timeoutMinutes": 10, "timeoutAction": "abort" } },
+    { "id": "notify",        "type": "appaction","position": { "x": 1500, "y": 200 },
+      "data": { "label": "Send Slack Alert",
+                "appProvider": "slack",
+                "appAction": "send_message",
+                "appInputs": { "channel": "#incidents", "text": "{{escalation-ai}}" } } },
+    { "id": "result",        "type": "output",   "position": { "x": 1800, "y": 200 },
+      "data": { "label": "Done", "resultFormat": "{{notify}}" } }
+  ],
+  "edges": [
+    { "id": "e-input-classifier",   "source": "monitor-input", "target": "classifier",    "type": "smoothstep", "animated": true },
+    { "id": "e-classifier-triage",  "source": "classifier",    "target": "triage",        "type": "smoothstep", "animated": true },
+    { "id": "e-triage-urgent",      "source": "triage",        "target": "escalation-ai", "type": "smoothstep", "animated": true, "sourceHandle": "urgent" },
+    { "id": "e-triage-nonurgent",   "source": "triage",        "target": "notify",        "type": "smoothstep", "animated": true, "sourceHandle": "non-urgent" },
+    { "id": "e-escalation-gate",    "source": "escalation-ai", "target": "gate",          "type": "smoothstep", "animated": true },
+    { "id": "e-gate-notify",        "source": "gate",          "target": "notify",        "type": "smoothstep", "animated": true },
+    { "id": "e-notify-result",      "source": "notify",        "target": "result",        "type": "smoothstep", "animated": true }
+  ]
+}
+KEY: "notify" has two incoming edges — from "gate" and from "triage" (non-urgent).
+  When urgent: triage skips the non-urgent→notify edge; gate runs → notify dispatches.
+  When non-urgent: triage feeds notify directly; gate is skipped; notify still dispatches.
+  The output node "result" has only one parent (notify) so it always runs once notify completes.
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────

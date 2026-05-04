@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useFlowStore } from "@/stores/flowStore";
+import { useLogStore } from "@/stores/useLogStore";
 import { NodeData } from "@/types/flowStoreTypes";
 import {
   Split,
@@ -20,8 +21,98 @@ import {
   Globe,
   Briefcase,
   ShieldAlert,
-  PlugZap
+  PlugZap,
+  X,
 } from "lucide-react";
+
+// ── Reusable key-value pair editor ────────────────────────────────────────────
+interface KVPair { key: string; value: string }
+
+function KeyValueEditor({
+  pairs,
+  onChange,
+  disabled,
+  accentClass = "focus:border-purple-500 focus:ring-purple-500/20",
+  keyPlaceholder = "field",
+  valuePlaceholder = "value or {{node-id}}",
+}: {
+  pairs: KVPair[];
+  onChange: (p: KVPair[]) => void;
+  disabled?: boolean;
+  accentClass?: string;
+  keyPlaceholder?: string;
+  valuePlaceholder?: string;
+}) {
+  const update = (i: number, field: "key" | "value", val: string) => {
+    const next = pairs.map((p, idx) => (idx === i ? { ...p, [field]: val } : p));
+    onChange(next);
+  };
+  const remove = (i: number) => onChange(pairs.filter((_, idx) => idx !== i));
+  const add = () => onChange([...pairs, { key: "", value: "" }]);
+
+  return (
+    <div className="flex flex-col gap-2">
+      {pairs.map((p, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <input
+            type="text"
+            placeholder={keyPlaceholder}
+            value={p.key}
+            disabled={disabled}
+            onChange={(e) => update(i, "key", e.target.value)}
+            className={`w-[38%] rounded-md px-2 py-1.5 text-xs border bg-background text-foreground outline-none focus:ring-1 transition-all ${accentClass}`}
+          />
+          <span className="text-slate-600 text-xs shrink-0">:</span>
+          <input
+            type="text"
+            placeholder={valuePlaceholder}
+            value={p.value}
+            disabled={disabled}
+            onChange={(e) => update(i, "value", e.target.value)}
+            className={`flex-1 rounded-md px-2 py-1.5 text-xs border bg-background text-foreground outline-none focus:ring-1 transition-all ${accentClass}`}
+          />
+          {!disabled && (
+            <button
+              onClick={() => remove(i)}
+              className="p-1 text-slate-600 hover:text-rose-400 transition-colors"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+      ))}
+      {!disabled && (
+        <button
+          onClick={add}
+          className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 hover:text-slate-300 transition-colors mt-0.5"
+        >
+          <Plus size={11} /> Add field
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Serialize KVPair[] → compact JSON string stored in node data */
+function kvToJson(pairs: KVPair[]): string {
+  const obj = Object.fromEntries(
+    pairs.filter((p) => p.key.trim()).map((p) => [p.key.trim(), p.value])
+  );
+  return Object.keys(obj).length ? JSON.stringify(obj) : "";
+}
+
+/** Parse a JSON string → KVPair[]. Falls back to [] on invalid JSON. */
+function jsonToKv(raw: string | undefined): KVPair[] {
+  if (!raw?.trim()) return [];
+  try {
+    const obj = JSON.parse(raw);
+    if (typeof obj !== "object" || Array.isArray(obj)) return [];
+    return Object.entries(obj).map(([k, v]) => ({ key: k, value: String(v) }));
+  } catch {
+    return [];
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 import { cn } from "@/lib/utils";
 import VaultInput from "@/components/ui/VaultInput";
 import { APP_REGISTRY, getApp, getAction } from "@/lib/providers";
@@ -41,18 +132,18 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
   const theme = useFlowStore((state) => state.theme);
   const tutorialStep = useFlowStore((state) => state.tutorialStep);
   const setTutorialStep = useFlowStore((state) => state.setTutorialStep);
-  const currentContext = useFlowStore((state) => state.currentContext);
-  const executionLogs = useFlowStore((state) => state.executionLogs);
   const updateNodeData = useFlowStore((state) => state.updateNodeData);
   const executionResult = (useFlowStore((state) => (state as any).executionResult) || {}) as Record<string, any>;
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
-  const [sidebarTab, setSidebarTab] = React.useState<"settings" | "data">("settings");
+  const [sidebarTab, setSidebarTab] = React.useState<"settings" | "logs">("settings");
   const [apiKeySaved, setApiKeySaved] = React.useState(false);
+  const allLogs = useLogStore((state) => state.logs);
+  const nodeLogs = selectedNode ? allLogs.filter(l => l.nodeId === selectedNode.id) : [];
 
   // Force settings tab for guests
   React.useEffect(() => {
-    if (!isOwner && sidebarTab === "data") {
+    if (!isOwner && sidebarTab === "logs") {
       setSidebarTab("settings");
     }
   }, [isOwner, sidebarTab]);
@@ -273,7 +364,45 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
             placeholder="Webhook signing secret..."
             theme={theme}
             isOwner={isOwner}
-          />        </div>
+          />
+        </div>
+
+        {/* Natural-language sample input */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] font-bold uppercase text-slate-500">Sample Input</label>
+            <span className={cn(
+              "text-[9px] font-bold uppercase px-1.5 py-0.5 rounded",
+              (selectedNode.data as any).sampleData?.trim()
+                ? "text-emerald-400 bg-emerald-500/10"
+                : "text-amber-400 bg-amber-500/10 animate-pulse"
+            )}>
+              {(selectedNode.data as any).sampleData?.trim() ? "Ready" : "Required to run"}
+            </span>
+          </div>
+          <label className="text-xs text-muted-foreground leading-relaxed">
+            What kind of data will this agent receive?{" "}
+            <span className="italic opacity-70">
+              e.g. "A customer asking for a refund" or "A news article about AI"
+            </span>
+          </label>
+          <textarea
+            rows={4}
+            placeholder={"A customer support ticket from a user who can't log in to their account."}
+            className={cn(
+              "rounded-lg p-3 text-sm focus:ring-2 outline-none transition-all border resize-none",
+              "bg-background text-foreground placeholder:text-muted-foreground/50",
+              (selectedNode.data as any).sampleData?.trim()
+                ? "border-emerald-500/40 focus:ring-emerald-500/20 focus:border-emerald-500"
+                : "border-amber-500/40 focus:ring-amber-500/20 focus:border-amber-500"
+            )}
+            value={(selectedNode.data as any).sampleData || ""}
+            onChange={(e) =>
+              updateNodeData(selectedNode.id, { sampleData: e.target.value } as any)
+            }
+            disabled={!isOwner}
+          />
+        </div>
       </div>
     );
   };
@@ -889,37 +1018,56 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
             <p className="text-[10px] text-muted-foreground -mt-1">
               Use <code className="bg-muted px-1 rounded text-[9px]">{"{{node-id}}"}</code> to inject upstream node output.
             </p>
+            {/* Schema fields rendered as key-value rows */}
             {action.fields.map((field) => (
-              <div key={field.key} className="flex flex-col gap-1">
-                <label className="text-[10px] font-semibold text-slate-400 flex items-center gap-1">
+              <div key={field.key} className="flex items-center gap-1.5">
+                <span className="w-[38%] text-[10px] font-semibold text-slate-400 truncate shrink-0 flex items-center gap-1">
                   {field.label}
                   {field.required && <span className="text-rose-400">*</span>}
-                </label>
-                {field.type === "textarea" ? (
-                  <textarea
-                    rows={3}
-                    className={cn(
-                      "rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-violet-500/20 outline-none transition-all border resize-none font-mono",
-                      "bg-background border-border text-foreground focus:border-violet-500"
-                    )}
-                    placeholder={field.placeholder}
-                    value={appInputs[field.key] || ""}
-                    onChange={(e) => updateInput(field.key, e.target.value)}
-                  />
-                ) : (
-                  <input
-                    type="text"
-                    className={cn(
-                      "rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-violet-500/20 outline-none transition-all border font-mono",
-                      "bg-background border-border text-foreground focus:border-violet-500"
-                    )}
-                    placeholder={field.placeholder}
-                    value={appInputs[field.key] || ""}
-                    onChange={(e) => updateInput(field.key, e.target.value)}
-                  />
-                )}
+                </span>
+                <span className="text-slate-600 text-xs shrink-0">:</span>
+                <input
+                  type="text"
+                  className={cn(
+                    "flex-1 rounded-md px-2 py-1.5 text-xs border font-mono bg-background text-foreground outline-none focus:ring-1 focus:ring-violet-500/20 focus:border-violet-500 transition-all",
+                    "border-border"
+                  )}
+                  placeholder={field.placeholder}
+                  value={appInputs[field.key] || ""}
+                  onChange={(e) => updateInput(field.key, e.target.value)}
+                />
               </div>
             ))}
+
+            {/* Extra custom fields via key-value builder */}
+            {(() => {
+              const schemaKeys = new Set(action.fields.map((f) => f.key));
+              const extraPairs: KVPair[] = Object.entries(appInputs)
+                .filter(([k]) => !schemaKeys.has(k))
+                .map(([k, v]) => ({ key: k, value: v }));
+
+              const setExtraPairs = (pairs: KVPair[]) => {
+                const next = { ...appInputs };
+                // Remove old extras
+                for (const k of Object.keys(next)) { if (!schemaKeys.has(k)) delete next[k]; }
+                // Add new extras
+                for (const { key, value } of pairs) { if (key.trim()) next[key.trim()] = value; }
+                updateNodeData(selectedNode.id, { appInputs: next });
+              };
+
+              return (
+                <div className="flex flex-col gap-1.5 mt-1 pt-2 border-t border-border/50">
+                  <span className="text-[9px] font-bold uppercase text-slate-600">Extra fields</span>
+                  <KeyValueEditor
+                    pairs={extraPairs}
+                    onChange={setExtraPairs}
+                    accentClass="focus:border-violet-500 focus:ring-violet-500/20"
+                    keyPlaceholder="key"
+                    valuePlaceholder="{{node-id}} or value"
+                  />
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -935,10 +1083,6 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
       </div>
     );
   };
-
-  const logEntry = executionLogs?.find((l: any) => l.nodeId === selectedNode.id);
-  const nodeOutput = currentContext?.nodes?.[selectedNode.id];
-  const hasData = logEntry || nodeOutput;
 
   return (
     <div className={cn(
@@ -961,20 +1105,18 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         >
           Settings
         </button>
-        {isOwner && (
-          <button
-            onClick={() => setSidebarTab("data")}
-            className={cn(
-              "flex items-center gap-1.5 px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 -mb-px",
-              sidebarTab === "data"
-                ? "text-purple-500 border-purple-500"
-                : "text-muted-foreground border-transparent hover:text-foreground"
-            )}
-          >
-            Data
-            {hasData && <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />}
-          </button>
-        )}
+        <button
+          onClick={() => setSidebarTab("logs")}
+          className={cn(
+            "flex items-center gap-1.5 px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 -mb-px",
+            sidebarTab === "logs"
+              ? "text-emerald-500 border-emerald-500"
+              : "text-muted-foreground border-transparent hover:text-foreground"
+          )}
+        >
+          Logs
+          {nodeLogs.length > 0 && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
@@ -1041,67 +1183,43 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           </>
         )}
 
-        {sidebarTab === "data" && (
-          <div className="space-y-4">
+        {sidebarTab === "logs" && (
+          <div className="space-y-2">
             <div className="flex flex-col mb-4">
-              <span className="text-[10px] uppercase tracking-widest text-purple-400 font-bold">Execution Data</span>
+              <span className="text-[10px] uppercase tracking-widest text-emerald-500 font-bold">Execution Logs</span>
               <h2 className="text-lg font-bold capitalize">{selectedNode.data.label || selectedNode.type}</h2>
             </div>
 
-            {!hasData ? (
+            {nodeLogs.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
-                <span className="text-[10px] text-slate-600 italic">Run the flow to see this node&apos;s data</span>
+                <Terminal size={20} className="mb-3 opacity-20" />
+                <span className="text-[11px] text-muted-foreground italic">No execution logs yet. Run the flow to see data.</span>
               </div>
             ) : (
-              <>
-                {logEntry && (
-                  <>
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className={cn("w-2 h-2 rounded-full", logEntry.status === "success" ? "bg-emerald-400" : "bg-rose-400")} />
-                      <span className={cn("text-[10px] font-bold uppercase", logEntry.status === "success" ? "text-emerald-400" : "text-rose-400")}>
-                        {logEntry.status}
-                      </span>
-                      {logEntry.durationMs > 0 && <span className="text-[9px] text-slate-500 ml-auto">{logEntry.durationMs}ms</span>}
+              <div className="flex flex-col gap-1.5">
+                {nodeLogs.map((entry) => (
+                  <div key={entry.id} className={cn(
+                    "rounded-lg px-3 py-2 border text-[10px] font-mono",
+                    entry.type === "SUCCESS" ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-400" :
+                    entry.type === "ERROR"   ? "bg-rose-500/5 border-rose-500/20 text-rose-400" :
+                    entry.type === "WARN"    ? "bg-amber-500/5 border-amber-500/20 text-amber-400" :
+                                               "bg-slate-500/5 border-slate-500/20 text-muted-foreground"
+                  )}>
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className={cn(
+                        "text-[9px] font-black uppercase tracking-widest",
+                        entry.type === "SUCCESS" ? "text-emerald-500" :
+                        entry.type === "ERROR"   ? "text-rose-500" :
+                        entry.type === "WARN"    ? "text-amber-500" : "text-slate-500"
+                      )}>{entry.type}</span>
+                      {entry.elapsed != null && (
+                        <span className="text-[9px] text-slate-500 ml-auto">{entry.elapsed}ms</span>
+                      )}
                     </div>
-
-                    {logEntry.inputSnapshot != null && (
-                      <div className="mb-3">
-                        <span className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Input</span>
-                        <pre className={cn(
-                          "text-[10px] font-mono p-3 rounded-xl border overflow-auto max-h-32",
-                          theme === "dark" ? "bg-slate-900/50 border-slate-800 text-slate-400" : "bg-slate-50 border-slate-200 text-slate-600"
-                        )}>
-                          {typeof logEntry.inputSnapshot === "string" ? String(logEntry.inputSnapshot) : JSON.stringify(logEntry.inputSnapshot, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-
-                    {logEntry.outputSnapshot != null && (
-                      <div className="mb-3">
-                        <span className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Output</span>
-                        <pre className={cn(
-                          "text-[10px] font-mono p-3 rounded-xl border overflow-auto max-h-32",
-                          "bg-background border-border text-muted-foreground"
-                        )}>
-                          {typeof logEntry.outputSnapshot === "string" ? String(logEntry.outputSnapshot) : JSON.stringify(logEntry.outputSnapshot, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {nodeOutput && !logEntry && (
-                  <div>
-                    <span className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Node Output</span>
-                    <pre className={cn(
-                      "text-[10px] font-mono p-3 rounded-xl border overflow-auto max-h-40",
-                      "bg-background border-border text-muted-foreground"
-                    )}>
-                      {typeof nodeOutput === "string" ? nodeOutput : JSON.stringify(nodeOutput, null, 2)}
-                    </pre>
+                    <p className="leading-relaxed break-words whitespace-pre-wrap">{entry.message}</p>
                   </div>
-                )}
-              </>
+                ))}
+              </div>
             )}
           </div>
         )}

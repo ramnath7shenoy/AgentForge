@@ -9,6 +9,8 @@ export interface FlowPacket {
     name?: string;
     size?: number;
     mimeType?: string;
+    selectedRoute?: string;
+    [key: string]: unknown;
   };
 }
 

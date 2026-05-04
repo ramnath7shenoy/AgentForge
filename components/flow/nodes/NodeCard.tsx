@@ -17,18 +17,23 @@ export const NodeCard: React.FC<{
 }) => {
   const highlightedNodeId = useFlowStore((state) => state.highlightedNodeId);
   const theme = useFlowStore((state) => state.theme);
+  const nodeStatus = useFlowStore((state) => state.nodeStatuses[nodeId]);
   const isActive = highlightedNodeId === nodeId;
+  const isSkipped = nodeStatus === "skipped";
+  const isError   = nodeStatus === "error";
 
   return (
-    <div className="bg-transparent !border-0">
+    <div className={cn("bg-transparent !border-0 transition-opacity duration-300", isSkipped && "opacity-40")}>
       <div
         className={cn(
           "relative min-w-[180px] rounded-xl border px-5 py-4 shadow-2xl transition-all duration-300",
-          theme === "dark" 
-            ? "bg-[#0b0e14] border-slate-800 text-white" 
+          theme === "dark"
+            ? "bg-[#0b0e14] border-slate-800 text-white"
             : "bg-white border-slate-200 text-slate-900",
           selected && "border-indigo-500 ring-4 ring-indigo-500/20 scale-[1.02] z-50 shadow-[0_0_20px_rgba(99,102,241,0.3)]",
           isActive && "border-emerald-500 ring-4 ring-emerald-500/20 scale-105 z-50",
+          isError   && "border-red-500 ring-2 ring-red-500/30 shadow-[0_0_12px_rgba(239,68,68,0.25)]",
+          isSkipped && "grayscale",
           className
         )}
       >

@@ -4,6 +4,7 @@ import React, { useCallback, useMemo, useEffect } from "react";
 
 import ReactFlow, {
   Controls,
+  ControlButton,
   MiniMap,
   Background,
   BackgroundVariant,
@@ -15,11 +16,14 @@ import ReactFlow, {
   Edge,
   NodeChange,
   EdgeChange,
-  OnConnect
+  OnConnect,
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { useFlowStore } from "@/stores/flowStore";
+import { detectCycle } from "@/lib/flow/validators";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter } from "lucide-react";
 
 // Custom node components
 import InputNode from "../nodes/InputNode";
@@ -48,7 +52,8 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
   const edgesFromStore = useFlowStore((state) => state.edges);
   const edges = useMemo(() => edgesFromStore || [], [edgesFromStore]);
   const theme = useFlowStore((state) => state.theme);
-  const { setNodes, setEdges, addNode, activeEdgeId, showMinimap, tutorialStep, setTutorialStep, takeSnapshot } = useFlowStore();
+  const { setNodes, setEdges, addNode, activeEdgeId, showMinimap, tutorialStep, setTutorialStep, takeSnapshot, applyAutoLayout, layoutDirection } = useFlowStore();
+  const nodeStatuses = useFlowStore((state) => state.nodeStatuses);
   const lastAction = useFlowStore((state) => state.lastAction);
   const { project, fitView } = useReactFlow();
 
@@ -93,8 +98,13 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
   }, [edges, setEdges, takeSnapshot]);
   
   const onConnect: OnConnect = useCallback((conn) => {
+    const proposedEdges = addEdge(conn, edges);
+    if (detectCycle(nodes, proposedEdges)) {
+      toast.error("Loop detected! Circular flows are not allowed.");
+      return;
+    }
     takeSnapshot();
-    setEdges(addEdge(conn, edges));
+    setEdges(proposedEdges);
     // Tutorial Step 5 (Connect) -> 6 (Run Flow)
     if (tutorialStep === 5 && conn.source && conn.target) {
       const sourceNode = nodes.find(n => n.id === conn.source);
@@ -103,7 +113,7 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
         setTutorialStep(6);
       }
     }
-  }, [edges, setEdges, tutorialStep, nodes, setTutorialStep, takeSnapshot]);
+  }, [edges, nodes, setEdges, tutorialStep, setTutorialStep, takeSnapshot]);
 
   const onNodesDelete = useCallback(() => {
     takeSnapshot();
@@ -179,10 +189,25 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
     >
       <ReactFlow
         nodes={nodes}
-        edges={edges.map((e) => e.id === activeEdgeId 
-          ? { ...e, animated: true, style: { stroke: "#6366f1", strokeWidth: 3 } } 
-          : e
-        )}
+        edges={edges.map((e) => {
+          const sourceRunning = nodeStatuses[e.source] === "running";
+          const sourceSkipped = nodeStatuses[e.source] === "skipped" || nodeStatuses[e.source] === "error";
+          const isActive = e.id === activeEdgeId || sourceRunning;
+          return {
+            ...e,
+            type: "smoothstep",
+            animated: isActive,
+            style: isActive
+              ? { stroke: "#6366f1", strokeWidth: 3, filter: "drop-shadow(0 0 6px #6366f1aa)" }
+              : sourceSkipped
+              ? { stroke: "#6366f1", strokeWidth: 1.5, opacity: 0.25 }
+              : { stroke: "#6366f1", strokeWidth: 2 },
+          };
+        })}
+        defaultEdgeOptions={{
+          type: "smoothstep",
+          style: { stroke: "#6366f1", strokeWidth: 2 },
+        }}
         nodeTypes={nodeTypes}
         onNodesChange={editable ? onNodesChange : undefined}
         onEdgesChange={editable ? onEdgesChange : undefined}
@@ -197,16 +222,43 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
         maxZoom={2}
         fitView
       >
-        <Background 
-          variant={BackgroundVariant.Dots} 
-          gap={20} 
-          size={1} 
-          color={theme === "dark" ? "#334155" : "#cbd5e1"} 
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={20}
+          size={1}
+          color={theme === "dark" ? "#334155" : "#cbd5e1"}
         />
-        <Controls className={cn(
-          "transition-colors",
-          theme === "dark" ? "dark:bg-slate-900 dark:border-slate-800" : "bg-white border-slate-200"
-        )} />
+        <Controls
+          style={{ bottom: 20, left: 20 }}
+          className={cn(
+            "!z-[60] transition-colors",
+            theme === "dark" ? "dark:bg-slate-900 dark:border-slate-800" : "bg-white border-slate-200"
+          )}
+        >
+          {/* Vertical layout (TB) */}
+          <ControlButton
+            onClick={() => {
+              applyAutoLayout("TB");
+              setTimeout(() => fitView({ duration: 500, padding: 0.15 }), 50);
+            }}
+            title="Auto-layout: Top → Bottom"
+            className={cn(layoutDirection === "TB" && "!text-indigo-400 !bg-indigo-500/10")}
+          >
+            <AlignVerticalDistributeCenter size={12} />
+          </ControlButton>
+
+          {/* Horizontal layout (LR) */}
+          <ControlButton
+            onClick={() => {
+              applyAutoLayout("LR");
+              setTimeout(() => fitView({ duration: 500, padding: 0.15 }), 50);
+            }}
+            title="Auto-layout: Left → Right"
+            className={cn(layoutDirection === "LR" && "!text-indigo-400 !bg-indigo-500/10")}
+          >
+            <AlignHorizontalDistributeCenter size={12} />
+          </ControlButton>
+        </Controls>
         {showMinimap && (
           <MiniMap 
             className="!bg-popover !border-border rounded-xl shadow-lg"

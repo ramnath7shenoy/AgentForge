@@ -27,7 +27,9 @@ import {
   Globe,
   Lock,
   Sparkles,
-  History
+  History,
+  Camera,
+  AlertTriangle,
 } from "lucide-react";
 
 import FlowCanvas from "@/components/flow/canvas/FlowCanvas";
@@ -83,7 +85,11 @@ function EditorContent() {
     activeProject,
     setActiveProject,
     projects,
-    setProjects
+    setProjects,
+    autoSave,
+    restoreAutoSave,
+    webhookPayloadWarning,
+    setWebhookPayloadWarning,
   } = useFlowStore();
 
   const [mounted, setMounted] = useState(false);
@@ -181,15 +187,23 @@ function EditorContent() {
         setPublicEditable(result.flow.publicEditable ?? false);
         setFlowName(result.flow.name || "Untitled Agent");
       } else {
-        // Guest: load from localStorage
+        // Guest: load from localStorage (guest key first, autosave as fallback)
+        let restored = false;
         try {
           const raw = localStorage.getItem(LS_GUEST_FLOW_KEY);
           if (raw) {
             const { nodes: lsNodes, edges: lsEdges } = JSON.parse(raw);
-            if (Array.isArray(lsNodes) && lsNodes.length > 0) setNodes(lsNodes);
-            if (Array.isArray(lsEdges)) setEdges(lsEdges);
+            if (Array.isArray(lsNodes) && lsNodes.length > 0) {
+              setNodes(lsNodes);
+              if (Array.isArray(lsEdges)) setEdges(lsEdges);
+              restored = true;
+            }
           }
         } catch { /* ignore */ }
+        if (!restored) {
+          // Fall back to auto-save snapshot (handles mid-session refresh)
+          restoreAutoSave();
+        }
       }
       setHasHydrated(true);
     }
@@ -217,6 +231,13 @@ function EditorContent() {
       }
     }
   }, [projectIdParam, projects, setActiveProject]);
+
+  // Auto-save canvas state to localStorage every 5 seconds once hydrated
+  useEffect(() => {
+    if (!hasHydrated) return;
+    const interval = setInterval(() => autoSave(), 5_000);
+    return () => clearInterval(interval);
+  }, [hasHydrated, autoSave]);
 
   // Migrate guest localStorage flow to DB on login
   useEffect(() => {
@@ -464,6 +485,27 @@ function EditorContent() {
     return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
   };
 
+  const handleScreenshot = async () => {
+    const { toPng } = await import("html-to-image");
+    const el = document.querySelector(".react-flow__viewport")?.parentElement as HTMLElement | null
+      ?? document.querySelector(".react-flow__renderer") as HTMLElement | null;
+    if (!el) return;
+    try {
+      const isDark = document.documentElement.classList.contains("dark");
+      const dataUrl = await toPng(el, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: isDark ? "#0f172a" : "#f8fafc",
+      });
+      const link = document.createElement("a");
+      link.download = "workflow-snapshot.png";
+      link.href = dataUrl;
+      link.click();
+    } catch (err) {
+      console.error("Screenshot failed:", err);
+    }
+  };
+
   const handleGenerateAI = async (prompt: string, pastedKey: string, provider: ArchitectProvider) => {
     const vaultStore = (await import("@/stores/vaultStore")).useVaultStore.getState();
 
@@ -655,6 +697,15 @@ function EditorContent() {
                 </div>
               )}
             </div>
+
+            {/* Screenshot */}
+            <button
+              onClick={handleScreenshot}
+              className="p-1.5 rounded-full transition-colors text-slate-400 hover:text-indigo-400"
+              title="Download workflow as PNG"
+            >
+              <Camera size={15} />
+            </button>
 
             {/* Theme Toggle */}
             <ThemeToggle />
@@ -1021,7 +1072,7 @@ function EditorContent() {
                 animate={{ height: 220, opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                className="absolute bottom-0 left-0 right-0 z-40"
+                className="absolute bottom-0 left-[72px] right-0 z-40"
               >
                 <div className="relative h-full">
                   <button
@@ -1040,7 +1091,7 @@ function EditorContent() {
           {!showTerminal && (
             <button
               onClick={() => setShowTerminal(true)}
-              className="absolute bottom-4 left-4 z-40 flex items-center gap-2 px-3 py-1.5 bg-slate-900/80 backdrop-blur-sm border border-slate-700/50 rounded-xl text-[10px] font-bold text-slate-400 hover:text-white transition-all shadow-lg uppercase tracking-wider"
+              className="absolute bottom-4 left-[80px] z-40 flex items-center gap-2 px-3 py-1.5 bg-slate-900/80 backdrop-blur-sm border border-slate-700/50 rounded-xl text-[10px] font-bold text-slate-400 hover:text-white transition-all shadow-lg uppercase tracking-wider"
             >
               <Terminal size={12} />
               Terminal
@@ -1245,6 +1296,60 @@ function EditorContent() {
       />
 
       <MissionBriefing />
+
+      {/* WEBHOOK PAYLOAD WARNING MODAL */}
+      <AnimatePresence>
+        {webhookPayloadWarning && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            onClick={() => setWebhookPayloadWarning(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              transition={{ type: "spring", damping: 20, stiffness: 300 }}
+              className="relative w-full max-w-md mx-4 rounded-2xl border border-amber-500/30 bg-slate-900 shadow-2xl shadow-amber-500/10 p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+                  <AlertTriangle size={20} className="text-amber-400" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-sm font-bold text-white mb-1">Tell the agent what to work on</h3>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    <span className="text-amber-400 font-semibold">{webhookPayloadWarning.label}</span> has no Sample Input.
+                    Open its settings and describe what kind of data this agent will receive — e.g.{" "}
+                    <span className="italic text-slate-300">"A customer asking for a refund."</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 mt-5">
+                <button
+                  onClick={() => {
+                    setSelectedNodeId(webhookPayloadWarning.nodeId);
+                    setWebhookPayloadWarning(null);
+                  }}
+                  className="flex-1 py-2 px-4 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-xs font-bold border border-amber-500/20 transition-colors"
+                >
+                  Open Node Settings
+                </button>
+                <button
+                  onClick={() => setWebhookPayloadWarning(null)}
+                  className="py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-bold border border-slate-700 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
