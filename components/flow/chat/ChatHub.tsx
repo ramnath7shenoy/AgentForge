@@ -75,10 +75,10 @@ export default function ChatHub() {
 
   const handleSend = async () => {
     if (!inputText.trim()) return;
-    if (isRunning && !awaitingApproval) return; // normal run — blocked
+    if (isRunning && !awaitingApproval) return;
 
     const submittedText = inputText.trim();
-    setInputText("");
+    setInputText(""); // clear immediately so UI feels responsive
 
     // Flow is paused at an approval/gatekeeper node — route to gate
     if (awaitingApproval) {
@@ -96,6 +96,10 @@ export default function ChatHub() {
       });
     }
     await runClientFlow(submittedText);
+    // Guard: canvas-sync useEffect fires when isRunning goes false. If the
+    // node packet is briefly non-empty at that moment, it would restore the
+    // old text. Explicitly clear again so the box stays empty.
+    setInputText("");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {

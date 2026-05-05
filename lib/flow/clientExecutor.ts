@@ -15,6 +15,7 @@ export interface ChatMessage {
 export interface WalkerOptions {
   onNodeStatusChange?: (nodeId: string, status: NodeExecutionStatus) => void;
   onNodeComplete?: (nodeId: string, packet: FlowPacket) => void;
+  isDryRun?: boolean;
 }
 
 type LogFn = (
@@ -364,6 +365,26 @@ function evaluateRouterCondition(condition: string, inputText: string): boolean 
 // Short-Circuit Helper: Transitive descendant finder (DFS)
 // Returns every node reachable from startId, used to propagate SKIPPED.
 // ─────────────────────────────────────────────────────────────────────
+export function getSubgraphNodeIds(startId: string, edges: Edge[]): Set<string> {
+  const adj = new Map<string, string[]>();
+  edges.forEach((e) => {
+    if (!adj.has(e.source)) adj.set(e.source, []);
+    adj.get(e.source)!.push(e.target);
+  });
+  const result = new Set<string>([startId]);
+  const stack = [startId];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    for (const childId of adj.get(id) || []) {
+      if (!result.has(childId)) {
+        result.add(childId);
+        stack.push(childId);
+      }
+    }
+  }
+  return result;
+}
+
 function getDescendants(
   startId: string,
   adj: Map<string, string[]>
@@ -391,7 +412,8 @@ async function executeNode(
   edges: Edge[],
   initialInput: string,
   chatHistory: ChatMessage[],
-  sendLog: LogFn
+  sendLog: LogFn,
+  isDryRun?: boolean
 ): Promise<FlowPacket> {
   switch (current.type) {
     case "trigger": {
@@ -734,6 +756,14 @@ async function executeNode(
         current.id
       );
 
+      if (isDryRun) {
+        sendLog(`🟡 [DRY RUN] Skipped live fetch — returning simulated response`, "WARN", current.id);
+        return {
+          type: "data",
+          payload: { status: "simulated", url: endpointUrl, method, data_to_send: resolvedPayload },
+        };
+      }
+
       // ── Real HTTP dispatch ────────────────────────────────────────────
       let responseText: string;
       try {
@@ -804,6 +834,14 @@ async function executeNode(
         "INFO",
         current.id
       );
+
+      if (isDryRun) {
+        sendLog(`🟡 [DRY RUN] Skipped live app action — returning simulated response`, "WARN", current.id);
+        return {
+          type: "data",
+          payload: { status: "simulated", provider: appProvider, action: appAction, inputs: resolvedInputs },
+        };
+      }
 
       // Token lives server-side only — delegated to the server action
       const { executeAppAction } = await import("@/app/actions/integration");
@@ -1028,11 +1066,15 @@ export async function executeGraph(
   initialInput: string,
   onLog?: LogFn,
   chatHistory: ChatMessage[] = [],
-  options: WalkerOptions = {}
+  options: WalkerOptions = {},
+  seedContext?: ExecutionContext
 ): Promise<{ success: boolean; context: ExecutionContext; logs: string[] }> {
   const context: ExecutionContext = {
-    variables: { input: { type: "text", payload: initialInput } },
-    nodes: {},
+    variables: {
+      ...seedContext?.variables,
+      input: seedContext?.variables?.input ?? { type: "text", payload: initialInput },
+    },
+    nodes: { ...seedContext?.nodes },
   };
   const logs: string[] = [];
 
@@ -1041,7 +1083,7 @@ export async function executeGraph(
     onLog?.(message, type, nodeId);
   };
 
-  const { onNodeStatusChange, onNodeComplete } = options;
+  const { onNodeStatusChange, onNodeComplete, isDryRun } = options;
 
   sendLog("🚀 Reactive Engine started (Smart Merge mode)...", "INFO");
 
@@ -1187,7 +1229,7 @@ export async function executeGraph(
     onNodeStatusChange?.(node.id, "running");
     sendLog(`⚡ Dispatching: ${node.data?.label || node.id}`, "INFO", node.id);
 
-    executeNode(node, context, edges, initialInput, chatHistory, sendLog)
+    executeNode(node, context, edges, initialInput, chatHistory, sendLog, isDryRun)
       .then((packet) => {
         context.nodes[node.id] = packet;
         executed.add(node.id);
@@ -1237,7 +1279,7 @@ export async function executeGraph(
 
         // Store an error packet so downstream nodes (especially sinks) can reference
         // this node's output without crashing — they'll read the error message as text.
-        const errorPacket = { type: "text" as const, payload: `[Error: ${errMsg}]` };
+        const errorPacket = { type: "text" as const, payload: `[Error: ${errMsg}]`, error: errMsg };
         context.nodes[node.id] = errorPacket;
         executed.add(node.id);
         onNodeComplete?.(node.id, errorPacket);

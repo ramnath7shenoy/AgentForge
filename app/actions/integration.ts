@@ -7,6 +7,9 @@ import * as slackService from "@/lib/providers/slackService";
 import * as discordService from "@/lib/providers/discordService";
 import * as githubService from "@/lib/providers/githubService";
 import * as notionService from "@/lib/providers/notionService";
+import * as instagramService from "@/lib/providers/instagramService";
+import * as linkedinService from "@/lib/providers/linkedinService";
+import * as mediumService from "@/lib/providers/mediumService";
 
 async function getAuthUser() {
   const supabase = await createClient();
@@ -149,6 +152,48 @@ export async function executeAppAction(
           resolvedInputs.databaseId ?? "",
           resolvedInputs.title ?? "",
           resolvedInputs.content
+        );
+        return { result };
+      }
+      break;
+    }
+
+    case "instagram": {
+      if (action === "create_post") {
+        const result = await instagramService.createPost(
+          token,
+          resolvedInputs.imageUrl ?? "",
+          resolvedInputs.caption ?? ""
+        );
+        return { result };
+      }
+      break;
+    }
+
+    case "linkedin": {
+      if (action === "create_post") {
+        // token stored as JSON: { clientId, clientSecret }
+        let clientId = "";
+        let clientSecret = token;
+        try {
+          const parsed = JSON.parse(token);
+          clientId = parsed.clientId ?? "";
+          clientSecret = parsed.clientSecret ?? token;
+        } catch { /* token is plain string — treat as clientSecret */ }
+        const result = await linkedinService.createPost(clientId, clientSecret, resolvedInputs.text ?? "");
+        return { result };
+      }
+      break;
+    }
+
+    case "medium": {
+      if (action === "create_post") {
+        const fmt = (resolvedInputs.contentFormat ?? "markdown") as "markdown" | "html";
+        const result = await mediumService.createPost(
+          token,
+          resolvedInputs.title ?? "",
+          resolvedInputs.content ?? "",
+          fmt
         );
         return { result };
       }

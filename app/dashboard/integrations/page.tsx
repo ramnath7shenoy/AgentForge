@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useTransition } from "react";
 import Navbar from "@/components/ui/Navbar";
 import { useFlowStore } from "@/stores/flowStore";
-import { APP_REGISTRY, AppDefinition } from "@/lib/providers";
+import { APP_REGISTRY, AppDefinition, ConnectField } from "@/lib/providers";
 import {
   getIntegrations,
   upsertIntegration,
@@ -27,7 +27,7 @@ interface ConnectedMap {
 }
 
 interface CardState {
-  token: string;
+  fieldValues: Record<string, string>;
   showToken: boolean;
   saving: boolean;
   disconnecting: boolean;
@@ -36,13 +36,18 @@ interface CardState {
 }
 
 const defaultCardState = (): CardState => ({
-  token: "",
+  fieldValues: {},
   showToken: false,
   saving: false,
   disconnecting: false,
   error: "",
   success: false,
 });
+
+function getConnectFields(app: AppDefinition): ConnectField[] {
+  if (app.connectFields && app.connectFields.length > 0) return app.connectFields;
+  return [{ key: "token", label: app.tokenLabel, placeholder: app.tokenPlaceholder, secret: true }];
+}
 
 export default function IntegrationsPage() {
   const theme = useFlowStore((s) => s.theme);
@@ -70,17 +75,28 @@ export default function IntegrationsPage() {
     }));
 
   async function handleConnect(app: AppDefinition) {
+    const fields = getConnectFields(app);
     const state = cardStates[app.id];
-    if (!state.token.trim()) {
-      patchCard(app.id, { error: "Paste your token first." });
+
+    const missing = fields.filter((f) => !state.fieldValues[f.key]?.trim());
+    if (missing.length > 0) {
+      patchCard(app.id, { error: `Required: ${missing.map((f) => f.label).join(", ")}` });
       return;
     }
+
     patchCard(app.id, { saving: true, error: "", success: false });
     try {
-      const res = await upsertIntegration(app.id, state.token.trim());
+      // Single-field: store value directly. Multi-field: store as JSON.
+      const accessToken = fields.length === 1
+        ? state.fieldValues[fields[0].key].trim()
+        : JSON.stringify(
+            Object.fromEntries(fields.map((f) => [f.key, state.fieldValues[f.key]?.trim() ?? ""]))
+          );
+
+      const res = await upsertIntegration(app.id, accessToken);
       if ("error" in res && res.error) throw new Error(res.error);
       setConnected((prev) => ({ ...prev, [app.id]: true }));
-      patchCard(app.id, { saving: false, success: true, token: "" });
+      patchCard(app.id, { saving: false, success: true, fieldValues: {} });
       setTimeout(() => patchCard(app.id, { success: false }), 2500);
     } catch (e: any) {
       patchCard(app.id, { saving: false, error: e.message || "Failed to save." });
@@ -203,7 +219,7 @@ export default function IntegrationsPage() {
                   {isConnected ? (
                     <div className="flex items-center justify-between pt-1 border-t border-border">
                       <p className="text-[10px] text-muted-foreground">
-                        Token saved. Re-paste to rotate.
+                        Credentials saved. Re-paste to rotate.
                       </p>
                       <button
                         onClick={() => handleDisconnect(app)}
@@ -220,29 +236,44 @@ export default function IntegrationsPage() {
                     </div>
                   ) : (
                     <div className="flex flex-col gap-2 pt-1 border-t border-border">
-                      <label className="text-[10px] font-bold uppercase text-muted-foreground">
-                        {app.tokenLabel}
-                      </label>
-                      <div className="relative flex items-center">
-                        <input
-                          type={state.showToken ? "text" : "password"}
-                          className={cn(
-                            "w-full rounded-lg px-3 pr-9 py-2 text-xs font-mono outline-none border focus:ring-2 focus:ring-violet-500/20 transition-all",
-                            "bg-background border-border text-foreground focus:border-violet-500"
-                          )}
-                          placeholder={app.tokenPlaceholder}
-                          value={state.token}
-                          onChange={(e) => patchCard(app.id, { token: e.target.value, error: "" })}
-                          onKeyDown={(e) => e.key === "Enter" && handleConnect(app)}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => patchCard(app.id, { showToken: !state.showToken })}
-                          className="absolute right-2.5 text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                          {state.showToken ? <EyeOff size={12} /> : <Eye size={12} />}
-                        </button>
-                      </div>
+                      {getConnectFields(app).map((field, idx, fields) => {
+                        const isLastSecret = field.secret && idx === fields.length - 1;
+                        return (
+                          <div key={field.key}>
+                            <label className="text-[10px] font-bold uppercase text-muted-foreground mb-1 block">
+                              {field.label}
+                            </label>
+                            <div className="relative flex items-center">
+                              <input
+                                type={field.secret && !state.showToken ? "password" : "text"}
+                                className={cn(
+                                  "w-full rounded-lg px-3 py-2 text-xs font-mono outline-none border focus:ring-2 focus:ring-violet-500/20 transition-all",
+                                  isLastSecret ? "pr-9" : "pr-3",
+                                  "bg-background border-border text-foreground focus:border-violet-500"
+                                )}
+                                placeholder={field.placeholder}
+                                value={state.fieldValues[field.key] ?? ""}
+                                onChange={(e) =>
+                                  patchCard(app.id, {
+                                    fieldValues: { ...state.fieldValues, [field.key]: e.target.value },
+                                    error: "",
+                                  })
+                                }
+                                onKeyDown={(e) => e.key === "Enter" && handleConnect(app)}
+                              />
+                              {isLastSecret && (
+                                <button
+                                  type="button"
+                                  onClick={() => patchCard(app.id, { showToken: !state.showToken })}
+                                  className="absolute right-2.5 text-muted-foreground hover:text-foreground transition-colors"
+                                >
+                                  {state.showToken ? <EyeOff size={12} /> : <Eye size={12} />}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
 
                       {state.error && (
                         <p className="text-[10px] text-rose-400 font-medium">{state.error}</p>
@@ -260,7 +291,7 @@ export default function IntegrationsPage() {
                         </a>
                         <button
                           onClick={() => handleConnect(app)}
-                          disabled={state.saving || !state.token.trim()}
+                          disabled={state.saving || getConnectFields(app).some((f) => !state.fieldValues[f.key]?.trim())}
                           className={cn(
                             "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all",
                             "bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"

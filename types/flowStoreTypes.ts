@@ -5,6 +5,7 @@ export type PacketType = "text" | "file" | "data";
 export interface FlowPacket {
   type: PacketType;
   payload: any;
+  error?: string;
   meta?: {
     name?: string;
     size?: number;

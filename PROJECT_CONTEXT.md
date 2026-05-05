@@ -297,10 +297,10 @@ OAuth-connected external app actions. Token management is entirely server-side; 
 **Supported apps** (via `lib/providers/`):
 | Provider | Actions |
 |---|---|
-| X (Twitter) | `create_tweet` |
-| Slack | `send_message` |
-| Discord | `send_message`, `send_dm` |
-| GitHub | `create_issue` |
+| X (Twitter) | `create_tweet`, `send_dm` |
+| Slack | `send_message`, `send_dm` |
+| Discord | `send_channel_message`, `send_dm` |
+| GitHub | `create_issue`, `create_comment` |
 | Notion | `create_page` |
 
 **`APP_REGISTRY`** in `lib/providers/index.ts` — source of truth for app metadata + available actions. `getApp(provider)` and `getAction(provider, action)` are the lookup helpers used by the sidebar and executor.
@@ -395,6 +395,11 @@ Auto-switches to Terminal on run start, Result on completion.
 | `clearChatHistory()` | Reset chat |
 | `takeSnapshot() / undo()` | Canvas history |
 | `clearCanvas()` | Full reset |
+| `unwrapSubagent(nodeId)` | Extract sub-agent nodes into parent canvas |
+| `wrapSubagent(groupId)` | Wrap selected group into a sub-agent |
+| `applyAutoLayout(direction)` | Apply Dagre-based auto-layout (`"TB"` or `"LR"`) |
+| `autoSave() / restoreAutoSave() / clearAutoSave()` | localStorage canvas persistence |
+| `completeTutorial()` | Mark onboarding tutorial as complete |
 
 ### `useLogStore.ts` — Log Entry Shape
 ```ts

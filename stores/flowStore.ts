@@ -51,6 +51,11 @@ export interface ExtendedFlowState extends FlowState {
   setWebhookPayloadWarning: (v: { nodeId: string; label: string } | null) => void;
   layoutDirection: LayoutDirection;
   applyAutoLayout: (direction: LayoutDirection) => void;
+  lastContext: ExecutionContext | null;
+  lastChatHistory: ChatMessage[];
+  triggerNode: (nodeId: string) => Promise<void>;
+  isDryRun: boolean;
+  setIsDryRun: (value: boolean) => void;
 }
 
 import {
@@ -58,7 +63,7 @@ import {
   NodeExecutor,
 } from "@/lib/executionEngine";
 
-import { executeGraph } from "@/lib/flow/clientExecutor";
+import { executeGraph, getSubgraphNodeIds } from "@/lib/flow/clientExecutor";
 import { applyDagreLayout, LayoutDirection } from "@/lib/flow/layoutEngine";
 
 import { resolveTemplates } from "@/lib/template";
@@ -110,11 +115,57 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
     set((s) => ({ nodeStatuses: { ...s.nodeStatuses, [nodeId]: status } })),
   nodeOutputs: {} as Record<string, FlowPacket>,
   dependencyMap: {} as Record<string, string[]>,
+  lastContext: null as ExecutionContext | null,
+  lastChatHistory: [] as ChatMessage[],
+  isDryRun: false,
+  setIsDryRun: (value: boolean) => set({ isDryRun: value }),
   chatHistory: [],
   clearChatHistory: () => set({ chatHistory: [] }),
   addMessage: (role, content) => set((state) => ({
     chatHistory: [...state.chatHistory, { role, content }]
   })),
+
+  triggerNode: async (nodeId: string) => {
+    const { nodes, edges, lastContext, lastChatHistory, isRunning } = get();
+    if (isRunning) return;
+    const targetNode = nodes.find((n) => n.id === nodeId);
+    if (!targetNode || !lastContext) return;
+
+    // Subgraph: failing node + all its transitive descendants
+    const subIds = getSubgraphNodeIds(nodeId, edges);
+    const subNodes = nodes.filter((n) => subIds.has(n.id));
+    const subEdges = edges.filter((e) => subIds.has(e.source) && subIds.has(e.target));
+
+    // Reset statuses for the subgraph nodes
+    set((s) => {
+      const statuses = { ...s.nodeStatuses };
+      subIds.forEach((id) => { statuses[id] = "idle"; });
+      return { nodeStatuses: statuses, isRunning: true, highlightedNodeId: nodeId };
+    });
+
+    const addLog = useLogStore.getState().addLog;
+    addLog("INFO", `🔄 Retrying: ${targetNode.data?.label || nodeId}`, nodeId);
+
+    await executeGraph(
+      subNodes,
+      subEdges,
+      "",
+      (message, type, nid) => { addLog(type || "INFO", message, nid); },
+      lastChatHistory,
+      {
+        onNodeStatusChange: (nid, status) => {
+          set((s) => ({ nodeStatuses: { ...s.nodeStatuses, [nid]: status } }));
+        },
+        onNodeComplete: (nid, packet) => {
+          set((s) => ({ nodeOutputs: { ...s.nodeOutputs, [nid]: packet } }));
+        },
+      },
+      lastContext
+    );
+
+    set({ isRunning: false, highlightedNodeId: null });
+    addLog("SUCCESS", `✅ Retry complete for: ${targetNode.data?.label || nodeId}`);
+  },
 
   autoSave: () => {
     if (typeof window === "undefined") return;
@@ -381,6 +432,9 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
       return;
     }
 
+    const { isDryRun } = get();
+    if (isDryRun) addLog("WARN", "🟡 DRY RUN — no live requests will be sent.");
+
     const result = await executeGraph(
       nodes,
       edges,
@@ -396,7 +450,7 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
           }));
         }
       },
-      chatHistory, // snapshot of PREVIOUS turns — correct for AI memory context
+      chatHistory,
       {
         onNodeStatusChange: (nodeId, status) => {
           set((s) => ({
@@ -409,6 +463,7 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
             nodeOutputs: { ...s.nodeOutputs, [nodeId]: packet },
           }));
         },
+        isDryRun,
       }
     );
 
@@ -457,6 +512,8 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
         highlightedNodeId: null,
         finalResult: finalPacket,
         chatHistory: liveHistory,
+        lastContext: finalState,
+        lastChatHistory: chatHistory,
         nodes: clearedNodes,
       };
     });

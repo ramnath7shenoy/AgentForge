@@ -137,7 +137,6 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
   const [sidebarTab, setSidebarTab] = React.useState<"settings" | "logs">("settings");
-  const [apiKeySaved, setApiKeySaved] = React.useState(false);
   const allLogs = useLogStore((state) => state.logs);
   const nodeLogs = selectedNode ? allLogs.filter(l => l.nodeId === selectedNode.id) : [];
 
@@ -731,30 +730,23 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <label className="text-[10px] font-bold uppercase text-slate-500">Node-Level API Key</label>
-          {apiKeySaved && (
-            <span className="text-[9px] font-bold text-emerald-500 animate-pulse uppercase tracking-widest">
-              ✓ Saved
-            </span>
+          {selectedNode.data.apiKey && (
+            <div className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest">Connected</span>
+            </div>
           )}
         </div>
         <p className="text-[9px] text-slate-500 italic -mt-1">
           Optional — overrides the Vault key for this node only.
         </p>
-        <div className={cn(
-          "transition-all duration-300 rounded-lg",
-          apiKeySaved ? "ring-2 ring-emerald-500/50" : ""
-        )}>
-          <VaultInput
-            value={selectedNode.data.apiKey || ""}
-            onChange={(val) => {
-              updateNodeData(selectedNode.id, { apiKey: val });
-              setApiKeySaved(true);
-              setTimeout(() => setApiKeySaved(false), 2000);
-            }}
-            placeholder="gsk_… or sk-… or AIza… (auto-detected)"
-            theme={theme}
-          />
-        </div>
+        <VaultInput
+          key={selectedNode.id}
+          value={selectedNode.data.apiKey || ""}
+          onChange={(val) => updateNodeData(selectedNode.id, { apiKey: val })}
+          placeholder="gsk_… or sk-… or AIza… (auto-detected)"
+          theme={theme}
+        />
       </div>
     </div>
   );

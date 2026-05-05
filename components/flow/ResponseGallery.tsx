@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useLogStore, LogType } from "@/stores/useLogStore";
 import { useFlowStore } from "@/stores/flowStore";
-import { Trash2, Terminal as TerminalIcon, Download, Sparkles, Copy, CheckCheck, Bot, Clock, Workflow } from "lucide-react";
+import { Trash2, Terminal as TerminalIcon, Download, Sparkles, Copy, CheckCheck, Bot, Clock, Workflow, FlaskConical, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { NodeExecutionStatus } from "@/types/flowStoreTypes";
 
@@ -23,7 +23,7 @@ const badgeMap: Record<LogType, string> = {
 
 export default function ResponseGallery() {
   const { logs, clearLogs } = useLogStore();
-  const { currentContext, finalResult, running, nodes, activeProject, nodeStatuses, executedNodeIds } = useFlowStore();
+  const { currentContext, finalResult, running, nodes, activeProject, nodeStatuses, executedNodeIds, isDryRun, nodeOutputs } = useFlowStore();
   const [activeTab, setActiveTab] = useState<"terminal" | "result">("terminal");
   const [stateSearch, setStateSearch] = useState("");
   const [copied, setCopied] = useState(false);
@@ -109,8 +109,11 @@ export default function ResponseGallery() {
             <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 opacity-60" />
           </div>
 
-          <TabButton active={activeTab === "terminal"} onClick={() => setActiveTab("terminal")} color="indigo">
-            <TerminalIcon size={10} /> Terminal
+          <TabButton active={activeTab === "terminal"} onClick={() => setActiveTab("terminal")} color={isDryRun ? "amber" : "indigo"}>
+            {isDryRun
+              ? <><AlertTriangle size={10} className="text-amber-400" /> Simulation Log</>
+              : <><TerminalIcon size={10} /> Terminal</>
+            }
           </TabButton>
           <TabButton active={activeTab === "result"} onClick={() => setActiveTab("result")} color="emerald">
             <Sparkles size={10} /> Final Result
@@ -138,16 +141,21 @@ export default function ResponseGallery() {
         <div className="flex-1 overflow-y-auto p-4 font-mono text-[11px] leading-relaxed scrollbar-hide space-y-0.5 text-zinc-900 dark:text-zinc-100">
           {logs.length === 0 ? (
             <div className="flex items-center justify-center h-full text-zinc-400 dark:text-zinc-700 text-[10px] italic">Awaiting execution...</div>
-          ) : logs.map((log) => (
+          ) : logs.map((log) => {
+            const displayType = isDryRun && log.type === "SUCCESS" ? "SIM" : log.type;
+            const badgeClass = isDryRun && log.type === "SUCCESS" ? "text-amber-500" : badgeMap[log.type];
+            const textClass  = isDryRun && log.type === "SUCCESS" ? "text-amber-600 dark:text-amber-400" : colorMap[log.type];
+            return (
             <div key={log.id} className="flex items-start gap-2 hover:bg-zinc-500/5 dark:hover:bg-slate-800/30 px-2 py-0.5 rounded transition-colors">
               <span className="text-zinc-500 dark:text-zinc-600 flex-shrink-0 select-none">{formatTime(log.timestamp)}</span>
-              <span className={cn("font-bold flex-shrink-0 w-16 text-right select-none", badgeMap[log.type])}>[{log.type}]</span>
-              <span className={cn("flex-1", colorMap[log.type])}>
+              <span className={cn("font-bold flex-shrink-0 w-16 text-right select-none", badgeClass)}>[{displayType}]</span>
+              <span className={cn("flex-1", textClass)}>
                 {log.message}
                 {log.elapsed !== undefined && <span className="text-zinc-500 dark:text-zinc-600 ml-2">({log.elapsed}ms)</span>}
               </span>
             </div>
-          ))}
+            );
+          })}
           <div ref={bottomRef} />
         </div>
       )}
@@ -162,8 +170,10 @@ export default function ResponseGallery() {
               logs={logs}
               nodes={nodes}
               nodeStatuses={nodeStatuses}
+              nodeOutputs={nodeOutputs}
               executedNodeIds={executedNodeIds}
               projectName={activeProject?.name}
+              isDryRun={isDryRun}
               copied={copied}
               onCopy={() => {
                 const hasErrors = logs.some(l => l.type === "ERROR");
@@ -226,8 +236,10 @@ function ExecutionManifest({
   logs,
   nodes,
   nodeStatuses,
+  nodeOutputs,
   executedNodeIds,
   projectName,
+  isDryRun,
   copied,
   onCopy,
   onDownload,
@@ -236,8 +248,10 @@ function ExecutionManifest({
   logs: { timestamp: number; type: string }[];
   nodes: { id: string; type?: string | null; data?: { label?: string } }[];
   nodeStatuses: Record<string, NodeExecutionStatus>;
+  nodeOutputs: Record<string, { payload: any }>;
   executedNodeIds: string[];
   projectName: string | undefined;
+  isDryRun: boolean;
   copied: boolean;
   onCopy: () => void;
   onDownload: () => void;
@@ -268,6 +282,58 @@ function ExecutionManifest({
 
   return (
     <div className="space-y-3">
+      {/* ── Dry-run banner ── */}
+      {isDryRun && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/8 px-4 py-3 flex items-start gap-3">
+          <FlaskConical size={15} className="text-amber-400 mt-0.5 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold text-amber-400 uppercase tracking-wide">Simulation Mode</p>
+            <p className="text-[10px] text-amber-300/70 mt-0.5">
+              No live API calls were made. Integration and App Action nodes returned mock payloads.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Simulated payloads ── */}
+      {isDryRun && (() => {
+        const simNodes = nodes.filter(
+          (n) =>
+            (n.type === "action" || n.type === "appaction") &&
+            nodeOutputs[n.id]?.payload?.status === "simulated"
+        );
+        if (simNodes.length === 0) return null;
+        return (
+          <div className="space-y-1.5">
+            <p className="text-[8px] font-black uppercase tracking-widest text-amber-500/70 px-1">
+              Simulated Payloads
+            </p>
+            {simNodes.map((node) => {
+              const payload = nodeOutputs[node.id]?.payload;
+              return (
+                <div
+                  key={node.id}
+                  className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3"
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <FlaskConical size={10} className="text-amber-400 shrink-0" />
+                    <span className="text-[10px] font-semibold text-amber-300">
+                      {node.data?.label || node.id}
+                    </span>
+                    <span className="text-[8px] uppercase tracking-wider text-amber-500/60 ml-auto">
+                      {node.type}
+                    </span>
+                  </div>
+                  <pre className="text-[9px] font-mono text-amber-200/70 whitespace-pre-wrap overflow-auto max-h-32">
+                    {JSON.stringify(payload, null, 2)}
+                  </pre>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
       {/* ── Header ── */}
       <div className="rounded-xl border border-zinc-300 dark:border-zinc-700/50 bg-zinc-50 dark:bg-zinc-900/60 p-4">
         <div className="flex items-start justify-between gap-3 mb-3">
@@ -281,11 +347,13 @@ function ExecutionManifest({
           </div>
           <span className={cn(
             "flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-bold shrink-0 border",
-            hasErrors
+            isDryRun
+              ? "bg-amber-500/10 text-amber-500 border-amber-500/25"
+              : hasErrors
               ? "bg-amber-500/10 text-amber-500 border-amber-500/25 dark:text-amber-400"
               : "bg-emerald-500/10 text-emerald-600 border-emerald-500/25 dark:text-emerald-400"
           )}>
-            {hasErrors ? "⚠ Partial" : "✓ Action Complete"}
+            {isDryRun ? "⬡ Simulated" : hasErrors ? "⚠ Partial" : "✓ Action Complete"}
           </span>
         </div>
 
@@ -393,6 +461,7 @@ function TabButton({ active, onClick, color, children }: { active: boolean; onCl
     indigo: "text-slate-300 border-indigo-500 bg-indigo-500/5",
     cyan: "text-slate-300 border-cyan-500 bg-cyan-500/5",
     emerald: "text-slate-300 border-emerald-500 bg-emerald-500/5",
+    amber: "text-amber-300 border-amber-500 bg-amber-500/5",
   };
   return (
     <button

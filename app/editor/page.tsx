@@ -13,6 +13,8 @@ import {
   HelpCircle,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  FlaskConical,
   RotateCcw,
   Trash2,
   Terminal,
@@ -56,6 +58,40 @@ import { getProjects, saveAsTemplate, getCustomTemplates, deleteCustomTemplate }
 
 const LS_GUEST_FLOW_KEY = "agentforge_guest_flow";
 
+// ── Uniform toolbar action button ──────────────────────────────────────────
+// h-8 (32px) / px-2.5 / text-[13px] / rounded-md — matches the profile/login icon height.
+function ActionButton({
+  onClick,
+  disabled = false,
+  className = "",
+  children,
+  title,
+}: {
+  onClick?: () => void;
+  disabled?: boolean;
+  className?: string;
+  children: React.ReactNode;
+  title?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={cn(
+        "inline-flex items-center justify-center gap-1.5",
+        "h-8 min-w-0 px-2.5 rounded-md",
+        "text-[13px] font-semibold",
+        "transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed",
+        "flex-shrink-0",
+        className
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 function EditorContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -90,6 +126,8 @@ function EditorContent() {
     restoreAutoSave,
     webhookPayloadWarning,
     setWebhookPayloadWarning,
+    isDryRun,
+    setIsDryRun,
   } = useFlowStore();
 
   const [mounted, setMounted] = useState(false);
@@ -100,9 +138,11 @@ function EditorContent() {
   const [showVersionMenu, setShowVersionMenu] = useState(false);
   const [showShareMenu, setShowShareMenu] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showRunMenu, setShowRunMenu] = useState(false);
   const versionRef = useRef<HTMLDivElement>(null);
   const shareMenuRef = useRef<HTMLDivElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
+  const runMenuRef = useRef<HTMLDivElement>(null);
 
   const [snapshots, setSnapshots] = useState<FlowSnapshot[]>([]);
   const [showTerminal, setShowTerminal] = useState(false);
@@ -335,6 +375,7 @@ function EditorContent() {
       if (versionRef.current && !versionRef.current.contains(e.target as Node)) setShowVersionMenu(false);
       if (shareMenuRef.current && !shareMenuRef.current.contains(e.target as Node)) setShowShareMenu(false);
       if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) setShowProfileMenu(false);
+      if (runMenuRef.current && !runMenuRef.current.contains(e.target as Node)) setShowRunMenu(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -717,16 +758,15 @@ function EditorContent() {
           {/* Templates button */}
           <button
             onClick={() => setShowTemplateModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 text-xs font-semibold transition-all border border-white/10"
+            className="flex items-center gap-1.5 h-8 min-w-0 px-2.5 rounded-md bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 text-[13px] font-semibold transition-all border border-white/10 flex-shrink-0"
             title="Load a Template"
           >
-            <LayoutTemplate size={13} />
+            <LayoutTemplate size={14} />
             Templates
           </button>
 
-          {/* Agent Configuration (Magic Wand) — breathing glow */}
-          <motion.button
-            onClick={() => setShowAIModal(true)}
+          {/* AI Build (Magic Wand) — breathing glow */}
+          <motion.div
             animate={{
               boxShadow: [
                 "0 0 5px rgba(139, 92, 246, 0.2)",
@@ -734,92 +774,141 @@ function EditorContent() {
                 "0 0 5px rgba(139, 92, 246, 0.2)"
               ]
             }}
-            transition={{
-              duration: 2,
-              repeat: Infinity,
-              ease: "easeInOut"
-            }}
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border group",
-              nodes.length === 0
-                ? "bg-violet-600/20 border-violet-500/40 text-violet-300"
-                : "bg-violet-600/10 hover:bg-violet-600/30 border-violet-500/20 text-violet-400 hover:text-white"
-            )}
-            title="Agent Configuration"
+            transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+            className="rounded-md"
           >
-            <motion.div
-              animate={{
-                scale: [1, 1.1, 1],
-              }}
-              transition={{
-                duration: 2,
-                repeat: Infinity,
-                ease: "easeInOut"
-              }}
+            <ActionButton
+              onClick={() => setShowAIModal(true)}
+              title="AI Build"
+              className={cn(
+                "group border",
+                nodes.length === 0
+                  ? "bg-violet-600/20 border-violet-500/40 text-violet-300"
+                  : "bg-violet-600/10 hover:bg-violet-600/30 border-violet-500/20 text-violet-400 hover:text-white"
+              )}
             >
-              <Sparkles size={13} className="group-hover:rotate-12 transition-transform" />
-            </motion.div>
-            AI Build
-          </motion.button>
+              <Sparkles size={14} className="group-hover:rotate-12 transition-transform" />
+              AI Build
+            </ActionButton>
+          </motion.div>
 
-          {/* Run Flow */}
-          <button
-            onClick={() => runClientFlow("Initial Input")}
-            disabled={isRunning}
-            className={cn(
-              "flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold transition-all active:scale-95",
-              isRunning ? "opacity-75 cursor-wait bg-indigo-500" : (
-                tutorialStep === 6
+          {/* Run Flow — split button (Run Live / Dry Run) */}
+          <div ref={runMenuRef} className="relative flex items-stretch h-8 min-w-0 flex-shrink-0">
+            {/* Main action */}
+            <button
+              onClick={() => runClientFlow("Initial Input")}
+              disabled={isRunning}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 rounded-l-md text-[13px] font-semibold transition-all active:scale-95 border-r border-white/20 min-w-0",
+                isRunning
+                  ? "opacity-75 cursor-wait bg-indigo-500 text-white"
+                  : isDryRun
+                  ? "bg-gradient-to-br from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white shadow-lg shadow-amber-500/20"
+                  : tutorialStep === 6
                   ? "bg-gradient-to-br from-indigo-600 to-violet-700 text-white ring-4 ring-indigo-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(99,102,241,0.5)] z-10"
                   : "bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white shadow-lg shadow-indigo-500/20"
-              )
-            )}
-          >
-            {isRunning ? (
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                <span>Running...</span>
+              )}
+            >
+              {isRunning ? (
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>{isDryRun ? "Simulating..." : "Running..."}</span>
+                </div>
+              ) : isDryRun ? (
+                <>
+                  <FlaskConical size={14} />
+                  Dry Run
+                </>
+              ) : (
+                <>
+                  <Play size={14} className="fill-current" />
+                  Run Flow
+                </>
+              )}
+            </button>
+
+            {/* Mode selector chevron */}
+            <button
+              onClick={() => setShowRunMenu((v) => !v)}
+              disabled={isRunning}
+              className={cn(
+                "flex items-center justify-center px-2 rounded-r-md transition-all active:scale-95 disabled:opacity-50",
+                isDryRun
+                  ? "bg-gradient-to-br from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white"
+                  : "bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white"
+              )}
+            >
+              <ChevronDown size={11} className={cn("transition-transform", showRunMenu && "rotate-180")} />
+            </button>
+
+            {/* Dropdown */}
+            {showRunMenu && !isRunning && (
+              <div className="absolute top-full right-0 mt-1.5 w-44 rounded-xl border border-white/10 bg-[#0b0e14]/95 backdrop-blur-xl shadow-2xl overflow-hidden z-50">
+                <button
+                  onClick={() => { setIsDryRun(false); setShowRunMenu(false); }}
+                  className={cn(
+                    "flex items-center gap-2.5 w-full px-3 py-2.5 text-left text-[11px] font-semibold transition-colors",
+                    !isDryRun ? "text-indigo-400 bg-indigo-500/10" : "text-slate-300 hover:bg-white/5"
+                  )}
+                >
+                  <Play size={11} className={cn("fill-current", !isDryRun ? "text-indigo-400" : "text-slate-500")} />
+                  <div>
+                    <p>Run Live</p>
+                    <p className="text-[9px] font-normal text-slate-500">Execute with real API calls</p>
+                  </div>
+                  {!isDryRun && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-indigo-400" />}
+                </button>
+                <div className="h-px bg-white/5 mx-3" />
+                <button
+                  onClick={() => { setIsDryRun(true); setShowRunMenu(false); }}
+                  className={cn(
+                    "flex items-center gap-2.5 w-full px-3 py-2.5 text-left text-[11px] font-semibold transition-colors",
+                    isDryRun ? "text-amber-400 bg-amber-500/10" : "text-slate-300 hover:bg-white/5"
+                  )}
+                >
+                  <FlaskConical size={11} className={cn(isDryRun ? "text-amber-400" : "text-slate-500")} />
+                  <div>
+                    <p>Dry Run</p>
+                    <p className="text-[9px] font-normal text-slate-500">Simulate — no live requests</p>
+                  </div>
+                  {isDryRun && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                </button>
               </div>
-            ) : (
-              <>
-                <Play size={13} className="fill-current" />
-                Run Flow
-              </>
             )}
-          </button>
+          </div>
 
           {/* Publish */}
-          <button
+          <ActionButton
             onClick={() => {
               completeTutorial();
               router.push('/publish');
             }}
+            title="Publish"
             className={cn(
-              "flex items-center gap-1.5 px-4 py-1.5 transition-all rounded-lg text-xs font-bold active:scale-95",
               (tutorialStep === 7 && finalResult)
                 ? "bg-gradient-to-br from-emerald-500 to-teal-600 text-white ring-4 ring-emerald-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(16,185,129,0.5)] z-10"
                 : "bg-gradient-to-br from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-lg shadow-emerald-500/20"
             )}
           >
-            <Rocket size={13} />
+            <Rocket size={14} />
             Publish
-          </button>
+          </ActionButton>
 
           {/* 5. SHARE MENU */}
           <div className="relative" ref={shareMenuRef}>
-            <button
+            <ActionButton
               onClick={() => setShowShareMenu(!showShareMenu)}
+              title="Share or Collaborate"
               className={cn(
-                "flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-md",
+                "shadow-md",
                 showShareMenu
                   ? "bg-violet-700 text-white shadow-violet-500/30"
                   : "bg-violet-600 hover:bg-violet-500 text-white shadow-violet-500/20"
               )}
-              title="Share or Collaborate"
             >
               <Share2 size={14} />
               Share
-            </button>
+            </ActionButton>
 
             {showShareMenu && (
               <div className="absolute right-0 top-full mt-2 w-72 bg-popover border border-border rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150 p-4 flex flex-col gap-3">

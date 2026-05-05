@@ -9,7 +9,10 @@
       "Bash(npm install *)",
       "Bash(powershell *)",
       "Bash(node -e \"const d = require\\('dagre'\\); console.log\\('dagre ok:', typeof d.graphlib\\)\")",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(Get-ChildItem -Path \"E:\\\\agentforge\\\\flowforge-ai\\\\app\" -Recurse -Filter \"*.ts\" -Filter \"*.tsx\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)"
     ]
   }
 }

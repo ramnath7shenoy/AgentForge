@@ -1,4 +1,4 @@
-export type AppProvider = "x" | "slack" | "discord" | "github" | "notion";
+export type AppProvider = "x" | "slack" | "discord" | "github" | "notion" | "instagram" | "linkedin" | "medium";
 
 export interface ActionField {
   key: string;
@@ -16,6 +16,13 @@ export interface AppAction {
   fields: ActionField[];
 }
 
+export interface ConnectField {
+  key: string;
+  label: string;
+  placeholder: string;
+  secret?: boolean;
+}
+
 export interface AppDefinition {
   id: AppProvider;
   name: string;
@@ -25,6 +32,7 @@ export interface AppDefinition {
   tokenPlaceholder: string;
   docsUrl: string;
   actions: AppAction[];
+  connectFields?: ConnectField[];
 }
 
 export const APP_REGISTRY: AppDefinition[] = [
@@ -162,6 +170,76 @@ export const APP_REGISTRY: AppDefinition[] = [
           { key: "databaseId", label: "Database ID", type: "text", placeholder: "Notion database ID", required: true },
           { key: "title", label: "Title", type: "text", placeholder: "Page title", required: true },
           { key: "content", label: "Content", type: "textarea", placeholder: "Page content..." },
+        ],
+      },
+    ],
+  },
+  {
+    id: "instagram",
+    name: "Instagram",
+    icon: "📸",
+    color: "#e1306c",
+    tokenLabel: "Access Token",
+    tokenPlaceholder: "EAA…",
+    docsUrl: "https://developers.facebook.com/docs/instagram-api/getting-started",
+    connectFields: [
+      { key: "accessToken", label: "Access Token", placeholder: "EAA…", secret: true },
+    ],
+    actions: [
+      {
+        id: "create_post",
+        label: "Create Post",
+        description: "Publish a photo or reel post",
+        fields: [
+          { key: "imageUrl", label: "Image URL", type: "text", placeholder: "https://…/image.jpg", required: true },
+          { key: "caption", label: "Caption", type: "textarea", placeholder: "Post caption…" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "linkedin",
+    name: "LinkedIn",
+    icon: "💼",
+    color: "#0077b5",
+    tokenLabel: "Client Secret",
+    tokenPlaceholder: "Your LinkedIn Client Secret",
+    docsUrl: "https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow",
+    connectFields: [
+      { key: "clientId", label: "Client ID", placeholder: "86abc123…", secret: false },
+      { key: "clientSecret", label: "Client Secret", placeholder: "••••••••", secret: true },
+    ],
+    actions: [
+      {
+        id: "create_post",
+        label: "Create Post",
+        description: "Share a text update on your LinkedIn profile",
+        fields: [
+          { key: "text", label: "Post Text", type: "textarea", placeholder: "Share an update…", required: true },
+        ],
+      },
+    ],
+  },
+  {
+    id: "medium",
+    name: "Medium",
+    icon: "✍️",
+    color: "#292929",
+    tokenLabel: "Integration Token",
+    tokenPlaceholder: "Your Medium integration token",
+    docsUrl: "https://github.com/Medium/medium-api-docs#22-self-issued-access-tokens",
+    connectFields: [
+      { key: "integrationToken", label: "Integration Token", placeholder: "Your Medium integration token", secret: true },
+    ],
+    actions: [
+      {
+        id: "create_post",
+        label: "Create Post",
+        description: "Publish a new story to Medium",
+        fields: [
+          { key: "title", label: "Title", type: "text", placeholder: "Post title", required: true },
+          { key: "content", label: "Content", type: "textarea", placeholder: "Post content (HTML or Markdown)…", required: true },
+          { key: "contentFormat", label: "Format", type: "select", placeholder: "markdown", options: [{ label: "Markdown", value: "markdown" }, { label: "HTML", value: "html" }] },
         ],
       },
     ],

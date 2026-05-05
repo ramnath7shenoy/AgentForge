@@ -8,6 +8,7 @@ import { useFlowStore } from "@/stores/flowStore";
 
 export default function OutputNode({ id, data, selected }: NodeProps) {
   const nodeStatuses = useFlowStore((s) => s.nodeStatuses);
+  const nodeOutputs  = useFlowStore((s) => s.nodeOutputs);
   const isRunning = useFlowStore((s) => s.isRunning);
   const allNodes = useFlowStore((s) => s.nodes);
 
@@ -20,6 +21,17 @@ export default function OutputNode({ id, data, selected }: NodeProps) {
         return { nodeId, label: (match?.data as any)?.label || nodeId };
       });
   }, [nodeStatuses, isRunning, allNodes, id]);
+
+  const errorEntries = React.useMemo(() => {
+    if (isRunning) return [] as { nodeId: string; label: string; error: string }[];
+    return Object.entries(nodeStatuses)
+      .filter(([nodeId, status]) => status === "error" && nodeId !== id)
+      .map(([nodeId]) => {
+        const match = allNodes.find((n) => n.id === nodeId);
+        const error = nodeOutputs[nodeId]?.error || "Unknown error";
+        return { nodeId, label: (match?.data as any)?.label || nodeId, error };
+      });
+  }, [nodeStatuses, nodeOutputs, isRunning, allNodes, id]);
 
   const hasPartialRun =
     !isRunning &&
@@ -38,6 +50,27 @@ export default function OutputNode({ id, data, selected }: NodeProps) {
       <p className="text-[10px] opacity-70 font-medium line-clamp-2">
         {data.resultFormat ? (typeof data.resultFormat === 'string' ? data.resultFormat : 'Complex Result') : "Format your result..."}
       </p>
+
+      {errorEntries.length > 0 && !isRunning && (
+        <div className="mt-2 w-full rounded-md bg-red-500/10 border border-red-500/30 px-2 py-1.5 text-left">
+          <p className="text-[9px] font-semibold text-red-400 uppercase tracking-wide mb-1">
+            Nodes Failed
+          </p>
+          <ul className="mt-0.5 space-y-0.5">
+            {errorEntries.slice(0, SHOW_MAX).map(({ nodeId, label, error }) => (
+              <li key={nodeId} className="text-[8.5px] text-red-300/80 leading-tight">
+                <span className="font-medium">{label}:</span>{" "}
+                <span className="text-red-300/60 truncate">{error.slice(0, 60)}{error.length > 60 ? "…" : ""}</span>
+              </li>
+            ))}
+            {errorEntries.length > SHOW_MAX && (
+              <li className="text-[8.5px] text-red-300/50 leading-tight">
+                +{errorEntries.length - SHOW_MAX} more failed
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
 
       {hasPartialRun && (
         <div className="mt-2 w-full rounded-md bg-amber-500/10 border border-amber-500/30 px-2 py-1.5 text-left">

@@ -221,6 +221,7 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
         minZoom={0.05}
         maxZoom={2}
         fitView
+        deleteKeyCode={["Backspace", "Delete"]}
       >
         <Background
           variant={BackgroundVariant.Dots}
