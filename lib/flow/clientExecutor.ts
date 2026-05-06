@@ -258,20 +258,55 @@ async function dispatchLLM(
 
 // ─────────────────────────────────────────────────────────────────────
 // Deep-Text Resolver
+// Recursively unwraps FlowPacket wrappers. If the inner .payload is
+// itself an object (e.g. a dry-run simulated result), it recurses
+// rather than returning the raw object — preventing "[object Object]".
 // ─────────────────────────────────────────────────────────────────────
 const getRawValue = (val: any): string => {
+  if (val === null || val === undefined) return "";
   if (typeof val === "string") return val;
-  if (typeof val === "object" && val !== null) {
-    return (
-      val.text ||
-      val.payload ||
-      val.value ||
-      Object.values(val).find((v) => typeof v === "string") ||
-      JSON.stringify(val)
-    );
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  if (typeof val === "object") {
+    // Prefer human-readable fields; recurse so nested objects are unwrapped
+    const inner = val.payload ?? val.text ?? val.message ?? val.status ?? val.value;
+    if (inner !== undefined) return getRawValue(inner);
+    return JSON.stringify(val, null, 2);
   }
   return String(val);
 };
+
+// ─────────────────────────────────────────────────────────────────────
+// Template Path Resolver
+// Resolves a dotted path like "node-id.x" against the execution context.
+// Falls back to JSON-parsing the node's .payload string when a sub-key
+// (e.g. ".x", ".linkedin") is not a direct property of the FlowPacket.
+// This enables structured outputs like {"x":"…","linkedin":"…"} to be
+// accessed as {{content-gen.x}} in downstream node templates.
+// ─────────────────────────────────────────────────────────────────────
+function resolveTemplatePath(path: string, ctx: ExecutionContext): any {
+  const parts = path.trim().split(".");
+  let val: any = ctx.nodes[parts[0]] ?? ctx.variables[parts[0]];
+  if (val === undefined) return undefined;
+  if (parts.length === 1) return val;
+  for (let i = 1; i < parts.length; i++) {
+    if (val == null) return undefined;
+    const prop = parts[i] === "output" ? "payload" : parts[i];
+    if (prop in Object(val)) {
+      val = (val as any)[prop];
+    } else if (typeof val?.payload === "string") {
+      // Try to extract a key from a JSON-string payload
+      try {
+        const parsed = JSON.parse(val.payload);
+        val = parsed != null && typeof parsed === "object" ? (parsed as any)[prop] : undefined;
+      } catch {
+        return undefined;
+      }
+    } else {
+      return undefined;
+    }
+  }
+  return val;
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // Template Dependency Validator
@@ -485,18 +520,7 @@ async function executeNode(
       const resolvedPrompt = rawPrompt.replace(
         /\{\{(.*?)\}\}/g,
         (_: string, path: string) => {
-          const parts = path.trim().split(".");
-          let val: any =
-            prunedContext.nodes[parts[0]] ||
-            prunedContext.variables[parts[0]];
-          if (val === undefined) return "";
-          if (parts.length === 1) return getRawValue(val);
-          for (let i = 1; i < parts.length; i++) {
-            if (val == null) break;
-            // ".output" is a user-friendly alias — FlowPackets use ".payload" internally
-            const prop = parts[i] === "output" ? "payload" : parts[i];
-            val = val[prop];
-          }
+          const val = resolveTemplatePath(path, prunedContext);
           return val != null ? getRawValue(val) : "";
         }
       );
@@ -605,16 +629,7 @@ async function executeNode(
       const resolvedOutput = outputFormat.replace(
         /\{\{(.*?)\}\}/g,
         (_: string, path: string) => {
-          const parts = path.trim().split(".");
-          let val: any =
-            context.nodes[parts[0]] || context.variables[parts[0]];
-          if (val === undefined) return "";
-          if (parts.length === 1) return getRawValue(val);
-          for (let i = 1; i < parts.length; i++) {
-            if (val == null) break;
-            const prop = parts[i] === "output" ? "payload" : parts[i];
-            val = val[prop];
-          }
+          const val = resolveTemplatePath(path, context);
           return val != null ? getRawValue(val) : "";
         }
       );
@@ -708,15 +723,7 @@ async function executeNode(
 
       const resolvedPayload = rawTemplate
         ? rawTemplate.replace(/\{\{(.*?)\}\}/g, (_: string, path: string) => {
-            const parts = path.trim().split(".");
-            let val: any = context.nodes[parts[0]] || context.variables[parts[0]];
-            if (val === undefined) return "";
-            if (parts.length === 1) return getRawValue(val);
-            for (let i = 1; i < parts.length; i++) {
-              if (val == null) break;
-              const prop = parts[i] === "output" ? "payload" : parts[i];
-              val = val[prop];
-            }
+            const val = resolveTemplatePath(path, context);
             return val != null ? getRawValue(val) : "";
           })
         : upstreamPacket
@@ -815,15 +822,7 @@ async function executeNode(
         resolvedInputs[fieldKey] = (rawTemplate as string).replace(
           /\{\{(.*?)\}\}/g,
           (_: string, path: string) => {
-            const parts = path.trim().split(".");
-            let val: any = context.nodes[parts[0]] || context.variables[parts[0]];
-            if (val === undefined) return "";
-            if (parts.length === 1) return getRawValue(val);
-            for (let i = 1; i < parts.length; i++) {
-              if (val == null) break;
-              const prop = parts[i] === "output" ? "payload" : parts[i];
-              val = val[prop];
-            }
+            const val = resolveTemplatePath(path, context);
             return val != null ? getRawValue(val) : "";
           }
         );
@@ -922,9 +921,8 @@ async function executeNode(
       assertTemplateDeps(current.data?.instructions, context, current.data?.label || "Vault");
       const query = current.data?.instructions
         ? current.data.instructions.replace(/\{\{(.*?)\}\}/g, (_: string, path: string) => {
-            const parts = path.trim().split(".");
-            const val: any = context.nodes[parts[0]] || context.variables[parts[0]];
-            return val !== undefined ? getRawValue(val) : "";
+            const val = resolveTemplatePath(path, context);
+            return val != null ? getRawValue(val) : "";
           })
         : "";
       sendLog(

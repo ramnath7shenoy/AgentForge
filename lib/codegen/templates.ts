@@ -88,8 +88,9 @@ export function getLibraryMeta(lib: Library): LibraryMeta {
 
 export function getLibrariesForTab(tab: 'python' | 'javascript' | 'typescript'): LibraryMeta[] {
   if (tab === 'python') return LIBRARIES.filter(l => l.language === 'python');
-  if (tab === 'javascript') return LIBRARIES.filter(l => ['fetch', 'axios', 'node-fetch'].includes(l.id));
-  return LIBRARIES.filter(l => l.language === 'typescript');
+  if (tab === 'javascript') return LIBRARIES.filter(l => ['fetch', 'got', 'axios'].includes(l.id));
+  // typescript: fetch, axios, node-fetch
+  return LIBRARIES.filter(l => ['fetch', 'axios', 'node-fetch'].includes(l.id));
 }
 
 export function getDefaultLibrary(tab: 'python' | 'javascript' | 'typescript'): Library {
@@ -244,6 +245,9 @@ export const APP_PROVIDER_ENV_KEYS: Record<string, string> = {
   discord: 'DISCORD_BOT_TOKEN',
   github: 'GITHUB_TOKEN',
   notion: 'NOTION_TOKEN',
+  instagram: 'INSTAGRAM_ACCESS_TOKEN',
+  linkedin: 'LINKEDIN_ACCESS_TOKEN',
+  medium: 'MEDIUM_INTEGRATION_TOKEN',
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -296,6 +300,7 @@ export function genImports(lib: Library, hasSchedule: boolean): string {
 // ─────────────────────────────────────────────────────────────────────
 // Template variable lifter
 // Converts {{node-id}} / {{node-id.output}} into runtime code expressions.
+// Uses _get() helper for safe field access.
 // ─────────────────────────────────────────────────────────────────────
 export function liftTemplate(
   template: string,
@@ -309,8 +314,8 @@ export function liftTemplate(
     const prop = parts[1] === 'output' ? 'payload' : (parts[1] ?? 'payload');
     const varName = semanticNames[key] ?? key.replace(/-/g, '_');
     return python
-      ? `{ctx.get('${varName}', {}).get('${prop}', '')}`
-      : `\${ctx['${varName}']?.${prop} ?? ''}`;
+      ? `{_get(ctx.get('${varName}'), '${prop}')}`
+      : `\${_get(ctx['${varName}'], '${prop}')}`;
   });
 
   if (python) {
@@ -467,4 +472,123 @@ export function genHttpBlock(lib: Library, opts: HttpBlockOpts): string {
   }
 
   return lines.map(l => `${i}${l}`).join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Helper code generator — injects _s, _get, vaultLookup at top of file
+// ─────────────────────────────────────────────────────────────────────
+export function genHelperCode(lib: Library, isTS = true): string {
+  if (isPythonLib(lib)) {
+    return `def _s(val):
+    """Safely stringify a value — dicts/lists are JSON-encoded."""
+    if val is None: return ''
+    if isinstance(val, (dict, list)): return json.dumps(val, ensure_ascii=False)
+    return str(val)
+
+def _get(entry, key='payload'):
+    """Resolve a ctx entry field, with JSON sub-key fallback for structured outputs."""
+    if entry is None: return ''
+    if key in ('payload', 'output'):
+        return _s(entry.get('payload', ''))
+    raw = entry.get('payload', '')
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+        if isinstance(parsed, dict) and key in parsed:
+            return _s(parsed[key])
+    except Exception: pass
+    return _s(entry.get(key, ''))
+
+def vault_lookup(query: str, top_k: int = 3) -> str:
+    """TODO: swap with your vector store (Pinecone, Chroma, Weaviate, etc.)"""
+    return f'[Knowledge base result for: {query[:80]}]'
+
+`;
+  }
+
+  if (isTS) {
+    return `const _s = (v: unknown): string => {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+};
+
+const _get = (entry: any, key = 'payload'): string => {
+  if (!entry) return '';
+  if (key === 'payload' || key === 'output') return _s(entry.payload);
+  const raw = entry.payload;
+  if (typeof raw === 'string') {
+    try { const p = JSON.parse(raw); if (p && typeof p === 'object') return _s(p[key]); } catch {}
+  }
+  if (raw !== null && typeof raw === 'object') return _s((raw as any)[key]);
+  return _s(entry[key]);
+};
+
+async function vaultLookup(query: string, topK = 3): Promise<string> {
+  // TODO: swap with your vector store (Pinecone, Chroma, Weaviate, etc.)
+  return \`[Knowledge base result for: \${query.substring(0, 80)}]\`;
+}
+
+`;
+  }
+
+  // JS without TypeScript types
+  return `const _s = (v) => {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+};
+
+const _get = (entry, key = 'payload') => {
+  if (!entry) return '';
+  if (key === 'payload' || key === 'output') return _s(entry.payload);
+  const raw = entry.payload;
+  if (typeof raw === 'string') {
+    try { const p = JSON.parse(raw); if (p && typeof p === 'object') return _s(p[key]); } catch {}
+  }
+  if (raw !== null && typeof raw === 'object') return _s(raw[key]);
+  return _s(entry[key]);
+};
+
+async function vaultLookup(query, topK = 3) {
+  // TODO: swap with your vector store (Pinecone, Chroma, Weaviate, etc.)
+  return \`[Knowledge base result for: \${query.substring(0, 80)}]\`;
+}
+
+`;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Install comment generator — emits a pip/npm install comment at file top
+// ─────────────────────────────────────────────────────────────────────
+export function genInstallComment(lib: Library, providers: Set<LLMProvider>, hasSchedule: boolean): string {
+  const llmPyPkgs: Record<LLMProvider, string> = {
+    groq: 'groq',
+    openai: 'openai',
+    gemini: 'google-generativeai',
+    anthropic: 'anthropic',
+  };
+  const llmJsPkgs: Record<LLMProvider, string> = {
+    groq: 'groq-sdk',
+    openai: 'openai',
+    gemini: '@google/generative-ai',
+    anthropic: '@anthropic-ai/sdk',
+  };
+
+  if (isPythonLib(lib)) {
+    const pkgs: string[] = [
+      lib,
+      ...(hasSchedule ? ['schedule'] : []),
+      ...[...providers].map(p => llmPyPkgs[p]),
+    ];
+    return `# pip install ${pkgs.join(' ')}\n`;
+  }
+
+  // JS/TS
+  const pkgs: string[] = [
+    ...(lib !== 'fetch' ? [lib] : []),
+    ...(hasSchedule ? ['node-cron'] : []),
+    ...[...providers].map(p => llmJsPkgs[p]),
+  ];
+  if (!pkgs.length) return '';
+  return `// npm install ${pkgs.join(' ')}\n`;
 }

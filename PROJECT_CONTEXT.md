@@ -9,11 +9,12 @@
 | Layer | Tech |
 |---|---|
 | Framework | Next.js 15 (App Router) |
-| UI | React 19, Tailwind 4, shadcn/ui, Framer Motion |
+| UI | React 19, Tailwind 4, shadcn/ui, Framer Motion 12 |
 | Graph | ReactFlow 11 |
 | State | Zustand 5 |
 | Auth/DB | Supabase (auth + realtime), Prisma 7 (ORM) |
 | AI Providers | Google Gemini, Groq, OpenAI, Anthropic |
+| Canvas Export | html-to-image 1.11, jsPDF 4.2 |
 | Language | TypeScript 5 (strict) |
 
 ---
@@ -28,11 +29,11 @@ app/
   api/
     execute/route.ts    # POST endpoint for server-side flow execution
     vector-search/      # BM25 lexical search endpoint — ranks doc chunks by relevance (no external dep)
-  editor/page.tsx       # Main canvas page (FlowCanvas + all panels)
-  publish/page.tsx      # Code export page (polyglot compile to TS/JS/Python)
+  editor/page.tsx       # Main canvas page (FlowCanvas + all panels + Download dropdown)
+  publish/page.tsx      # Code export page (polyglot compile to TS/JS/Python across 7 libraries)
   dashboard/
     page.tsx            # Project management
-    integrations/page.tsx  # OAuth integration management UI (X, Slack, Discord, GitHub, Notion)
+    integrations/page.tsx  # OAuth integration management UI — 8 providers with official brand SVGs
   view/[id]/page.tsx    # Public read-only flow viewer
 
 components/
@@ -42,7 +43,7 @@ components/
     chat/               # ChatHub — floating chat panel + approval routing
     sidebar/            # NodeSettingsSidebar (includes appaction settings panel), NodeSidebar
     AIArchitectModal.tsx        # AI workflow generator modal
-    ResponseGallery.tsx         # Terminal | Result | State tabs
+    ResponseGallery.tsx         # Terminal | Final Result tabs with prettified JSON output
     ExecutionLogPanel.tsx
     FinalResultPanel.tsx
     ApprovalBanner.tsx
@@ -55,18 +56,23 @@ lib/
     layoutEngine.ts     # Dagre-based auto-layout (TB/LR); skips group containers
     validators.ts       # Kahn's algorithm cycle detection — call before adding edges
   providers/
-    index.ts            # APP_REGISTRY definition + getApp/getAction lookups
+    index.ts            # APP_REGISTRY definition + getApp/getAction lookups (8 providers)
     xService.ts         # X (Twitter): tweet posting
     slackService.ts     # Slack: message sending
     discordService.ts   # Discord: message/DM sending
     githubService.ts    # GitHub: issue creation
     notionService.ts    # Notion: page creation
+    instagramService.ts # Instagram: media post (2-step container/publish)
+    linkedinService.ts  # LinkedIn: UGC post (2-step /me + ugcPosts)
+    mediumService.ts    # Medium: article creation (2-step /me + /users/{id}/posts)
   codegen/
-    templates.ts        # Polyglot codegen helpers (library metadata, HTTP blocks, template lifting)
+    templates.ts        # Polyglot codegen helpers (library metadata, HTTP blocks, template lifting, helper injection)
   constants/
-    templates.ts        # Flow template definitions
+    templates.ts        # Flow template definitions (4 built-in templates)
+  utils/
+    export.ts           # Canvas export: exportAsPng, exportAsJpeg, exportAsPdf
   approvalGate.ts       # Promise-based pause/resume (avoids flowStore circular dep)
-  flowCompiler.ts       # Compile flow graphs → Python / TypeScript / JavaScript
+  flowCompiler.ts       # Compile flow graphs → Python / TypeScript / JavaScript (8 app providers, 7 HTTP libraries)
   executionEngine.ts    # Legacy node executor (server path / simulation)
   expressionEvaluator.ts
   flowPersistence.ts    # Save/load flow state helpers
@@ -85,7 +91,6 @@ stores/
 
 types/
   flowStoreTypes.ts     # NodeData, FlowPacket, FlowState, ExecutionContext
-  dataTypes.ts
 
 prisma/
   schema.prisma         # Includes Integration model: { id, userId, provider, accessToken, refreshToken, metadata }
@@ -95,16 +100,18 @@ prisma/
 
 ## Core Data Types
 ```ts
-FlowPacket        { type: "text"|"file"|"data", payload: any, meta? }
+FlowPacket        { type: "text"|"file"|"data", payload: any, error?, meta? }
 
-NodeData          { label, instructions, provider, modelName, apiKey,
+NodeData          { label, instructions, provider, modelName, model, apiKey,
                     routes, conditions, resultFormat, packet,
-                    connectionType, url, method,           // action node
-                    gatekeeperMessage, timeoutMinutes,     // approval node
-                    verification,                          // gatekeeper node
-                    batchLogic,                            // processor node
-                    subflowId, workflowOverride,           // subflow node
-                    appProvider, appAction, appInputs }    // appaction node (provider: "x"|"slack"|"discord"|"github"|"notion"; appInputs supports {{node-id}} refs)
+                    connectionType, url, method, headers, authType, authValue, bodyMapping,
+                    gatekeeperMessage, timeoutMinutes, timeoutAction,
+                    verification,
+                    batchLogic,
+                    schedule, cron, time, days, timezone,
+                    subflowId, subflowName, workflowOverride, localOverride,
+                    appProvider, appAction, appInputs,           // appaction node
+                    webhookID, persistence }
 
 ExecutionContext   { variables: Record<string,FlowPacket>,
                     nodes: Record<string,FlowPacket>,
@@ -116,7 +123,7 @@ ExtendedFlowState {
   selectedNodeId, highlightedNodeId, activeEdgeId,
 
   // Execution
-  running, isRunning,
+  running, isRunning, isDryRun,
   currentContext, executionResult, executionState,
   finalResult, executedNodeIds,
   executionLogs,               // legacy — prefer useLogStore
@@ -176,6 +183,7 @@ executeGraph() — Reactive Engine (topological event-driven)
         "processor"  → resolve batchLogic → return processed packet
         "router"     → evaluate conditions → route branches
         "subflow"    → expand workflowOverride or resolve subflowId → recursive executeGraph
+        "appaction"  → executeAppAction(provider, action, resolvedInputs)
       onNodeComplete(nodeId, packet) → store.nodeOutputs updated reactively
       short-circuit: on failure → mark all transitive descendants SKIPPED
   → resolves when inflight set empty AND no pending nodes remain
@@ -211,6 +219,12 @@ Before each AI node call, `applySeqAttn()` strips context down to only the keys 
 ### `assertTemplateDeps`
 Before any AI/output/vault/processor node executes, validates that every `{{nodeId}}` ref is already in context. Throws a descriptive error if a referenced node hasn't run yet — catches wrong-edge bugs from the architect early.
 
+### `getRawValue` (clientExecutor)
+Recursively unwraps FlowPacket objects and nested value containers to produce a clean string. Priority chain: `string` passthrough → `number/boolean` stringify → `object.payload/text/message/status/value` recurse → `JSON.stringify` fallback. Prevents `[object Object]` in output rendering.
+
+### `resolveTemplatePath` (clientExecutor)
+Resolves dot-notation paths like `{{ai-node.x}}` against execution context. Splits on `.`, accesses `ctx.nodes[id]` then walks each property. If a direct property lookup fails on a FlowPacket, falls back to `JSON.parse(val.payload)[prop]` — enabling sub-key extraction from AI-generated JSON payloads (e.g., `{{content-gen.linkedin}}`).
+
 ### `nodeOutputs` (Reactive Canvas State)
 `store.nodeOutputs: Record<string, FlowPacket>` is updated via `onNodeComplete` callback as each node finishes. `ApprovalNode.tsx` reads `nodeOutputs[parentEdge.source]` to preview upstream content live on the canvas while the flow is paused.
 
@@ -231,6 +245,9 @@ Each provider receives its native message-array format — no string concatenati
 
 Full conversation history is passed as-is from `chatHistory`.
 
+### Prettified Output (ResponseGallery)
+`ExecutionManifest` component runs a `useMemo` on `rawOutput`. If the trimmed output starts with `{` and parses as a non-array JSON object, renders key-value cards (one bordered row per entry). Otherwise renders as `<pre>`. Prevents raw `{"x":"...", "linkedin":"..."}` blobs from appearing as opaque text.
+
 ---
 
 ## Node Types
@@ -248,7 +265,7 @@ Full conversation history is passed as-is from `chatHistory`.
 | Approval Gate | `approval` | Human-in-the-loop pause; resumes on "go"/"approve" in chat |
 | Logic Processor | `processor` | Data transform / batch loop |
 | Integration | `action` | Outgoing HTTP call (generic REST); requires `url` field or throws at runtime |
-| App Action | `appaction` | OAuth-connected app action (X/Slack/Discord/GitHub/Notion); auth sourced from user integrations automatically |
+| App Action | `appaction` | OAuth-connected app action (8 providers); auth sourced from user integrations automatically |
 | Final Result | `output` | Terminal node; feeds result into ChatHub via `addMessage` |
 
 ### Additional Implementation Types (not in architect schema)
@@ -271,7 +288,7 @@ Legacy aliases handled in executor: `ai_agent`, `agent-brain`, `llm` all route t
 - **MANDATORY RULE**: every `ai` node must include `provider: "auto"` — no explicit provider/model/apiKey.
 - **MANDATORY RULE**: if Node B's instructions reference `{{node-a}}`, the ONLY incoming edge to Node B must be from `node-a` — no shortcut edges.
 - **MANDATORY RULE**: Approval gate MUST precede any action node that posts/sends data.
-- **MANDATORY RULE**: use `appaction` (not `action`) for social/productivity apps (X, Slack, Discord, GitHub, Notion); `appaction` nodes auto-source auth from user integrations — no explicit token.
+- **MANDATORY RULE**: use `appaction` (not `action`) for social/productivity apps (X, Slack, Discord, GitHub, Notion, Instagram, LinkedIn, Medium); `appaction` nodes auto-source auth from user integrations — no explicit token.
 - Output contract: raw JSON object — no markdown fences, no extra keys.
 - Default models: Gemini `gemini-2.5-flash`, Groq `llama-3.3-70b-versatile`, OpenAI `gpt-4o`.
 
@@ -294,16 +311,19 @@ POST `{ query, chunks, topK }` → ranked matches. BM25 scoring (TF-IDF variant)
 
 OAuth-connected external app actions. Token management is entirely server-side; nodes reference integrations by `appProvider` + `appAction` name.
 
-**Supported apps** (via `lib/providers/`):
-| Provider | Actions |
-|---|---|
-| X (Twitter) | `create_tweet`, `send_dm` |
-| Slack | `send_message`, `send_dm` |
-| Discord | `send_channel_message`, `send_dm` |
-| GitHub | `create_issue`, `create_comment` |
-| Notion | `create_page` |
+**Supported apps** (via `lib/providers/` + `APP_REGISTRY` in `lib/providers/index.ts`):
+| Provider | Actions | Notes |
+|---|---|---|
+| X (Twitter) | `create_tweet`, `send_dm` | Bearer Token auth |
+| Slack | `send_message`, `send_dm` | Bot OAuth Token |
+| Discord | `send_channel_message`, `send_dm` | Bot Token, "Bot" auth prefix |
+| GitHub | `create_issue`, `create_comment` | Personal Access Token |
+| Notion | `create_page` | Integration Token, Notion-Version header |
+| Instagram | `create_post` | Access Token; 2-step: create container → publish |
+| LinkedIn | `create_post` | Access Token; 2-step: GET /me → POST ugcPosts |
+| Medium | `create_post` | Integration Token; 2-step: GET /me → POST /users/{id}/posts |
 
-**`APP_REGISTRY`** in `lib/providers/index.ts` — source of truth for app metadata + available actions. `getApp(provider)` and `getAction(provider, action)` are the lookup helpers used by the sidebar and executor.
+**Brand Icons** (`app/dashboard/integrations/page.tsx`): All 8 providers have official SVG brand icons at exact brand colors (X: #000000, Slack: #4A154B, Discord: #5865F2, GitHub: #24292e, Notion: #ffffff, Instagram: #E1306C, LinkedIn: #0077B5, Medium: #000000). Rendered in the integrations management UI.
 
 **`app/actions/integration.ts`** — server actions:
 - `getIntegrations()` — fetch user's connected providers
@@ -313,7 +333,7 @@ OAuth-connected external app actions. Token management is entirely server-side; 
 
 **Prisma model**: `Integration { id, userId, provider, accessToken, refreshToken, metadata }` with unique constraint `(userId, provider)`.
 
-**Management UI**: `app/dashboard/integrations/page.tsx` — token input forms, live connection status, connect/disconnect actions.
+**Management UI**: `app/dashboard/integrations/page.tsx` — official brand icons, token input forms, live connection status, connect/disconnect actions.
 
 ---
 
@@ -328,44 +348,82 @@ OAuth-connected external app actions. Token management is entirely server-side; 
 
 ---
 
+## Canvas Export (`lib/utils/export.ts`)
+
+Three async functions for exporting the React Flow canvas:
+- **`exportAsPng()`** — html-to-image `toPng()`, pixelRatio 2, theme-aware background, downloads `workflow.png`
+- **`exportAsJpeg()`** — html-to-image `toJpeg()`, pixelRatio 2, quality 0.92, downloads `workflow.jpg`
+- **`exportAsPdf()`** — captures PNG first, auto-detects landscape/portrait, constructs jsPDF at pixel dimensions, saves `workflow.pdf`
+
+Background color is dark-mode aware: `#0f172a` (dark) / `#f8fafc` (light), detected via `.dark` class presence on `document.documentElement`. Triggered from the Download dropdown in the editor toolbar (replaces the old Camera icon).
+
+---
+
+## Flow Templates (`lib/constants/templates.ts`)
+
+Four pre-built templates selectable from the editor toolbar:
+
+| ID | Name | Nodes | Description |
+|---|---|---|---|
+| `basic-chatbot` | Basic Chatbot | 3 | input → ai → output |
+| `research-assistant` | Research Assistant | 4 | input → ai researcher → ai summarizer → output |
+| `omnichannel-content` | Omnichannel Content Generator | 7 | input → ai (JSON) → approval → appaction×3 (X/LinkedIn/Medium) → output |
+| `webhook-processor` | Webhook Processor | 4 | trigger → processor → ai → output |
+
+The Omnichannel template demonstrates: AI generating structured `{x, linkedin, medium}` JSON → parallel publish with human approval gate → per-platform `{{ai-node.x}}` / `{{ai-node.linkedin}}` / `{{ai-node.medium}}` sub-key extraction.
+
+---
+
 ## Code Export / Publish (`app/publish/page.tsx` + `lib/flowCompiler.ts`)
 
 ### Publish Page
-- Left panel: preview (input dropzone, final result, per-node execution status)
-- Right panel: code editor — tabbed by language (Python / JavaScript / TypeScript)
-- Library selector dropdown; Copy / Download compiled code
-- Run preview via `simulateFlow()`
+- Left panel: universal input textarea, response gallery (final result + sandbox run)
+- Right panel: language tab selector, library dropdown, compiled code viewer (read-only), Copy + Download buttons
+- Library dropdown shows install command + description per library
 
 ### Flow Compiler (`lib/flowCompiler.ts`)
 Polyglot compilation using Kahn's topological sort:
-1. Sort nodes by dependency order
-2. Convert labels to `snake_case` identifiers
-3. Emit per-library code blocks
+1. Sort nodes by dependency order (`topoSort`)
+2. Convert labels to `snake_case` identifiers (`getSemanticNames`)
+3. Detect LLM providers + ENV keys (`collectFlowMeta`)
+4. Emit per-library code blocks with `genInstallComment` + `genHelperCode` at file header
 
 **Supported languages & libraries**:
 | Language | Libraries |
 |---|---|
-| TypeScript | fetch, axios, got |
-| JavaScript | fetch, axios, got |
+| TypeScript | fetch (built-in), axios, node-fetch |
+| JavaScript | fetch (built-in), got, axios |
 | Python | requests, httpx, aiohttp (async) |
 
 **`lib/codegen/templates.ts`** provides:
 - `LibraryMeta` — install cmd, async flag, language tag per library
-- `liftTemplate(template, names, lib)` — converts `{{key}}` to `ctx['key']?.payload` (TS/JS) or `ctx.get('key',{}).get('payload')` (Python)
-- `genHttpBlock(lib, opts)` — full HTTP request boilerplate (auth headers, multipart/JSON body)
+- `liftTemplate(template, names, lib)` — converts `{{key}}` / `{{key.prop}}` to `_get(ctx['key'], 'prop')` calls (TS/JS) or `_get(ctx.get('key'), 'prop')` (Python)
+- `genHelperCode(lib, isTS)` — emits `_s()` (safe stringify), `_get()` (FlowPacket unwrap + JSON sub-key fallback), `vaultLookup()` stub at top of every compiled file
+- `genInstallComment(lib, providers, hasSchedule)` — emits `pip install` / `npm install` comment listing all required packages (library + LLM SDK + schedule if needed)
+- `genHttpBlock(lib, opts)` — full HTTP request boilerplate across all 7 libraries
+- `genLLMBlock(lib, provider, model, varName, promptExpr, ind)` — real LLM API calls (Groq/OpenAI/Gemini/Anthropic) for all 7 libraries
+- `genApprovalPause(lib, label, varName, ind)` — CLI `input()` / `readline` pause for approval gates
 - `getLibrariesForTab(tab)` / `getDefaultLibrary(tab)` — language → library list
+- `APP_PROVIDER_ENV_KEYS` — env var name map for all 8 app providers
+- `buildRouterCond(condRaw, inputVar, lang)` — converts free-text conditions ("urgent, critical") to keyword-based boolean expressions (`inputVar.includes('urgent') || inputVar.includes('critical')`)
 
-**Current limitations**: LLM calls are placeholder TODO comments; router/processor logic is simplified; no actual RAG integration in compiled output.
+**App Action compilation** (`genAppActionBlock`): All 8 providers compiled with real API calls. Instagram, LinkedIn, and Medium use multi-step sequences:
+- **Instagram**: Step 1 create media container → Step 2 publish (params: `image_url`, `caption`, `access_token`)
+- **LinkedIn**: Step 1 GET `/v2/me` for member ID → Step 2 POST `/v2/ugcPosts` with UGC structure
+- **Medium**: Step 1 GET `/v1/me` for user ID → Step 2 POST `/v1/users/{id}/posts`
+
+**Schedule compilation** (`buildCronBlock`): JS uses `node-cron` expressions; Python uses `schedule` library with `.every()` chains.
 
 ---
 
 ## ResponseGallery (`components/flow/ResponseGallery.tsx`)
-Three tabs:
-- **Terminal** — real-time execution logs (INFO/SUCCESS/ERROR/WARN with color coding, auto-scroll, auto-focus on run)
-- **Result** — Workflow Report card: project name, execution time, agent count, status (Complete/Partial), Copy Summary button; raw LLM output below
-- **State** — live JSON dump of execution context; searchable/filterable
+Two tabs:
+- **Terminal** — real-time execution logs (INFO/SUCCESS/ERROR/WARN with color coding, auto-scroll, auto-focus on run). Dry Run mode shows "SIM" badge. Clear + log-count controls.
+- **Final Result** — `ExecutionManifest` component: per-node status list (✓/✗/⏭), execution time, agent count; Final Output section renders JSON payloads as labelled key-value cards (one row per key) or plain `<pre>` for plain text. Copy Manifest + Export buttons.
 
-Auto-switches to Terminal on run start, Result on completion.
+Auto-switches to Terminal on run start, Final Result on completion.
+
+**Prettified Output logic**: `useMemo` on `rawOutput` — if trimmed string starts with `{` and `JSON.parse` succeeds with a non-array object, emits `{ type: "json", entries: [key, value][] }` for card rendering; otherwise `{ type: "text", value: string }` for `<pre>`.
 
 ---
 
@@ -390,6 +448,7 @@ Auto-switches to Terminal on run start, Result on completion.
 | `setNodeStatus(nodeId, status)` | Reactive engine → UI feedback |
 | `setNodeOutput(nodeId, packet)` | Per-node result tracking |
 | `runClientFlow(input)` | Main executor entry point |
+| `setIsDryRun(value)` | Toggle dry-run / simulation mode |
 | `simulateFlow(startNodeId)` | Legacy BFS simulation (publish preview) |
 | `addMessage(role, content)` | Chat history append |
 | `clearChatHistory()` | Reset chat |

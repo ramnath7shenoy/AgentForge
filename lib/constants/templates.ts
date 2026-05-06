@@ -100,6 +100,109 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     ],
   },
   {
+    id: "omnichannel-content",
+    name: "Omnichannel Content Generator",
+    description:
+      "Input topic → AI generates platform-specific JSON → parallel App Action posts to X, LinkedIn & Medium with human approval gate.",
+    icon: "📡",
+    nodes: [
+      {
+        id: "oc-input-1",
+        type: "input",
+        position: { x: 60, y: 280 },
+        data: {
+          label: "Content Topic",
+          packet: { type: "text", payload: "The future of AI agents in software development" },
+        },
+      },
+      {
+        id: "oc-ai-1",
+        type: "ai",
+        position: { x: 360, y: 280 },
+        data: {
+          label: "Content Generator",
+          provider: "auto",
+          instructions: `You are a social media content strategist.
+
+Create platform-specific content for the following topic: {{oc-input-1}}
+
+Return ONLY a valid JSON object — no markdown fences, no explanation, no extra keys:
+{
+  "x": "<tweet ≤ 280 characters, punchy and engaging, include 1-2 relevant hashtags>",
+  "linkedin": "<professional LinkedIn post 3-5 sentences, include a call-to-action>",
+  "medium": "<Medium article introduction paragraph 80-120 words, compelling hook>"
+}`,
+        },
+      },
+      {
+        id: "oc-approval-1",
+        type: "approval",
+        position: { x: 680, y: 280 },
+        data: {
+          label: "Review & Approve",
+          gatekeeperMessage: "Review the generated content above. Type 'go' to publish to all three platforms.",
+        },
+      },
+      {
+        id: "oc-x-1",
+        type: "appaction",
+        position: { x: 980, y: 100 },
+        data: {
+          label: "Post to X",
+          appProvider: "x",
+          appAction: "create_tweet",
+          appInputs: { text: "{{oc-ai-1.x}}" },
+        },
+      },
+      {
+        id: "oc-linkedin-1",
+        type: "appaction",
+        position: { x: 980, y: 280 },
+        data: {
+          label: "Post to LinkedIn",
+          appProvider: "linkedin",
+          appAction: "create_post",
+          appInputs: { text: "{{oc-ai-1.linkedin}}" },
+        },
+      },
+      {
+        id: "oc-medium-1",
+        type: "appaction",
+        position: { x: 980, y: 460 },
+        data: {
+          label: "Publish to Medium",
+          appProvider: "medium",
+          appAction: "create_post",
+          appInputs: {
+            title: "{{oc-input-1}}",
+            content: "{{oc-ai-1.medium}}",
+            contentFormat: "markdown",
+          },
+        },
+      },
+      {
+        id: "oc-output-1",
+        type: "output",
+        position: { x: 1280, y: 280 },
+        data: {
+          label: "Publication Report",
+          resultFormat:
+            "✅ X: {{oc-x-1}}\n✅ LinkedIn: {{oc-linkedin-1}}\n✅ Medium: {{oc-medium-1}}",
+        },
+      },
+    ],
+    edges: [
+      { id: "oc-e1", source: "oc-input-1", target: "oc-ai-1" },
+      { id: "oc-e2", source: "oc-ai-1", target: "oc-approval-1" },
+      { id: "oc-e3", source: "oc-approval-1", target: "oc-x-1" },
+      { id: "oc-e4", source: "oc-approval-1", target: "oc-linkedin-1" },
+      { id: "oc-e5", source: "oc-approval-1", target: "oc-medium-1" },
+      { id: "oc-e6", source: "oc-x-1", target: "oc-output-1" },
+      { id: "oc-e7", source: "oc-linkedin-1", target: "oc-output-1" },
+      { id: "oc-e8", source: "oc-medium-1", target: "oc-output-1" },
+    ],
+  },
+  {
     id: "webhook-processor",
     name: "Webhook Processor",
     description: "Webhook → Processor → AI → Output. Perfect for automating responses to external events.",

@@ -280,6 +280,25 @@ function ExecutionManifest({
       : JSON.stringify(finalResult.payload, null, 2))
     : null;
 
+  // Structured display: JSON objects render as labelled key-value rows;
+  // plain text (including multi-line action results) renders verbatim.
+  type PrettifiedOutput =
+    | { type: "json"; entries: [string, unknown][] }
+    | { type: "text"; value: string };
+  const prettifiedOutput: PrettifiedOutput | null = React.useMemo(() => {
+    if (!rawOutput) return null;
+    const trimmed = rawOutput.trim();
+    if (trimmed.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return { type: "json", entries: Object.entries(parsed) };
+        }
+      } catch { /* fall through */ }
+    }
+    return { type: "text", value: rawOutput };
+  }, [rawOutput]);
+
   return (
     <div className="space-y-3">
       {/* ── Dry-run banner ── */}
@@ -381,14 +400,29 @@ function ExecutionManifest({
       )}
 
       {/* ── Final output ── */}
-      {rawOutput && (
+      {prettifiedOutput && (
         <div className="bg-zinc-900 dark:bg-[#0b0e14] rounded-xl border border-zinc-700 dark:border-slate-800 p-4 overflow-auto">
           <p className="text-[8px] font-bold uppercase tracking-widest text-zinc-500 dark:text-slate-600 mb-2">
             Final Output
           </p>
-          <pre className="text-[11px] font-mono text-zinc-100 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
-            {rawOutput}
-          </pre>
+          {prettifiedOutput.type === "json" ? (
+            <div className="space-y-2">
+              {prettifiedOutput.entries.map(([key, val]) => (
+                <div key={key} className="border border-slate-700 rounded-lg px-3 py-2">
+                  <span className="text-[8px] font-black uppercase tracking-widest text-indigo-400 block mb-1">
+                    {key}
+                  </span>
+                  <span className="text-[11px] text-slate-200 whitespace-pre-wrap leading-relaxed">
+                    {typeof val === "string" ? val : JSON.stringify(val, null, 2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <pre className="text-[11px] font-mono text-zinc-100 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
+              {prettifiedOutput.value}
+            </pre>
+          )}
         </div>
       )}
 

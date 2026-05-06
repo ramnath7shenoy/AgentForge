@@ -14,6 +14,8 @@ import {
   detectLLMProvider,
   getLLMEnvKey,
   APP_PROVIDER_ENV_KEYS,
+  genInstallComment,
+  genHelperCode,
 } from "./codegen/templates";
 
 // ─────────────────────────────────────────────────────────────────────
@@ -75,6 +77,26 @@ function topoSort(nodes: Node<NodeData>[], edges: Edge[]): Node<NodeData>[] {
   }
   nodes.forEach(n => { if (!seen.has(n.id)) result.push(n); });
   return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Router condition builder
+// ─────────────────────────────────────────────────────────────────────
+function buildRouterCond(condRaw: string, inputVar: string, lang: 'py' | 'js'): string {
+  const cond = (condRaw || '').trim().toLowerCase();
+  if (!cond || ['otherwise', 'else', 'default', 'true', 'always'].includes(cond)) {
+    return lang === 'py' ? 'True' : 'true';
+  }
+  // Extract keywords: split on "or", ",", "|"
+  const keywords = cond
+    .split(/\bor\b|\s*[,|]\s*/)
+    .map(k => k.replace(/contains\s+/g, '').replace(/^["'`]|["'`]$/g, '').trim())
+    .filter(k => k.length > 0);
+  if (!keywords.length) return lang === 'py' ? 'True' : 'true';
+  if (lang === 'py') {
+    return keywords.map(k => `'${k.replace(/'/g, "\\'")}' in ${inputVar}`).join(' or ');
+  }
+  return keywords.map(k => `${inputVar}.includes('${k.replace(/'/g, "\\'")}')`).join(' || ');
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -163,6 +185,31 @@ const APP_ENDPOINTS: Record<string, Record<string, AppEndpointDef>> = {
       extraHeaders: { 'Notion-Version': '2022-06-28' },
     },
   },
+  instagram: {
+    create_post: {
+      urlTemplate: 'https://graph.instagram.com/me/media',  // Step 1 — Step 2 handled inline
+      method: 'POST',
+      envKey: 'INSTAGRAM_ACCESS_TOKEN',
+      bodyFields: ['imageUrl', 'caption'],
+    },
+  },
+  linkedin: {
+    create_post: {
+      urlTemplate: 'https://api.linkedin.com/v2/ugcPosts',
+      method: 'POST',
+      envKey: 'LINKEDIN_ACCESS_TOKEN',
+      extraHeaders: { 'X-Restli-Protocol-Version': '2.0.0' },
+      bodyFields: ['text'],
+    },
+  },
+  medium: {
+    create_post: {
+      urlTemplate: 'https://api.medium.com/v1/me',  // Step 1 to get userId — Step 2 inline
+      method: 'GET',
+      envKey: 'MEDIUM_INTEGRATION_TOKEN',
+      bodyFields: ['title', 'content', 'contentFormat'],
+    },
+  },
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -187,7 +234,7 @@ function collectFlowMeta(nodes: Node<NodeData>[]): FlowMeta {
       envKeys.add(getLLMEnvKey(p));
     }
     if (type === 'approval' || type === 'gatekeeper') hasApproval = true;
-    if (type === 'app_action') {
+    if (type === 'appaction' || type === 'app_action') {
       const p = node.data.appProvider;
       if (p) {
         const ep = APP_ENDPOINTS[p.toLowerCase()]?.[node.data.appAction || ''];
@@ -228,6 +275,296 @@ function genAppActionBlock(
 
   const { urlTemplate, method, envKey, authPrefix = 'Bearer', urlPathFields = [], bodyFields, extraHeaders = {} } = endpoint;
   const lines: string[] = [];
+
+  // ── Special multi-step providers ──────────────────────────────────
+
+  if (appProvider === 'instagram' && appAction === 'create_post') {
+    if (python) {
+      const imageUrl = liftTemplate(appInputs['imageUrl'] || '', names, lib);
+      const caption = liftTemplate(appInputs['caption'] || '', names, lib);
+      if (lib === 'httpx') {
+        lines.push(`# Step 1: create media container`);
+        lines.push(`with httpx.Client() as _${varName}_c:`);
+        lines.push(`    ${varName}_container_r = _${varName}_c.post(`);
+        lines.push(`        'https://graph.instagram.com/me/media',`);
+        lines.push(`        params={'image_url': ${imageUrl}, 'caption': ${caption}, 'access_token': os.environ.get('${envKey}', '')}`);
+        lines.push(`    )`);
+        lines.push(`    ${varName}_container_r.raise_for_status()`);
+        lines.push(`    ${varName}_container_id = ${varName}_container_r.json().get('id', '')`);
+        lines.push(`    # Step 2: publish container`);
+        lines.push(`    ${varName}_publish_r = _${varName}_c.post(`);
+        lines.push(`        'https://graph.instagram.com/me/media_publish',`);
+        lines.push(`        params={'creation_id': ${varName}_container_id, 'access_token': os.environ.get('${envKey}', '')}`);
+        lines.push(`    )`);
+        lines.push(`    ${varName}_publish_r.raise_for_status()`);
+        lines.push(`    try:`);
+        lines.push(`        ctx['${varName}'] = {'type': 'data', 'payload': ${varName}_publish_r.json()}`);
+        lines.push(`    except Exception:`);
+        lines.push(`        ctx['${varName}'] = {'type': 'text', 'payload': ${varName}_publish_r.text}`);
+      } else if (lib === 'aiohttp') {
+        lines.push(`# Step 1: create media container`);
+        lines.push(`async with _session.post('https://graph.instagram.com/me/media', params={'image_url': ${imageUrl}, 'caption': ${caption}, 'access_token': os.environ.get('${envKey}', '')}) as ${varName}_container_r:`);
+        lines.push(`    ${varName}_container_r.raise_for_status()`);
+        lines.push(`    ${varName}_container_data = await ${varName}_container_r.json()`);
+        lines.push(`    ${varName}_container_id = ${varName}_container_data.get('id', '')`);
+        lines.push(`# Step 2: publish container`);
+        lines.push(`async with _session.post('https://graph.instagram.com/me/media_publish', params={'creation_id': ${varName}_container_id, 'access_token': os.environ.get('${envKey}', '')}) as ${varName}_publish_r:`);
+        lines.push(`    ${varName}_publish_r.raise_for_status()`);
+        lines.push(`    try:`);
+        lines.push(`        ctx['${varName}'] = {'type': 'data', 'payload': await ${varName}_publish_r.json()}`);
+        lines.push(`    except Exception:`);
+        lines.push(`        ctx['${varName}'] = {'type': 'text', 'payload': await ${varName}_publish_r.text()}`);
+      } else {
+        // requests
+        lines.push(`# Step 1: create media container`);
+        lines.push(`${varName}_container_r = requests.post(`);
+        lines.push(`    'https://graph.instagram.com/me/media',`);
+        lines.push(`    params={'image_url': ${imageUrl}, 'caption': ${caption}, 'access_token': os.environ.get('${envKey}', '')}`);
+        lines.push(`)`);
+        lines.push(`${varName}_container_r.raise_for_status()`);
+        lines.push(`${varName}_container_id = ${varName}_container_r.json().get('id', '')`);
+        lines.push(`# Step 2: publish container`);
+        lines.push(`${varName}_publish_r = requests.post(`);
+        lines.push(`    'https://graph.instagram.com/me/media_publish',`);
+        lines.push(`    params={'creation_id': ${varName}_container_id, 'access_token': os.environ.get('${envKey}', '')}`);
+        lines.push(`)`);
+        lines.push(`${varName}_publish_r.raise_for_status()`);
+        lines.push(`try:`);
+        lines.push(`    ctx['${varName}'] = {'type': 'data', 'payload': ${varName}_publish_r.json()}`);
+        lines.push(`except Exception:`);
+        lines.push(`    ctx['${varName}'] = {'type': 'text', 'payload': ${varName}_publish_r.text}`);
+      }
+    } else {
+      // JS/TS instagram
+      const imageUrl = liftTemplate(appInputs['imageUrl'] || '', names, lib);
+      const caption = liftTemplate(appInputs['caption'] || '', names, lib);
+      const tok = `process.env.${envKey} ?? ''`;
+      if (lib === 'axios') {
+        lines.push(`// Step 1: create media container`);
+        lines.push(`const ${varName}_containerR = await axios.post(\`https://graph.instagram.com/me/media?image_url=\${encodeURIComponent(${imageUrl})}&caption=\${encodeURIComponent(${caption})}&access_token=\${${tok}}\`);`);
+        lines.push(`const ${varName}_containerId = ${varName}_containerR.data?.id ?? '';`);
+        lines.push(`// Step 2: publish container`);
+        lines.push(`const ${varName}_publishR = await axios.post(\`https://graph.instagram.com/me/media_publish?creation_id=\${${varName}_containerId}&access_token=\${${tok}}\`);`);
+        lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_publishR.data };`);
+      } else if (lib === 'got') {
+        lines.push(`// Step 1: create media container`);
+        lines.push(`const ${varName}_containerR = await got.post<any>(\`https://graph.instagram.com/me/media?image_url=\${encodeURIComponent(${imageUrl})}&caption=\${encodeURIComponent(${caption})}&access_token=\${${tok}}\`, { responseType: 'json' as const });`);
+        lines.push(`const ${varName}_containerId = (${varName}_containerR.body as any)?.id ?? '';`);
+        lines.push(`// Step 2: publish container`);
+        lines.push(`const ${varName}_publishR = await got.post<any>(\`https://graph.instagram.com/me/media_publish?creation_id=\${${varName}_containerId}&access_token=\${${tok}}\`, { responseType: 'json' as const });`);
+        lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_publishR.body };`);
+      } else {
+        // fetch / node-fetch
+        lines.push(`// Step 1: create media container`);
+        lines.push(`const ${varName}_containerR = await fetch(\`https://graph.instagram.com/me/media?image_url=\${encodeURIComponent(${imageUrl})}&caption=\${encodeURIComponent(${caption})}&access_token=\${${tok}}\`, { method: 'POST' });`);
+        lines.push(`if (!${varName}_containerR.ok) throw new Error(\`Instagram container error: \${${varName}_containerR.status}\`);`);
+        lines.push(`const ${varName}_containerData = await ${varName}_containerR.json();`);
+        lines.push(`const ${varName}_containerId = ${varName}_containerData?.id ?? '';`);
+        lines.push(`// Step 2: publish container`);
+        lines.push(`const ${varName}_publishR = await fetch(\`https://graph.instagram.com/me/media_publish?creation_id=\${${varName}_containerId}&access_token=\${${tok}}\`, { method: 'POST' });`);
+        lines.push(`if (!${varName}_publishR.ok) throw new Error(\`Instagram publish error: \${${varName}_publishR.status}\`);`);
+        lines.push(`ctx['${varName}'] = { type: 'data', payload: await ${varName}_publishR.json() };`);
+      }
+    }
+    return lines.map(l => `${ind}${l}`).join('\n') + '\n';
+  }
+
+  if (appProvider === 'linkedin' && appAction === 'create_post') {
+    const text = liftTemplate(appInputs['text'] || '', names, lib);
+    if (python) {
+      const tok = `os.environ.get('${envKey}', '')`;
+      const headers = `{'Authorization': f'Bearer {${tok}}', 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0'}`;
+      if (lib === 'httpx') {
+        lines.push(`# Step 1: get LinkedIn member ID`);
+        lines.push(`with httpx.Client() as _${varName}_c:`);
+        lines.push(`    ${varName}_me_r = _${varName}_c.get('https://api.linkedin.com/v2/me', headers=${headers})`);
+        lines.push(`    ${varName}_me_r.raise_for_status()`);
+        lines.push(`    ${varName}_me_id = ${varName}_me_r.json().get('id', '')`);
+        lines.push(`    # Step 2: create post`);
+        lines.push(`    ${varName}_body = {`);
+        lines.push(`        'author': f'urn:li:person:{${varName}_me_id}',`);
+        lines.push(`        'lifecycleState': 'PUBLISHED',`);
+        lines.push(`        'specificContent': {'com.linkedin.ugc.ShareContent': {'shareCommentary': {'text': ${text}}, 'shareMediaCategory': 'NONE'}},`);
+        lines.push(`        'visibility': {'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC'},`);
+        lines.push(`    }`);
+        lines.push(`    ${varName}_r = _${varName}_c.post('https://api.linkedin.com/v2/ugcPosts', json=${varName}_body, headers=${headers})`);
+        lines.push(`    ${varName}_r.raise_for_status()`);
+        lines.push(`    try:`);
+        lines.push(`        ctx['${varName}'] = {'type': 'data', 'payload': ${varName}_r.json()}`);
+        lines.push(`    except Exception:`);
+        lines.push(`        ctx['${varName}'] = {'type': 'text', 'payload': ${varName}_r.text}`);
+      } else if (lib === 'aiohttp') {
+        lines.push(`# Step 1: get LinkedIn member ID`);
+        lines.push(`async with _session.get('https://api.linkedin.com/v2/me', headers=${headers}) as ${varName}_me_r:`);
+        lines.push(`    ${varName}_me_r.raise_for_status()`);
+        lines.push(`    ${varName}_me_data = await ${varName}_me_r.json()`);
+        lines.push(`    ${varName}_me_id = ${varName}_me_data.get('id', '')`);
+        lines.push(`# Step 2: create post`);
+        lines.push(`${varName}_body = {`);
+        lines.push(`    'author': f'urn:li:person:{${varName}_me_id}',`);
+        lines.push(`    'lifecycleState': 'PUBLISHED',`);
+        lines.push(`    'specificContent': {'com.linkedin.ugc.ShareContent': {'shareCommentary': {'text': ${text}}, 'shareMediaCategory': 'NONE'}},`);
+        lines.push(`    'visibility': {'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC'},`);
+        lines.push(`}`);
+        lines.push(`async with _session.post('https://api.linkedin.com/v2/ugcPosts', json=${varName}_body, headers=${headers}) as ${varName}_r:`);
+        lines.push(`    ${varName}_r.raise_for_status()`);
+        lines.push(`    try:`);
+        lines.push(`        ctx['${varName}'] = {'type': 'data', 'payload': await ${varName}_r.json()}`);
+        lines.push(`    except Exception:`);
+        lines.push(`        ctx['${varName}'] = {'type': 'text', 'payload': await ${varName}_r.text()}`);
+      } else {
+        // requests
+        lines.push(`# Step 1: get LinkedIn member ID`);
+        lines.push(`${varName}_li_headers = ${headers}`);
+        lines.push(`${varName}_me_r = requests.get('https://api.linkedin.com/v2/me', headers=${varName}_li_headers)`);
+        lines.push(`${varName}_me_r.raise_for_status()`);
+        lines.push(`${varName}_me_id = ${varName}_me_r.json().get('id', '')`);
+        lines.push(`# Step 2: create post`);
+        lines.push(`${varName}_body = {`);
+        lines.push(`    'author': f'urn:li:person:{${varName}_me_id}',`);
+        lines.push(`    'lifecycleState': 'PUBLISHED',`);
+        lines.push(`    'specificContent': {'com.linkedin.ugc.ShareContent': {'shareCommentary': {'text': ${text}}, 'shareMediaCategory': 'NONE'}},`);
+        lines.push(`    'visibility': {'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC'},`);
+        lines.push(`}`);
+        lines.push(`${varName}_r = requests.post('https://api.linkedin.com/v2/ugcPosts', json=${varName}_body, headers=${varName}_li_headers)`);
+        lines.push(`${varName}_r.raise_for_status()`);
+        lines.push(`try:`);
+        lines.push(`    ctx['${varName}'] = {'type': 'data', 'payload': ${varName}_r.json()}`);
+        lines.push(`except Exception:`);
+        lines.push(`    ctx['${varName}'] = {'type': 'text', 'payload': ${varName}_r.text}`);
+      }
+    } else {
+      // JS/TS linkedin
+      const tok = `process.env.${envKey} ?? ''`;
+      const liHeaders = isTS
+        ? `const ${varName}_liHeaders: Record<string, string> = { 'Authorization': \`Bearer \${${tok}}\`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' };`
+        : `const ${varName}_liHeaders = { 'Authorization': \`Bearer \${${tok}}\`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' };`;
+      lines.push(liHeaders);
+      if (lib === 'axios') {
+        lines.push(`// Step 1: get LinkedIn member ID`);
+        lines.push(`const ${varName}_meR = await axios.get('https://api.linkedin.com/v2/me', { headers: ${varName}_liHeaders });`);
+        lines.push(`const ${varName}_meId = ${varName}_meR.data?.id ?? '';`);
+        lines.push(`// Step 2: create post`);
+        lines.push(`const ${varName}_liBody = { author: \`urn:li:person:\${${varName}_meId}\`, lifecycleState: 'PUBLISHED', specificContent: { 'com.linkedin.ugc.ShareContent': { shareCommentary: { text: ${text} }, shareMediaCategory: 'NONE' } }, visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' } };`);
+        lines.push(`const ${varName}_r = await axios.post('https://api.linkedin.com/v2/ugcPosts', ${varName}_liBody, { headers: ${varName}_liHeaders });`);
+        lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_r.data };`);
+      } else if (lib === 'got') {
+        lines.push(`// Step 1: get LinkedIn member ID`);
+        lines.push(`const ${varName}_meR = await got.get<any>('https://api.linkedin.com/v2/me', { headers: ${varName}_liHeaders, responseType: 'json' as const });`);
+        lines.push(`const ${varName}_meId = (${varName}_meR.body as any)?.id ?? '';`);
+        lines.push(`// Step 2: create post`);
+        lines.push(`const ${varName}_liBody = { author: \`urn:li:person:\${${varName}_meId}\`, lifecycleState: 'PUBLISHED', specificContent: { 'com.linkedin.ugc.ShareContent': { shareCommentary: { text: ${text} }, shareMediaCategory: 'NONE' } }, visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' } };`);
+        lines.push(`const ${varName}_r = await got.post<any>('https://api.linkedin.com/v2/ugcPosts', { json: ${varName}_liBody, headers: ${varName}_liHeaders, responseType: 'json' as const });`);
+        lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_r.body };`);
+      } else {
+        // fetch / node-fetch
+        lines.push(`// Step 1: get LinkedIn member ID`);
+        lines.push(`const ${varName}_meR = await fetch('https://api.linkedin.com/v2/me', { headers: ${varName}_liHeaders });`);
+        lines.push(`if (!${varName}_meR.ok) throw new Error(\`LinkedIn /me error: \${${varName}_meR.status}\`);`);
+        lines.push(`const ${varName}_meData = await ${varName}_meR.json();`);
+        lines.push(`const ${varName}_meId = ${varName}_meData?.id ?? '';`);
+        lines.push(`// Step 2: create post`);
+        lines.push(`const ${varName}_liBody = { author: \`urn:li:person:\${${varName}_meId}\`, lifecycleState: 'PUBLISHED', specificContent: { 'com.linkedin.ugc.ShareContent': { shareCommentary: { text: ${text} }, shareMediaCategory: 'NONE' } }, visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' } };`);
+        lines.push(`const ${varName}_r = await fetch('https://api.linkedin.com/v2/ugcPosts', { method: 'POST', headers: ${varName}_liHeaders, body: JSON.stringify(${varName}_liBody) });`);
+        lines.push(`if (!${varName}_r.ok) throw new Error(\`LinkedIn post error: \${${varName}_r.status}\`);`);
+        lines.push(`ctx['${varName}'] = { type: 'data', payload: await ${varName}_r.json() };`);
+      }
+    }
+    return lines.map(l => `${ind}${l}`).join('\n') + '\n';
+  }
+
+  if (appProvider === 'medium' && appAction === 'create_post') {
+    const title = liftTemplate(appInputs['title'] || '', names, lib);
+    const content = liftTemplate(appInputs['content'] || '', names, lib);
+    const contentFormat = liftTemplate(appInputs['contentFormat'] || 'markdown', names, lib);
+    if (python) {
+      const tok = `os.environ.get('${envKey}', '')`;
+      const headers = `{'Authorization': f'Bearer {${tok}}', 'Content-Type': 'application/json'}`;
+      if (lib === 'httpx') {
+        lines.push(`# Step 1: get Medium user ID`);
+        lines.push(`with httpx.Client() as _${varName}_c:`);
+        lines.push(`    ${varName}_me_r = _${varName}_c.get('https://api.medium.com/v1/me', headers=${headers})`);
+        lines.push(`    ${varName}_me_r.raise_for_status()`);
+        lines.push(`    ${varName}_user_id = ${varName}_me_r.json().get('data', {}).get('id', '')`);
+        lines.push(`    # Step 2: create post`);
+        lines.push(`    ${varName}_body = {'title': ${title}, 'contentFormat': ${contentFormat}, 'content': ${content}, 'publishStatus': 'draft'}`);
+        lines.push(`    ${varName}_r = _${varName}_c.post(f'https://api.medium.com/v1/users/{${varName}_user_id}/posts', json=${varName}_body, headers=${headers})`);
+        lines.push(`    ${varName}_r.raise_for_status()`);
+        lines.push(`    try:`);
+        lines.push(`        ctx['${varName}'] = {'type': 'data', 'payload': ${varName}_r.json()}`);
+        lines.push(`    except Exception:`);
+        lines.push(`        ctx['${varName}'] = {'type': 'text', 'payload': ${varName}_r.text}`);
+      } else if (lib === 'aiohttp') {
+        lines.push(`# Step 1: get Medium user ID`);
+        lines.push(`async with _session.get('https://api.medium.com/v1/me', headers=${headers}) as ${varName}_me_r:`);
+        lines.push(`    ${varName}_me_r.raise_for_status()`);
+        lines.push(`    ${varName}_me_data = await ${varName}_me_r.json()`);
+        lines.push(`    ${varName}_user_id = ${varName}_me_data.get('data', {}).get('id', '')`);
+        lines.push(`# Step 2: create post`);
+        lines.push(`${varName}_body = {'title': ${title}, 'contentFormat': ${contentFormat}, 'content': ${content}, 'publishStatus': 'draft'}`);
+        lines.push(`async with _session.post(f'https://api.medium.com/v1/users/{${varName}_user_id}/posts', json=${varName}_body, headers=${headers}) as ${varName}_r:`);
+        lines.push(`    ${varName}_r.raise_for_status()`);
+        lines.push(`    try:`);
+        lines.push(`        ctx['${varName}'] = {'type': 'data', 'payload': await ${varName}_r.json()}`);
+        lines.push(`    except Exception:`);
+        lines.push(`        ctx['${varName}'] = {'type': 'text', 'payload': await ${varName}_r.text()}`);
+      } else {
+        // requests
+        lines.push(`# Step 1: get Medium user ID`);
+        lines.push(`${varName}_med_headers = ${headers}`);
+        lines.push(`${varName}_me_r = requests.get('https://api.medium.com/v1/me', headers=${varName}_med_headers)`);
+        lines.push(`${varName}_me_r.raise_for_status()`);
+        lines.push(`${varName}_user_id = ${varName}_me_r.json().get('data', {}).get('id', '')`);
+        lines.push(`# Step 2: create post`);
+        lines.push(`${varName}_body = {'title': ${title}, 'contentFormat': ${contentFormat}, 'content': ${content}, 'publishStatus': 'draft'}`);
+        lines.push(`${varName}_r = requests.post(f'https://api.medium.com/v1/users/{${varName}_user_id}/posts', json=${varName}_body, headers=${varName}_med_headers)`);
+        lines.push(`${varName}_r.raise_for_status()`);
+        lines.push(`try:`);
+        lines.push(`    ctx['${varName}'] = {'type': 'data', 'payload': ${varName}_r.json()}`);
+        lines.push(`except Exception:`);
+        lines.push(`    ctx['${varName}'] = {'type': 'text', 'payload': ${varName}_r.text}`);
+      }
+    } else {
+      // JS/TS medium
+      const tok = `process.env.${envKey} ?? ''`;
+      const medHeaders = isTS
+        ? `const ${varName}_medHeaders: Record<string, string> = { 'Authorization': \`Bearer \${${tok}}\`, 'Content-Type': 'application/json' };`
+        : `const ${varName}_medHeaders = { 'Authorization': \`Bearer \${${tok}}\`, 'Content-Type': 'application/json' };`;
+      lines.push(medHeaders);
+      if (lib === 'axios') {
+        lines.push(`// Step 1: get Medium user ID`);
+        lines.push(`const ${varName}_meR = await axios.get('https://api.medium.com/v1/me', { headers: ${varName}_medHeaders });`);
+        lines.push(`const ${varName}_userId = ${varName}_meR.data?.data?.id ?? '';`);
+        lines.push(`// Step 2: create post`);
+        lines.push(`const ${varName}_medBody = { title: ${title}, contentFormat: ${contentFormat}, content: ${content}, publishStatus: 'draft' };`);
+        lines.push(`const ${varName}_r = await axios.post(\`https://api.medium.com/v1/users/\${${varName}_userId}/posts\`, ${varName}_medBody, { headers: ${varName}_medHeaders });`);
+        lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_r.data };`);
+      } else if (lib === 'got') {
+        lines.push(`// Step 1: get Medium user ID`);
+        lines.push(`const ${varName}_meR = await got.get<any>('https://api.medium.com/v1/me', { headers: ${varName}_medHeaders, responseType: 'json' as const });`);
+        lines.push(`const ${varName}_userId = (${varName}_meR.body as any)?.data?.id ?? '';`);
+        lines.push(`// Step 2: create post`);
+        lines.push(`const ${varName}_medBody = { title: ${title}, contentFormat: ${contentFormat}, content: ${content}, publishStatus: 'draft' };`);
+        lines.push(`const ${varName}_r = await got.post<any>(\`https://api.medium.com/v1/users/\${${varName}_userId}/posts\`, { json: ${varName}_medBody, headers: ${varName}_medHeaders, responseType: 'json' as const });`);
+        lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_r.body };`);
+      } else {
+        // fetch / node-fetch
+        lines.push(`// Step 1: get Medium user ID`);
+        lines.push(`const ${varName}_meR = await fetch('https://api.medium.com/v1/me', { headers: ${varName}_medHeaders });`);
+        lines.push(`if (!${varName}_meR.ok) throw new Error(\`Medium /me error: \${${varName}_meR.status}\`);`);
+        lines.push(`const ${varName}_meData = await ${varName}_meR.json();`);
+        lines.push(`const ${varName}_userId = ${varName}_meData?.data?.id ?? '';`);
+        lines.push(`// Step 2: create post`);
+        lines.push(`const ${varName}_medBody = { title: ${title}, contentFormat: ${contentFormat}, content: ${content}, publishStatus: 'draft' };`);
+        lines.push(`const ${varName}_r = await fetch(\`https://api.medium.com/v1/users/\${${varName}_userId}/posts\`, { method: 'POST', headers: ${varName}_medHeaders, body: JSON.stringify(${varName}_medBody) });`);
+        lines.push(`if (!${varName}_r.ok) throw new Error(\`Medium post error: \${${varName}_r.status}\`);`);
+        lines.push(`ctx['${varName}'] = { type: 'data', payload: await ${varName}_r.json() };`);
+      }
+    }
+    return lines.map(l => `${ind}${l}`).join('\n') + '\n';
+  }
+
+  // ── Standard single-step providers ────────────────────────────────
 
   // Resolve URL path params by substituting {UPPER_SNAKE} placeholders
   let urlStr = urlTemplate;
@@ -406,8 +743,11 @@ function compileTypeScriptOrJS(
   const llmImportLines = new Set<string>();
   for (const p of meta.llmProviders) llmImportLines.add(genLLMImports(lib, p));
 
+  // Install comment at very top
+  let code = genInstallComment(lib, meta.llmProviders, hasSchedule);
+
   // File header
-  let code = `/**\n * AgentForge — Compiled Flow (${language}${lib !== 'fetch' ? ` / ${lib}` : ''})\n`;
+  code += `/**\n * AgentForge — Compiled Flow (${language}${lib !== 'fetch' ? ` / ${lib}` : ''})\n`;
   code += ` * Run: ${isTS ? `npx ts-node agent.${fileExt}` : `node agent.${fileExt}`}\n`;
   if (meta.envKeys.size) {
     code += ` *\n * Required ENV variables: ${[...meta.envKeys].join(', ')}\n`;
@@ -422,6 +762,9 @@ function compileTypeScriptOrJS(
   // LLM SDK imports
   for (const imp of llmImportLines) code += imp;
   if (llmImportLines.size) code += '\n';
+
+  // Helper functions (_s, _get, vaultLookup)
+  code += '\n' + genHelperCode(lib, isTS);
 
   // TypeScript context interface
   if (isTS) {
@@ -482,6 +825,7 @@ function compileTypeScriptOrJS(
         break;
       }
 
+      case 'appaction':
       case 'app_action': {
         code += genAppActionBlock(node, varName, names, lib, '  ', isTS);
         break;
@@ -529,8 +873,7 @@ function compileTypeScriptOrJS(
         const upstreamVar = incomingId ? names[incomingId] : Object.keys(names)[0];
         code += `  const ${varName}_input = String(ctx['${upstreamVar}']?.payload ?? '').toLowerCase();\n`;
         routes.forEach((route, i) => {
-          const cond = (conditions[route] || '').toLowerCase();
-          const jsCond = cond ? `${varName}_input.includes('${cond.replace(/'/g, "\\'")}')` : 'true';
+          const jsCond = buildRouterCond(conditions[route] || '', `${varName}_input`, 'js');
           code += `  ${i === 0 ? 'if' : 'else if'} (${jsCond}) {\n    // Route: ${route}\n    ctx['${varName}'] = { type: 'text', payload: '${route}' };\n  }\n`;
         });
         break;
@@ -557,12 +900,13 @@ function compileTypeScriptOrJS(
         const liftedQ = liftTemplate(query, names, lib);
         code += `  // Vault: perform RAG lookup against your knowledge source\n`;
         code += `  const ${varName}_query = ${liftedQ};\n`;
-        code += `  ctx['${varName}'] = { type: 'text', payload: \`[Vault result for: \${${varName}_query.substring(0, 80)}]\` };\n`;
+        code += `  ctx['${varName}'] = { type: 'text', payload: await vaultLookup(${varName}_query) };\n`;
         break;
       }
 
       default: {
-        code += `  ctx['${varName}'] = { type: 'text', payload: '${node.type} executed' };\n`;
+        code += `  // NOTE: node type '${node.type}' has no compiled handler — skipped\n`;
+        code += `  ctx['${varName}'] = { type: 'text', payload: '' };\n`;
         break;
       }
     }
@@ -598,8 +942,11 @@ function compilePython(
   const llmImportLines = new Set<string>();
   for (const p of meta.llmProviders) llmImportLines.add(genLLMImports(lib, p));
 
+  // Install comment at very top
+  let code = genInstallComment(lib, meta.llmProviders, hasSchedule);
+
   // File header
-  let code = `# AgentForge — Compiled Flow (Python / ${lib})\n# Run: python agent.py\n`;
+  code += `# AgentForge — Compiled Flow (Python / ${lib})\n# Run: python agent.py\n`;
   if (meta.envKeys.size) {
     code += `#\n# Required ENV variables: ${[...meta.envKeys].join(', ')}\n`;
     code += `# Create a .env file and load with python-dotenv, or export them in your shell.\n`;
@@ -611,6 +958,9 @@ function compilePython(
   for (const imp of llmImportLines) code += imp;
   code += '\n\n';
 
+  // Helper functions (_s, _get, vault_lookup)
+  code += genHelperCode(lib) + '\n';
+
   const ind = '    '; // 4-space indent inside function
   const defLine = isAsync
     ? `async def run_agent(initial_input: str = "Default") -> dict:`
@@ -620,7 +970,7 @@ function compilePython(
 
   // For aiohttp, open a shared session around all HTTP calls
   const aiohttpSession = isAsync && nodes.some(
-    n => (n.type === 'action' && n.data.url?.trim()) || n.type === 'app_action'
+    n => (n.type === 'action' && n.data.url?.trim()) || n.type === 'app_action' || n.type === 'appaction'
   );
   if (aiohttpSession) code += `${ind}async with aiohttp.ClientSession() as _session:\n`;
   const nodeInd = aiohttpSession ? ind + '    ' : ind;
@@ -669,6 +1019,7 @@ function compilePython(
         break;
       }
 
+      case 'appaction':
       case 'app_action': {
         code += genAppActionBlock(node, varName, names, lib, nodeInd, false);
         break;
@@ -716,8 +1067,7 @@ function compilePython(
         const upstreamVar = incomingId ? names[incomingId] : 'input';
         code += `${nodeInd}${varName}_input = str(ctx.get('${upstreamVar}', {}).get('payload', '')).lower()\n`;
         routes.forEach((route, i) => {
-          const cond = (conditions[route] || '').toLowerCase();
-          const pyCond = cond ? `'${cond}' in ${varName}_input` : 'True';
+          const pyCond = buildRouterCond(conditions[route] || '', `${varName}_input`, 'py');
           code += `${nodeInd}${i === 0 ? 'if' : 'elif'} ${pyCond}:  # Route: ${route}\n`;
           code += `${nodeInd}    ctx['${varName}'] = {'type': 'text', 'payload': '${route}'}\n`;
         });
@@ -745,12 +1095,13 @@ function compilePython(
         const liftedQ = liftTemplate(query, names, lib);
         code += `${nodeInd}# Vault: perform RAG lookup against your knowledge source\n`;
         code += `${nodeInd}${varName}_query = ${liftedQ}\n`;
-        code += `${nodeInd}ctx['${varName}'] = {'type': 'text', 'payload': f'[Vault result for: {${varName}_query[:80]}]'}\n`;
+        code += `${nodeInd}ctx['${varName}'] = {'type': 'text', 'payload': vault_lookup(${varName}_query)}\n`;
         break;
       }
 
       default: {
-        code += `${nodeInd}ctx['${varName}'] = {'type': 'text', 'payload': '${node.type} executed'}\n`;
+        code += `${nodeInd}# NOTE: node type '${node.type}' has no compiled handler — skipped\n`;
+        code += `${nodeInd}ctx['${varName}'] = {'type': 'text', 'payload': ''}\n`;
         break;
       }
     }

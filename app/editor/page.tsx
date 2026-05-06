@@ -30,7 +30,9 @@ import {
   Lock,
   Sparkles,
   History,
-  Camera,
+  Download,
+  FileImage,
+  FileDown,
   AlertTriangle,
 } from "lucide-react";
 
@@ -139,10 +141,12 @@ function EditorContent() {
   const [showShareMenu, setShowShareMenu] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showRunMenu, setShowRunMenu] = useState(false);
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   const versionRef = useRef<HTMLDivElement>(null);
   const shareMenuRef = useRef<HTMLDivElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const runMenuRef = useRef<HTMLDivElement>(null);
+  const downloadRef = useRef<HTMLDivElement>(null);
 
   const [snapshots, setSnapshots] = useState<FlowSnapshot[]>([]);
   const [showTerminal, setShowTerminal] = useState(false);
@@ -376,6 +380,7 @@ function EditorContent() {
       if (shareMenuRef.current && !shareMenuRef.current.contains(e.target as Node)) setShowShareMenu(false);
       if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) setShowProfileMenu(false);
       if (runMenuRef.current && !runMenuRef.current.contains(e.target as Node)) setShowRunMenu(false);
+      if (downloadRef.current && !downloadRef.current.contains(e.target as Node)) setShowDownloadMenu(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -526,24 +531,15 @@ function EditorContent() {
     return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
   };
 
-  const handleScreenshot = async () => {
-    const { toPng } = await import("html-to-image");
-    const el = document.querySelector(".react-flow__viewport")?.parentElement as HTMLElement | null
-      ?? document.querySelector(".react-flow__renderer") as HTMLElement | null;
-    if (!el) return;
+  const handleExport = async (format: "png" | "jpeg" | "pdf") => {
+    setShowDownloadMenu(false);
     try {
-      const isDark = document.documentElement.classList.contains("dark");
-      const dataUrl = await toPng(el, {
-        cacheBust: true,
-        pixelRatio: 2,
-        backgroundColor: isDark ? "#0f172a" : "#f8fafc",
-      });
-      const link = document.createElement("a");
-      link.download = "workflow-snapshot.png";
-      link.href = dataUrl;
-      link.click();
+      const { exportAsPng, exportAsJpeg, exportAsPdf } = await import("@/lib/utils/export");
+      if (format === "png") await exportAsPng();
+      else if (format === "jpeg") await exportAsJpeg();
+      else await exportAsPdf();
     } catch (err) {
-      console.error("Screenshot failed:", err);
+      console.error("Export failed:", err);
     }
   };
 
@@ -739,14 +735,44 @@ function EditorContent() {
               )}
             </div>
 
-            {/* Screenshot */}
-            <button
-              onClick={handleScreenshot}
-              className="p-1.5 rounded-full transition-colors text-slate-400 hover:text-indigo-400"
-              title="Download workflow as PNG"
-            >
-              <Camera size={15} />
-            </button>
+            {/* Download dropdown */}
+            <div className="relative" ref={downloadRef}>
+              <button
+                onClick={() => setShowDownloadMenu((v) => !v)}
+                className={cn(
+                  "p-1.5 rounded-full transition-colors",
+                  showDownloadMenu ? "text-indigo-400" : "text-slate-400 hover:text-indigo-400"
+                )}
+                title="Export workflow"
+              >
+                <Download size={15} />
+              </button>
+
+              {showDownloadMenu && (
+                <div className="absolute right-0 top-full mt-2 w-48 bg-[#0b0e14]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150">
+                  <div className="px-3 py-2 border-b border-white/5">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">Export As</span>
+                  </div>
+                  {[
+                    { format: "png" as const, label: "Export as PNG", sub: "High quality", icon: <FileImage size={13} /> },
+                    { format: "jpeg" as const, label: "Export as JPEG", sub: "Standard", icon: <FileImage size={13} /> },
+                    { format: "pdf" as const, label: "Export as PDF", sub: "Document", icon: <FileDown size={13} /> },
+                  ].map(({ format, label, sub, icon }) => (
+                    <button
+                      key={format}
+                      onClick={() => handleExport(format)}
+                      className="flex items-center gap-2.5 w-full px-3 py-2.5 text-left text-[11px] font-semibold text-slate-300 hover:bg-white/5 transition-colors"
+                    >
+                      <span className="text-slate-500">{icon}</span>
+                      <div>
+                        <p>{label}</p>
+                        <p className="text-[9px] font-normal text-slate-500">{sub}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Theme Toggle */}
             <ThemeToggle />
