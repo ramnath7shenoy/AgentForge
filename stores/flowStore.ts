@@ -38,6 +38,7 @@ export interface ExtendedFlowState extends FlowState {
   deleteNode: (nodeId: string) => void;
   unwrapSubagent: (nodeId: string) => void;
   wrapSubagent: (groupId: string) => void;
+  discardLastSnapshot: () => void;
   onNodeDragStop: (event: React.MouseEvent, node: Node) => void;
   nodeStatuses: Record<string, NodeExecutionStatus>;
   setNodeStatus: (nodeId: string, status: NodeExecutionStatus) => void;
@@ -216,6 +217,10 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
       past: [...state.past.slice(-50), { nodes: JSON.parse(JSON.stringify(nodes)), edges: JSON.parse(JSON.stringify(edges)) }],
       future: []
     }));
+  },
+
+  discardLastSnapshot: () => {
+    set((state) => ({ past: state.past.slice(0, -1) }));
   },
 
   undo: () => {
@@ -473,13 +478,6 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
       Object.values(finalState.nodes).pop() ||
       null;
 
-    // Auto-clear input nodes so the chat box is ready for the next turn.
-    const clearedNodes = nodes.map((n) =>
-      n.type === 'input'
-        ? { ...n, data: { ...n.data, packet: { type: 'text' as const, payload: '' } } }
-        : n
-    );
-
     // ── Functional set: reads the LIVE chatHistory ───────────────────────────
     // By using (state) => … here we read the Zustand state at the moment of
     // this set call — AFTER execution — so any addMessage() calls made during
@@ -514,7 +512,7 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
         chatHistory: liveHistory,
         lastContext: finalState,
         lastChatHistory: chatHistory,
-        nodes: clearedNodes,
+        nodes,
       };
     });
 

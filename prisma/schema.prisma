@@ -32,6 +32,7 @@ model Flow {
   projectId      String?   @map("project_id") @db.Uuid
   isPublic       Boolean?  @default(false) @map("is_public")
   publicEditable Boolean?  @default(false) @map("public_editable")
+  isDeployed     Boolean?  @default(false) @map("is_deployed")
   description    String?
   thumbnail      String?
   folderId       String?   @map("folder_id") @db.Uuid

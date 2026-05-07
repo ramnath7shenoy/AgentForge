@@ -27,10 +27,15 @@ app/
     integration.ts      # OAuth integration actions: getIntegrations, upsertIntegration, deleteIntegration, executeAppAction
     auth.ts, flow.ts, project.ts
   api/
-    execute/route.ts    # POST endpoint for server-side flow execution
+    execute/route.ts    # Legacy mock POST endpoint (unused — superseded by sandbox/execute)
+    sandbox/
+      execute/route.ts  # POST endpoint: accepts {nodes, edges, input, apiKeys[]} → SSE stream of log/status/output/result/done events; runs serverExecutor server-side
     vector-search/      # BM25 lexical search endpoint — ranks doc chunks by relevance (no external dep)
   editor/page.tsx       # Main canvas page (FlowCanvas + all panels + Download dropdown)
-  publish/page.tsx      # Code export page (polyglot compile to TS/JS/Python across 7 libraries)
+  publish/page.tsx      # Universal Preview + Environment Sandbox: env config panel (API keys + Sync from Vault), Run Sandbox (server-side SSE), Share Sandbox (saves flow as public → /sandbox/[id] URL), code export (polyglot TS/JS/Python)
+  sandbox/
+    [id]/page.tsx       # Server component: loads flow by ID, access-controls by isPublic + ownership, renders SandboxClient
+    [id]/SandboxClient.tsx  # Client component: API key config, prompt input, SandboxGallery; calls /api/sandbox/execute
   dashboard/
     page.tsx            # Project management
     integrations/page.tsx  # OAuth integration management UI — 8 providers with official brand SVGs
@@ -43,16 +48,21 @@ components/
     chat/               # ChatHub — floating chat panel + approval routing
     sidebar/            # NodeSettingsSidebar (includes appaction settings panel), NodeSidebar
     AIArchitectModal.tsx        # AI workflow generator modal
-    ResponseGallery.tsx         # Terminal | Final Result tabs with prettified JSON output
+    ResponseGallery.tsx         # Terminal | Final Result tabs with prettified JSON output (reads useFlowStore + useLogStore)
+    SandboxGallery.tsx          # Prop-driven Terminal | Final Result tabs — reads from useSandboxExecution hook props, NOT from useFlowStore; used on publish page and /sandbox/[id]
     ExecutionLogPanel.tsx
     FinalResultPanel.tsx
     ApprovalBanner.tsx
     VariableInspectorPanel.tsx  # Live variable inspection during execution
     SharedViewContent.tsx       # Shared read-only view wrapper
 
+hooks/
+  useSandboxExecution.ts  # Client hook: POSTs to /api/sandbox/execute, reads SSE stream line-by-line, maintains isolated state (logs, nodeStatuses, nodeOutputs, finalResult, running) — does NOT write to useFlowStore
+
 lib/
   flow/
-    clientExecutor.ts   # Reactive Engine — topological event-driven executor (main path); includes appaction handler
+    clientExecutor.ts   # Reactive Engine — topological event-driven executor (main path); includes appaction handler; "use client", cannot be imported in API routes
+    serverExecutor.ts   # Server-safe reactive engine — no "use client", no ReactFlow/vaultStore deps; accepts apiKeys[] parameter; handles input/ai/output/router/processor/action/appaction; approval+gatekeeper skipped with warning; used by /api/sandbox/execute
     layoutEngine.ts     # Dagre-based auto-layout (TB/LR); skips group containers
     validators.ts       # Kahn's algorithm cycle detection — call before adding edges
   providers/
@@ -245,8 +255,63 @@ Each provider receives its native message-array format — no string concatenati
 
 Full conversation history is passed as-is from `chatHistory`.
 
-### Prettified Output (ResponseGallery)
+### Prettified Output (ResponseGallery / SandboxGallery)
 `ExecutionManifest` component runs a `useMemo` on `rawOutput`. If the trimmed output starts with `{` and parses as a non-array JSON object, renders key-value cards (one bordered row per entry). Otherwise renders as `<pre>`. Prevents raw `{"x":"...", "linkedin":"..."}` blobs from appearing as opaque text.
+
+---
+
+## Environment Sandbox
+
+### Architecture
+```
+Browser                               Server (Vercel Node.js)
+────────────────────────              ──────────────────────────────────
+/publish  or  /sandbox/[id]           /api/sandbox/execute
+┌──────────────────────────┐          ┌────────────────────────────────┐
+│ Env Config Panel         │          │ serverExecutor.executeGraphServer│
+│  [KEY] [value] [eye]     │─ POST ──►│  apiKeys[] injected             │
+│  [Sync from Vault]       │          │  topological reactive dispatch  │
+│ [Run Sandbox ▶]          │◄─ SSE ──│  SSE events:                   │
+│ SandboxGallery           │          │    {t:"log"|"status"|"output"  │
+│  · Terminal (live logs)  │          │      |"result"|"done"|"error"} │
+│  · Final Result          │          └────────────────────────────────┘
+│ [Share Sandbox 🔗]       │
+└──────────────────────────┘
+```
+
+### `lib/flow/serverExecutor.ts`
+Server-safe reimplementation of the reactive engine. Key differences from `clientExecutor.ts`:
+- No `"use client"` directive — importable in API routes
+- No ReactFlow types (uses plain `SandboxNode` / `SandboxEdge` interfaces)
+- No `vaultStore` — accepts `apiKeys: SandboxApiKey[]` parameter; `resolveApiKeyFromList` replaces `resolveApiKey`
+- `approval` / `gatekeeper` nodes: auto-pass with a WARN log (no browser UI to suspend on)
+- `vault` nodes: returns the resolved query string, no vector-search HTTP call
+- Same topological reactive dispatch as clientExecutor: `inflight` set + `Promise.all(roots)` + polling `while(inflight.size > 0)`
+
+### `hooks/useSandboxExecution.ts`
+Isolated client-side hook. Maintains its own `logs`, `nodeStatuses`, `nodeOutputs`, `executedNodeIds`, `finalResult`, `running` state — completely independent of `useFlowStore` / `useLogStore`. This prevents sandbox runs from opening the chat panel, polluting the editor's execution history, or affecting `nodeStatuses` on the canvas.
+
+### `/api/sandbox/execute` SSE Protocol
+```ts
+// Events streamed as: data: <JSON>\n\n
+{ t: "log",    type: "INFO"|"SUCCESS"|"ERROR"|"WARN", message: string, nodeId?: string }
+{ t: "status", nodeId: string, status: "idle"|"running"|"success"|"error"|"skipped" }
+{ t: "output", nodeId: string, packet: SandboxFlowPacket }
+{ t: "result", packet: SandboxFlowPacket }   // context.variables.output after execution
+{ t: "done" }
+{ t: "error",  message: string }
+```
+
+### Publish Page Sandbox Flow
+1. User fills "Environment Config" (key/value API keys) — or clicks **Sync from Vault** to 1-click populate from `useVaultStore` entries (one-way, vault → sandbox only; keys never written back or included in shared URL)
+2. User types a test prompt in "Universal Input"
+3. **Run Sandbox**: `useSandboxExecution.run(nodes, edges, input, envKeys)` → POST to `/api/sandbox/execute` → SSE stream decoded → `SandboxGallery` updates live
+4. **Share Sandbox**: calls `saveFlow(..., isPublic: true)` then `publishFlow(flowId)` → saves flow to Prisma, marks `isPublic: true`, copies `/sandbox/{flowId}` URL to clipboard — API keys are NOT saved
+
+### Shareable Sandbox Page (`/sandbox/[id]`)
+- Server component loads flow from Prisma via `getFlow(id)`; 404 if `!isPublic && !isOwner`
+- `SandboxClient.tsx` (client component): tester provides their own API keys + prompt, runs the flow via the same SSE endpoint
+- No canvas, no code export — clean input/output interface
 
 ---
 

@@ -127,13 +127,9 @@ const applySeqAttn = (
 // ─────────────────────────────────────────────────────────────────────
 // Model Registry & Provider Detection
 // ─────────────────────────────────────────────────────────────────────
-// Smart Resolve registry — first model per provider is the JIT default.
-// Resolution: gsk_ → Groq/llama-3.3-70b | sk- → OpenAI/gpt-4o | AIza → Gemini/gemini-2.0-flash
-const MODEL_REGISTRY: Record<string, string[]> = {
-  gemini: ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash"],
-  groq:   ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"],
-  openai: ["gpt-4o", "gpt-4-turbo"],
-};
+import { MODEL_DEFAULTS, resolveModelChain } from "@/lib/flow/modelRegistry";
+// MODEL_DEFAULTS: { gemini: [...], groq: [...], openai: [...], anthropic: [...] }
+// resolveModelChain: builds ordered fallback list for a provider + capability
 
 const detectProvider = (key: string): string => {
   if (key.startsWith("gsk_")) return "groq";
@@ -143,23 +139,34 @@ const detectProvider = (key: string): string => {
 };
 
 // ─────────────────────────────────────────────────────────────────────
-// Multi-LLM Dispatcher — Native Multi-Turn Message Arrays
+// Multi-LLM Dispatcher — Native Multi-Turn Message Arrays + Multimodal
 //
 // Sends the full conversation history as the provider's native format:
 //   OpenAI / Groq  → messages[]  with system + alternating user/assistant
 //   Gemini         → contents[]  with user/model roles + systemInstruction
 //   Anthropic      → messages[]  with system field + user/assistant turns
 //
+// Attachments (base64 files) are injected into the user turn as native
+// multimodal content:
+//   Gemini   → inlineData parts alongside text
+//   OpenAI   → image_url content blocks (images only)
+//   Anthropic → image content blocks with base64 source
+//   Groq     → text-only (vision not universally available; attachments skipped)
+//
 // This is the only place the API key is in scope; it is purged by the
 // JIT pattern in the calling code immediately after this returns.
 // ─────────────────────────────────────────────────────────────────────
+
+interface Attachment { data: string; mimeType: string; name?: string }
+
 async function dispatchLLM(
   providerKey: string,
   modelName: string,
   apiKey: string,
   userMessage: string,
   conversationHistory: ChatMessage[],
-  onLog: (msg: string, type: any) => void
+  onLog: (msg: string, type: any) => void,
+  attachments?: Attachment[]
 ): Promise<string> {
   const provider = providerKey || detectProvider(apiKey);
   const turnCount = conversationHistory.length + 1;
@@ -176,29 +183,55 @@ async function dispatchLLM(
   let headers: Record<string, string>;
   let body: any;
 
+  const imageAtts = attachments?.filter((a) => a.mimeType.startsWith("image/")) ?? [];
+
   if (provider === "groq" || provider === "openai") {
     url =
       provider === "groq"
         ? "https://api.groq.com/openai/v1/chat/completions"
         : "https://api.openai.com/v1/chat/completions";
     headers = { Authorization: `Bearer ${apiKey}` };
+
+    // Both OpenAI and Groq accept the image_url content-array format.
+    // Groq vision requires a vision-capable model — switch automatically.
+    let resolvedModel = modelName || (provider === "groq" ? "mixtral-8x7b-32768" : "gpt-4-turbo");
+    let userContent: any;
+
+    if (imageAtts.length > 0) {
+      if (provider === "groq") {
+        resolvedModel = "meta-llama/llama-4-scout-17b-16e-instruct";
+        onLog(`🖼️ Groq vision: routing to ${resolvedModel}`, "INFO");
+      }
+      const parts: any[] = [{ type: "text", text: userMessage }];
+      for (const att of imageAtts) {
+        parts.push({ type: "image_url", image_url: { url: `data:${att.mimeType};base64,${att.data}` } });
+      }
+      userContent = parts;
+    } else {
+      userContent = userMessage;
+    }
+
     body = {
-      model:
-        modelName || (provider === "groq" ? "mixtral-8x7b-32768" : "gpt-4-turbo"),
+      model: resolvedModel,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        ...conversationHistory.map((m) => ({
-          role: m.role,
-          content: m.content,
-        })),
-        { role: "user", content: userMessage },
+        ...conversationHistory.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user", content: userContent },
       ],
     };
   } else if (provider === "gemini") {
-    url = `https://generativelanguage.googleapis.com/v1/models/${
-      modelName || "gemini-2.5-flash"
+    url = `https://generativelanguage.googleapis.com/v1beta/models/${
+      modelName || "gemini-2.0-flash"
     }:generateContent?key=${apiKey}`;
     headers = {};
+
+    // Images listed first — Gemini attends better when visual context precedes text
+    const userParts: any[] = [];
+    for (const att of (attachments ?? [])) {
+      userParts.push({ inlineData: { mimeType: att.mimeType, data: att.data } });
+    }
+    userParts.push({ text: userMessage });
+
     body = {
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       contents: [
@@ -206,7 +239,7 @@ async function dispatchLLM(
           role: m.role === "assistant" ? "model" : "user",
           parts: [{ text: m.content }],
         })),
-        { role: "user", parts: [{ text: userMessage }] },
+        { role: "user", parts: userParts },
       ],
     };
   } else if (provider === "anthropic") {
@@ -216,44 +249,87 @@ async function dispatchLLM(
       "anthropic-version": "2023-06-01",
       "anthropic-dangerously-allow-browser": "true",
     };
+
+    // Always use the array format — Anthropic accepts it for plain text too,
+    // and the ternary fallback silently dropped images when length === 1.
+    const userContent: any[] = [];
+    for (const att of imageAtts) {
+      userContent.push({ type: "image", source: { type: "base64", media_type: att.mimeType as any, data: att.data } });
+    }
+    userContent.push({ type: "text", text: userMessage });
+
     body = {
       model: modelName || "claude-sonnet-4-6",
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: [
-        ...conversationHistory.map((m) => ({
-          role: m.role,
-          content: m.content,
-        })),
-        { role: "user", content: userMessage },
+        ...conversationHistory.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user", content: userContent },
       ],
     };
   } else {
     throw new Error(`Unsupported provider: ${provider}`);
   }
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify(body),
-  });
+  // ── Model resilience: compute fallback chain, retry on 404/410 ──────────
+  const initialModel = provider === "gemini"
+    ? (modelName || "gemini-2.0-flash")
+    : (body.model as string);
+  const modelChain = resolveModelChain(provider, initialModel, imageAtts.length > 0);
 
-  const data = await response.json();
-  if (!response.ok) {
-    if (response.status === 429)
-      throw new Error(
-        `Rate limit exceeded (429) on ${provider.toUpperCase()}. Wait a moment or switch providers.`
+  const truncateBase64 = (obj: any): any => {
+    if (typeof obj === "string" && obj.length > 80) return obj.slice(0, 60) + `…[+${obj.length - 60}chars]`;
+    if (Array.isArray(obj)) return obj.map(truncateBase64);
+    if (obj && typeof obj === "object")
+      return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, truncateBase64(v)]));
+    return obj;
+  };
+
+  const STALE = new Set([404, 410]);
+  let lastError: Error | null = null;
+
+  for (const candidate of modelChain) {
+    if (provider === "gemini") {
+      url = `https://generativelanguage.googleapis.com/v1beta/models/${candidate}:generateContent?key=${apiKey}`;
+    } else {
+      body.model = candidate;
+    }
+
+    // Pre-flight debug log
+    try {
+      console.log(
+        `[dispatchLLM] ${provider.toUpperCase()} /${candidate}  attachments=${imageAtts.length}`,
+        JSON.stringify(truncateBase64(JSON.parse(JSON.stringify(body))), null, 2)
       );
-    if (response.status >= 500)
-      throw new Error(
-        `${provider.toUpperCase()} server error (${response.status}). Try again later.`
-      );
-    throw new Error(data.error?.message || `${provider.toUpperCase()} API Error ${response.status}`);
+    } catch { /* serialisation error — skip log */ }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      if (STALE.has(response.status)) {
+        onLog(`⚠️ "${candidate}" unavailable (${response.status}), trying next fallback…`, "WARN");
+        lastError = new Error(data.error?.message || `Model ${candidate} returned ${response.status}`);
+        continue;
+      }
+      if (response.status === 429)
+        throw new Error(`Rate limit exceeded (429) on ${provider.toUpperCase()}. Wait a moment or switch providers.`);
+      if (response.status >= 500)
+        throw new Error(`${provider.toUpperCase()} server error (${response.status}). Try again later.`);
+      throw new Error(data.error?.message || `${provider.toUpperCase()} API Error ${response.status}`);
+    }
+
+    if (provider === "gemini") return data.candidates[0].content.parts[0].text;
+    if (provider === "anthropic") return data.content[0].text;
+    return data.choices[0].message.content;
   }
 
-  if (provider === "gemini") return data.candidates[0].content.parts[0].text;
-  if (provider === "anthropic") return data.content[0].text;
-  return data.choices[0].message.content;
+  throw lastError || new Error(`All fallback models exhausted for ${provider.toUpperCase()}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -480,10 +556,15 @@ async function executeNode(
     }
 
     case "input": {
-      const packet = current.data?.packet || {
-        type: "text",
-        payload: initialInput,
-      };
+      const base = current.data?.packet || { type: "text", payload: initialInput };
+      // Merge packed file context into the payload at execution time.
+      // fileContext is stored separately so the textarea stays clean.
+      const packet: FlowPacket = { ...base };
+      if (packet.fileContext) {
+        packet.payload = packet.payload
+          ? `${packet.payload}\n\n${packet.fileContext}`
+          : packet.fileContext;
+      }
       context.variables.input = packet;
       return packet;
     }
@@ -533,6 +614,12 @@ async function executeNode(
         current.id
       );
 
+      // Extract attachments from the input packet for multimodal dispatch
+      const inputAttachments = (context.variables.input as any)?.attachments as Attachment[] | undefined;
+      if (inputAttachments?.length) {
+        sendLog(`📎 ${inputAttachments.length} attachment(s) forwarded to LLM`, "INFO", current.id);
+      }
+
       // E. JIT Key Resolution + Smart Failover
       sendLog("🔍 Resolving provider and key from vault...", "INFO", current.id);
 
@@ -551,8 +638,8 @@ async function executeNode(
         jitKey = key;
 
         const models =
-          MODEL_REGISTRY[resolvedProvider] || [
-            current.data?.modelName || "gemini-2.5-flash",
+          MODEL_DEFAULTS[resolvedProvider] || [
+            current.data?.modelName || "gemini-2.0-flash",
           ];
 
         for (const model of models) {
@@ -571,7 +658,8 @@ async function executeNode(
                 jitKey,
                 resolvedPrompt,
                 chatHistory,
-                (msg, type) => sendLog(msg, type, current.id)
+                (msg, type) => sendLog(msg, type, current.id),
+                inputAttachments
               ),
               30_000,
               `${resolvedProvider.toUpperCase()}/${model}`

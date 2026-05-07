@@ -242,6 +242,53 @@ export async function saveSharedFlow(
 }
 
 /**
+ * Toggle the isDeployed flag for a flow (Agent Store listing).
+ * Only the owner can deploy/undeploy their flow.
+ */
+export async function toggleStoreDeployment(flowId: string) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: 'Not authenticated' };
+
+    const flow = await prisma.flow.findUnique({
+      where: { id: flowId },
+      select: { userId: true, isPublic: true, isDeployed: true } as any,
+    }) as any;
+
+    if (!flow) return { success: false, error: 'Flow not found' };
+    if (flow.userId !== user.id) return { success: false, error: 'Unauthorized' };
+
+    const updated = await prisma.flow.update({
+      where: { id: flowId },
+      data: { isDeployed: !flow.isDeployed, isPublic: true } as any,
+    });
+
+    return { success: true, isDeployed: !(flow.isDeployed), flow: updated };
+  } catch (error: any) {
+    console.error('Failed to toggle store deployment:', error);
+    return { success: false, error: error.message || 'Failed to toggle deployment' };
+  }
+}
+
+/**
+ * Fetch all publicly deployed flows for the Agent Store.
+ */
+export async function getDeployedFlows() {
+  try {
+    const flows = await (prisma.flow as any).findMany({
+      where: { isDeployed: true, isPublic: true },
+      select: { id: true, name: true, description: true, thumbnail: true, userId: true, updated_at: true },
+      orderBy: { updated_at: 'desc' },
+    });
+    return { success: true, flows };
+  } catch (error: any) {
+    console.error('Failed to fetch deployed flows:', error);
+    return { success: false, flows: [], error: error.message };
+  }
+}
+
+/**
  * Delete a flow.
  * - Verifies the current user owns the flow before deletion.
  */

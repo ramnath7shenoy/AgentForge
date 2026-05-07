@@ -41,6 +41,9 @@ import ApprovalNode from "../nodes/ApprovalNode";
 import GroupNode from "../nodes/GroupNode";
 import AppActionNode from "../nodes/AppActionNode";
 
+// Module-level map stores each node's position at drag-start for position-change detection.
+const preDragPositions = new Map<string, { x: number; y: number }>();
+
 interface FlowCanvasProps {
   setSelectedNodeId: (id: string | null) => void;
   editable?: boolean;
@@ -52,7 +55,7 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
   const edgesFromStore = useFlowStore((state) => state.edges);
   const edges = useMemo(() => edgesFromStore || [], [edgesFromStore]);
   const theme = useFlowStore((state) => state.theme);
-  const { setNodes, setEdges, addNode, activeEdgeId, showMinimap, tutorialStep, setTutorialStep, takeSnapshot, applyAutoLayout, layoutDirection } = useFlowStore();
+  const { setNodes, setEdges, addNode, activeEdgeId, showMinimap, tutorialStep, setTutorialStep, takeSnapshot, discardLastSnapshot, onNodeDragStop: storeDragStop, applyAutoLayout, layoutDirection } = useFlowStore();
   const nodeStatuses = useFlowStore((state) => state.nodeStatuses);
   const lastAction = useFlowStore((state) => state.lastAction);
   const { project, fitView } = useReactFlow();
@@ -114,6 +117,26 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
       }
     }
   }, [edges, nodes, setEdges, tutorialStep, setTutorialStep, takeSnapshot]);
+
+  const onNodeDragStart = useCallback((_event: React.MouseEvent, node: Node) => {
+    // Capture pre-drag position and take snapshot of current state.
+    // If the node doesn't actually move, discardLastSnapshot is called in onNodeDragStop.
+    preDragPositions.set(node.id, { x: node.position.x, y: node.position.y });
+    takeSnapshot();
+  }, [takeSnapshot]);
+
+  const onNodeDragStop = useCallback((event: React.MouseEvent, node: Node) => {
+    const prev = preDragPositions.get(node.id);
+    preDragPositions.delete(node.id);
+
+    // If the node didn't actually move, throw away the snapshot we just took.
+    if (prev && prev.x === node.position.x && prev.y === node.position.y) {
+      discardLastSnapshot();
+    }
+
+    // Delegate group-parenting logic to the store action.
+    storeDragStop(event, node);
+  }, [discardLastSnapshot, storeDragStop]);
 
   const onNodesDelete = useCallback(() => {
     takeSnapshot();
@@ -214,6 +237,8 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
         onNodesDelete={editable ? onNodesDelete : undefined}
         onEdgesDelete={editable ? onEdgesDelete : undefined}
         onConnect={editable ? onConnect : undefined}
+        onNodeDragStart={editable ? onNodeDragStart : undefined}
+        onNodeDragStop={editable ? onNodeDragStop : undefined}
         onNodeClick={(_, n) => setSelectedNodeId(n.id)}
         nodesDraggable={editable}
         nodesConnectable={editable}

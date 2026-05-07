@@ -2,10 +2,19 @@ import { Node, Edge } from "reactflow";
 
 export type PacketType = "text" | "file" | "data";
 
+export interface FlowAttachment {
+  data: string;      // base64-encoded content (no data-URL prefix)
+  mimeType: string;
+  name?: string;
+}
+
 export interface FlowPacket {
   type: PacketType;
   payload: any;
   error?: string;
+  attachments?: FlowAttachment[];
+  /** Packed text context from uploaded text/code files — appended to the LLM prompt at execution time. */
+  fileContext?: string;
   meta?: {
     name?: string;
     size?: number;
@@ -135,6 +144,7 @@ export interface FlowState {
   past: { nodes: Node<NodeData>[]; edges: Edge[] }[];
   future: { nodes: Node<NodeData>[]; edges: Edge[] }[];
   takeSnapshot: () => void;
+  discardLastSnapshot: () => void;
   undo: () => void;
   lastAction: number;
   setNodes: (nodes: Node<NodeData>[]) => void;

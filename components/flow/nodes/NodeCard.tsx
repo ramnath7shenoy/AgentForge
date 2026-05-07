@@ -1,9 +1,13 @@
 "use client";
 
-import React from "react";
+import React, { useCallback, useRef } from "react";
 import { RotateCcw } from "lucide-react";
+import { useReactFlow } from "reactflow";
 import { useFlowStore } from "@/stores/flowStore";
 import { cn } from "@/lib/utils";
+
+// Tracks which node is currently zoomed-into so direct glides skip the zoom-out step.
+let zoomedNodeId: string | null = null;
 
 export const NodeCard: React.FC<{
   nodeId: string;
@@ -26,8 +30,59 @@ export const NodeCard: React.FC<{
   const isError   = nodeStatus === "error";
   const isSuccess = nodeStatus === "success";
 
+  const { setCenter, fitView, getNode, project, getZoom } = useReactFlow();
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  const handleFocus = useCallback(() => {
+    if (zoomedNodeId === nodeId) return;
+
+    const node = getNode(nodeId);
+    if (!node) return;
+
+    const w = node.width ?? 240;
+    const h = node.height ?? 120;
+    const nodeCenterX = node.position.x + w / 2;
+    const nodeCenterY = node.position.y + h / 2;
+
+    // Only pan if the node center is outside the comfortable viewport zone.
+    const margin = 100;
+    const vpW = typeof window !== "undefined" ? window.innerWidth : 1200;
+    const vpH = typeof window !== "undefined" ? window.innerHeight : 800;
+    const topLeft = project({ x: margin, y: margin });
+    const bottomRight = project({ x: vpW - margin, y: vpH - margin });
+
+    const isComfortablyVisible =
+      nodeCenterX >= topLeft.x && nodeCenterX <= bottomRight.x &&
+      nodeCenterY >= topLeft.y && nodeCenterY <= bottomRight.y;
+
+    if (isComfortablyVisible) return;
+
+    zoomedNodeId = nodeId;
+    setCenter(nodeCenterX, nodeCenterY, { zoom: getZoom(), duration: 600 });
+  }, [nodeId, getNode, setCenter, getZoom, project]);
+
+  const handleBlur = useCallback((e: React.FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget as HTMLElement | null;
+    // If focus moved to another node card, its onFocus will handle the pan — skip fitView.
+    if (next && next.closest("[data-nodeid]") && !cardRef.current?.contains(next)) {
+      zoomedNodeId = null;
+      return;
+    }
+    // Focus returned to canvas background or left the editor — restore overview.
+    if (!cardRef.current?.contains(next)) {
+      zoomedNodeId = null;
+      fitView({ duration: 600, padding: 0.15 });
+    }
+  }, [fitView]);
+
   return (
-    <div className={cn("bg-transparent !border-0 transition-opacity duration-300", isSkipped && "opacity-40")}>
+    <div
+      ref={cardRef}
+      data-nodeid={nodeId}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
+      className={cn("bg-transparent !border-0 transition-opacity duration-300", isSkipped && "opacity-40")}
+    >
       <div
         className={cn(
           "relative min-w-[180px] rounded-xl border px-5 py-4 shadow-2xl transition-all duration-300",

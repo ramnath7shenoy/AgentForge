@@ -1,0 +1,93 @@
+import { NextRequest } from "next/server";
+import {
+  executeGraphServer,
+  SandboxApiKey,
+  SandboxNode,
+  SandboxEdge,
+  SandboxFlowPacket,
+  SandboxNodeStatus,
+  SandboxLogType,
+} from "@/lib/flow/serverExecutor";
+
+export const maxDuration = 60;
+
+type SseEvent =
+  | { t: "log"; type: SandboxLogType; message: string; nodeId?: string }
+  | { t: "status"; nodeId: string; status: SandboxNodeStatus }
+  | { t: "output"; nodeId: string; packet: SandboxFlowPacket }
+  | { t: "result"; packet: SandboxFlowPacket }
+  | { t: "done" }
+  | { t: "error"; message: string };
+
+export async function POST(req: NextRequest) {
+  let nodes: SandboxNode[] = [];
+  let edges: SandboxEdge[] = [];
+  let input = "";
+  let apiKeys: SandboxApiKey[] = [];
+
+  try {
+    const body = await req.json();
+    nodes = body.nodes ?? [];
+    edges = body.edges ?? [];
+    input = body.input ?? "";
+    apiKeys = body.apiKeys ?? [];
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid request body" }), { status: 400 });
+  }
+
+  if (nodes.length === 0) {
+    return new Response(JSON.stringify({ error: "No nodes provided" }), { status: 400 });
+  }
+
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const enqueue = (event: SseEvent) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        } catch {
+          // stream may have been closed
+        }
+      };
+
+      try {
+        const { context } = await executeGraphServer(
+          nodes,
+          edges,
+          input,
+          apiKeys,
+          (message, type = "INFO", nodeId) => {
+            enqueue({ t: "log", type: type as SandboxLogType, message, nodeId });
+          },
+          {
+            onNodeStatusChange: (nodeId, status) => {
+              enqueue({ t: "status", nodeId, status });
+            },
+            onNodeComplete: (nodeId, packet) => {
+              enqueue({ t: "output", nodeId, packet });
+            },
+          }
+        );
+
+        const resultPacket: SandboxFlowPacket =
+          context.variables.output || { type: "text", payload: "" };
+        enqueue({ t: "result", packet: resultPacket });
+      } catch (err: any) {
+        enqueue({ t: "error", message: err.message || "Execution failed" });
+      } finally {
+        enqueue({ t: "done" });
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}

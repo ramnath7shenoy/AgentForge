@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(findstr /i \"api\\\\|route\")",
+      "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
+      "Bash(not exist *)",
+      "Bash(npx tsc *)"
+    ]
+  }
+}
