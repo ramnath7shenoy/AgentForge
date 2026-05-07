@@ -2,28 +2,29 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { 
-  Cpu, 
-  Edit3, 
-  Trash2, 
-  Lock, 
-  Activity, 
-  CheckCircle2, 
-  AlertTriangle, 
-  HelpCircle, 
-  Plus, 
-  BarChart3, 
-  Shield, 
-  Zap, 
-  Share2, 
-  Check, 
+import {
+  Cpu,
+  Edit3,
+  Trash2,
+  Lock,
+  Activity,
+  CheckCircle2,
+  AlertTriangle,
+  HelpCircle,
+  Plus,
+  BarChart3,
+  Shield,
+  Zap,
+  Share2,
+  Check,
   Eye,
   Folder as FolderIcon,
   LayoutTemplate,
   History,
   ChevronRight,
   PlusCircle,
-  FolderPlus
+  FolderPlus,
+  ShoppingBag,
 } from "lucide-react";
 import Navbar from "@/components/ui/Navbar";
 import { useLogStore } from "@/stores/useLogStore";
@@ -290,13 +291,22 @@ export default function DashboardPage() {
                 {activeTab === "templates" && "Starting points for advanced automation"}
               </p>
             </div>
-            <button
-              onClick={() => router.push(selectedProjectId ? `/editor?projectId=${selectedProjectId}` : "/editor")}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-500/20 active:scale-95"
-            >
-              <Plus size={14} />
-              New Agent
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => router.push("/store")}
+                className="flex items-center gap-2 px-4 py-2 bg-card border border-border text-xs font-bold rounded-xl text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-all active:scale-95"
+              >
+                <ShoppingBag size={14} />
+                AgentStore
+              </button>
+              <button
+                onClick={() => router.push(selectedProjectId ? `/editor?projectId=${selectedProjectId}` : "/editor")}
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-500/20 active:scale-95"
+              >
+                <Plus size={14} />
+                New Agent
+              </button>
+            </div>
           </div>
 
           {/* STATS ROW */}

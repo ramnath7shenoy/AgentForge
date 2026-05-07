@@ -30,6 +30,7 @@ import {
   RefreshCw,
   RotateCcw,
   Store,
+  ShoppingBag,
   Paperclip,
   FolderOpen,
   ImageIcon,
@@ -42,7 +43,8 @@ import { useRouter } from "next/navigation";
 import Navbar from "@/components/ui/Navbar";
 import SandboxGallery from "@/components/flow/SandboxGallery";
 import { useSandboxExecution } from "@/hooks/useSandboxExecution";
-import { saveFlow, publishFlow, toggleStoreDeployment } from "@/app/actions/flow";
+import { saveFlow, publishFlow, deployToStore } from "@/app/actions/flow";
+import DeployModal from "./DeployModal";
 import { useVaultStore } from "@/stores/vaultStore";
 import type { SandboxApiKey } from "@/lib/flow/serverExecutor";
 
@@ -140,6 +142,7 @@ export default function PublishPage() {
   const [deployLoading, setDeployLoading] = useState(false);
   const [deployedFlowId, setDeployedFlowId] = useState<string | null>(null);
   const [isDeployed, setIsDeployed] = useState(false);
+  const [deployModalOpen, setDeployModalOpen] = useState(false);
 
   const addSandboxFiles = async (files: FileList | File[] | null) => {
     if (!files?.length) return;
@@ -231,19 +234,16 @@ export default function PublishPage() {
     }
   };
 
-  const handleDeploy = async () => {
+  const handleDeployConfirm = async (name: string, description: string) => {
     setDeployLoading(true);
     try {
-      let flowId = deployedFlowId;
-      if (!flowId) {
-        const name = activeProject?.name || "Untitled Agent";
-        const saveResult = await saveFlow(null, name, nodes, edges, undefined, true);
-        if (!saveResult.success || !saveResult.flow) throw new Error(saveResult.error || "Save failed");
-        flowId = saveResult.flow.id;
-        setDeployedFlowId(flowId);
+      const result = await deployToStore(name, description, nodes as object, edges as object, deployedFlowId ?? undefined);
+      if (result.success && result.flowId) {
+        setDeployedFlowId(result.flowId);
+        setIsDeployed(true);
+        setDeployModalOpen(false);
+        router.push("/store");
       }
-      const result = await toggleStoreDeployment(flowId);
-      if (result.success) setIsDeployed(result.isDeployed ?? true);
     } catch (err: any) {
       console.error("Deploy failed:", err);
     } finally {
@@ -251,10 +251,13 @@ export default function PublishPage() {
     }
   };
 
+  const canDeploy = sandboxExec.finalResult !== null && !sandboxExec.running;
+
   const libMeta = getLibraryMeta(activeLibrary);
   const availableLibs = getLibrariesForTab(activeTab);
 
   return (
+    <>
     <div
       className={cn(
         "flex flex-col h-screen w-full transition-colors duration-300",
@@ -278,26 +281,43 @@ export default function PublishPage() {
                 <h1 className="text-lg font-bold text-white uppercase tracking-wider">Universal Preview</h1>
                 <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-widest">Environment Sandbox</p>
               </div>
+              <button
+                onClick={() => router.push("/store")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-[10px] font-bold text-slate-400 hover:text-violet-400 hover:border-violet-500/30 transition-all"
+              >
+                <ShoppingBag size={12} />
+                AgentStore
+              </button>
             </div>
             <div className="flex items-center gap-2">
               {/* Deploy to Store */}
-              <button
-                onClick={handleDeploy}
-                disabled={deployLoading}
-                className={cn(
-                  "flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all border",
-                  isDeployed
-                    ? "bg-violet-600/20 text-violet-400 border-violet-500/30"
-                    : "bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700"
+              <div className="flex flex-col items-end gap-0.5">
+                <button
+                  onClick={() => canDeploy && setDeployModalOpen(true)}
+                  disabled={deployLoading || !canDeploy}
+                  title={!canDeploy ? "Run a successful sandbox to unlock deployment." : undefined}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all border",
+                    isDeployed
+                      ? "bg-violet-600/20 text-violet-400 border-violet-500/30"
+                      : canDeploy
+                        ? "bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700"
+                        : "bg-slate-900 text-slate-600 border-slate-800 cursor-not-allowed opacity-50"
+                  )}
+                >
+                  {deployLoading ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <Store size={13} />
+                  )}
+                  {isDeployed ? "Deployed" : "Deploy to Store"}
+                </button>
+                {!canDeploy && (
+                  <span className="text-[9px] text-slate-600 font-medium pr-0.5">
+                    Run a successful sandbox to unlock.
+                  </span>
                 )}
-              >
-                {deployLoading ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : (
-                  <Store size={13} />
-                )}
-                {isDeployed ? "Deployed" : "Deploy to Store"}
-              </button>
+              </div>
 
               {/* Share Sandbox */}
               <button
@@ -717,5 +737,14 @@ export default function PublishPage() {
 
       </div>
     </div>
+
+    <DeployModal
+      open={deployModalOpen}
+      onClose={() => setDeployModalOpen(false)}
+      defaultName={activeProject?.name || "Untitled Agent"}
+      onConfirm={handleDeployConfirm}
+      loading={deployLoading}
+    />
+    </>
   );
 }

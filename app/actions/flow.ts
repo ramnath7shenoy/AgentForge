@@ -253,18 +253,18 @@ export async function toggleStoreDeployment(flowId: string) {
 
     const flow = await prisma.flow.findUnique({
       where: { id: flowId },
-      select: { userId: true, isPublic: true, isDeployed: true } as any,
-    }) as any;
+      select: { userId: true, isDeployed: true },
+    });
 
     if (!flow) return { success: false, error: 'Flow not found' };
     if (flow.userId !== user.id) return { success: false, error: 'Unauthorized' };
 
     const updated = await prisma.flow.update({
       where: { id: flowId },
-      data: { isDeployed: !flow.isDeployed, isPublic: true } as any,
+      data: { isDeployed: !flow.isDeployed, isPublic: true },
     });
 
-    return { success: true, isDeployed: !(flow.isDeployed), flow: updated };
+    return { success: true, isDeployed: updated.isDeployed ?? true };
   } catch (error: any) {
     console.error('Failed to toggle store deployment:', error);
     return { success: false, error: error.message || 'Failed to toggle deployment' };
@@ -276,15 +276,137 @@ export async function toggleStoreDeployment(flowId: string) {
  */
 export async function getDeployedFlows() {
   try {
-    const flows = await (prisma.flow as any).findMany({
+    const flows = await prisma.flow.findMany({
       where: { isDeployed: true, isPublic: true },
-      select: { id: true, name: true, description: true, thumbnail: true, userId: true, updated_at: true },
+      select: { id: true, name: true, description: true, thumbnail: true, userId: true, updated_at: true, nodes: true, edges: true },
       orderBy: { updated_at: 'desc' },
     });
     return { success: true, flows };
   } catch (error: any) {
     console.error('Failed to fetch deployed flows:', error);
     return { success: false, flows: [], error: error.message };
+  }
+}
+
+/**
+ * Deploy a flow to the Agent Store with metadata.
+ * Creates or upserts the flow, sets isDeployed + isPublic.
+ */
+export async function deployToStore(
+  name: string,
+  description: string,
+  nodes: object,
+  edges: object,
+  existingFlowId?: string
+) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: 'Not authenticated' };
+
+    const flowId = existingFlowId || crypto.randomUUID();
+
+    const flow = await prisma.flow.upsert({
+      where: { id: flowId },
+      update: { name, description, nodes, edges, isDeployed: true, isPublic: true } as any,
+      create: {
+        id: flowId,
+        name,
+        description,
+        nodes,
+        edges,
+        userId: user.id,
+        isDeployed: true,
+        isPublic: true,
+      } as any,
+    });
+
+    return { success: true, flowId: flow.id };
+  } catch (error: any) {
+    console.error('Failed to deploy to store:', error);
+    return { success: false, error: error.message || 'Failed to deploy' };
+  }
+}
+
+/**
+ * Unpublish a flow from the Agent Store (owner-only).
+ */
+export async function unpublishFlow(flowId: string) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: 'Not authenticated' };
+
+    const flow = await prisma.flow.findUnique({ where: { id: flowId }, select: { userId: true } });
+    if (!flow) return { success: false, error: 'Flow not found' };
+    if (flow.userId !== user.id) return { success: false, error: 'Unauthorized' };
+
+    await prisma.flow.update({ where: { id: flowId }, data: { isDeployed: false } as any });
+    return { success: true };
+  } catch (error: any) {
+    console.error('Failed to unpublish flow:', error);
+    return { success: false, error: error.message || 'Failed to unpublish' };
+  }
+}
+
+/**
+ * Update the name/description of a deployed flow (owner-only).
+ */
+export async function updateDeployedFlowMeta(
+  flowId: string,
+  meta: { name: string; description?: string }
+) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: 'Not authenticated' };
+
+    const flow = await prisma.flow.findUnique({ where: { id: flowId }, select: { userId: true } });
+    if (!flow) return { success: false, error: 'Flow not found' };
+    if (flow.userId !== user.id) return { success: false, error: 'Unauthorized' };
+
+    await prisma.flow.update({
+      where: { id: flowId },
+      data: { name: meta.name, ...(meta.description !== undefined ? { description: meta.description } : {}) } as any,
+    });
+    return { success: true };
+  } catch (error: any) {
+    console.error('Failed to update flow meta:', error);
+    return { success: false, error: error.message || 'Failed to update' };
+  }
+}
+
+/**
+ * Clone a public/deployed flow into the current user's workspace.
+ */
+export async function cloneFlow(flowId: string) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: 'Not authenticated' };
+
+    const source = await prisma.flow.findUnique({
+      where: { id: flowId },
+      select: { name: true, nodes: true, edges: true, isPublic: true, isDeployed: true },
+    });
+
+    if (!source) return { success: false, error: 'Flow not found' };
+    if (!source.isPublic && !source.isDeployed) return { success: false, error: 'Flow is not public' };
+
+    const cloned = await prisma.flow.create({
+      data: {
+        id: crypto.randomUUID(),
+        name: `[Cloned] ${source.name || 'Untitled Agent'}`,
+        nodes: source.nodes ?? [],
+        edges: source.edges ?? [],
+        userId: user.id,
+      },
+    });
+
+    return { success: true, flow: cloned };
+  } catch (error: any) {
+    console.error('Failed to clone flow:', error);
+    return { success: false, error: error.message || 'Failed to clone flow' };
   }
 }
 

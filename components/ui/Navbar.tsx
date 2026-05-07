@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Zap, LayoutDashboard, Cpu, HelpCircle, Lock, Shield, PlugZap } from "lucide-react";
+import { Zap, LayoutDashboard, Cpu, HelpCircle, Lock, Shield, PlugZap, ShoppingBag } from "lucide-react";
 import ThemeToggle from "./ThemeToggle";
 import { useVaultStore } from "@/stores/vaultStore";
 import { useFlowStore } from "@/stores/flowStore";
@@ -18,6 +18,7 @@ export default function Navbar() {
   const links = [
     { href: "/dashboard", label: "Dashboard", icon: <LayoutDashboard size={14} /> },
     { href: "/editor", label: "Editor", icon: <Cpu size={14} /> },
+    { href: "/store", label: "AgentStore", icon: <ShoppingBag size={14} /> },
     { href: "/dashboard/integrations", label: "Integrations", icon: <PlugZap size={14} /> },
   ];
 
