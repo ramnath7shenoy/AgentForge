@@ -110,7 +110,7 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
               {creatorHandle}
             </span>
             <span className="text-[9px] text-muted-foreground">
-              {new Date(flow.updated_at).toLocaleDateString(undefined, {
+              {new Date(flow.updated_at).toLocaleDateString("en-US", {
                 month: "short", day: "numeric", year: "numeric",
               })}
             </span>

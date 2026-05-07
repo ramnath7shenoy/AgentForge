@@ -5,7 +5,10 @@
       "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
       "Bash(not exist *)",
       "Bash(npx tsc *)",
-      "Bash(grep -n \"^  \\)$\\\\|^  \\);\\\\s*$\\\\|^}\" \"E:\\\\agentforge\\\\flowforge-ai\\\\app\\\\publish\\\\page.tsx\")"
+      "Bash(grep -n \"^  \\)$\\\\|^  \\);\\\\s*$\\\\|^}\" \"E:\\\\agentforge\\\\flowforge-ai\\\\app\\\\publish\\\\page.tsx\")",
+      "Bash(npm install *)",
+      "Bash(npm list *)",
+      "Bash(node *)"
     ]
   }
 }

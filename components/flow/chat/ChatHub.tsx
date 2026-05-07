@@ -16,6 +16,7 @@ import { useFlowStore } from "@/stores/flowStore";
 import { isApprovalPending, resolveApproval } from "@/lib/approvalGate";
 import { useCostStore } from "@/stores/useCostStore";
 import { cn } from "@/lib/utils";
+import { ImageLightbox } from "@/components/flow/ImageLightbox";
 
 export default function ChatHub() {
   const {
@@ -33,6 +34,7 @@ export default function ChatHub() {
 
   const [inputText, setInputText] = useState("");
   const [awaitingApproval, setAwaitingApproval] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const seededRef = useRef(false);
@@ -258,7 +260,16 @@ export default function ChatHub() {
                           : "bg-white/5 border border-white/10 text-slate-200 rounded-tl-sm shadow-inner"
                       )}
                     >
-                      {msg.content}
+                      {msg.content.startsWith("data:image/") ? (
+                        <img
+                          src={msg.content}
+                          alt="Agent screenshot"
+                          onClick={() => setLightboxSrc(msg.content)}
+                          className="rounded-lg shadow-xl max-w-full cursor-zoom-in"
+                        />
+                      ) : (
+                        msg.content
+                      )}
                     </div>
                   </motion.div>
                 ))
@@ -322,6 +333,13 @@ export default function ChatHub() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <ImageLightbox
+        src={lightboxSrc ?? ""}
+        alt="Agent screenshot"
+        open={lightboxSrc !== null}
+        onClose={() => setLightboxSrc(null)}
+      />
     </>
   );
 }

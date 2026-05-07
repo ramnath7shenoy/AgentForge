@@ -1,4 +1,4 @@
-export type AppProvider = "x" | "slack" | "discord" | "github" | "notion" | "instagram" | "linkedin" | "medium";
+export type AppProvider = "x" | "slack" | "discord" | "github" | "notion" | "instagram" | "linkedin" | "medium" | "browser";
 
 export interface ActionField {
   key: string;
@@ -240,6 +240,59 @@ export const APP_REGISTRY: AppDefinition[] = [
           { key: "title", label: "Title", type: "text", placeholder: "Post title", required: true },
           { key: "content", label: "Content", type: "textarea", placeholder: "Post content (HTML or Markdown)…", required: true },
           { key: "contentFormat", label: "Format", type: "select", placeholder: "markdown", options: [{ label: "Markdown", value: "markdown" }, { label: "HTML", value: "html" }] },
+        ],
+      },
+    ],
+  },
+  {
+    id: "browser",
+    name: "Browser Agent",
+    icon: "🌐",
+    color: "#22d3ee",
+    tokenLabel: "E2B API Key",
+    tokenPlaceholder: "e2b_…",
+    docsUrl: "https://e2b.dev/docs",
+    actions: [
+      {
+        id: "browse_and_summarize",
+        label: "Browse & Summarize",
+        description: "Fetch a URL and extract readable page content",
+        fields: [
+          { key: "url", label: "URL", type: "text", placeholder: "https://example.com", required: true },
+          { key: "prompt", label: "Focus (optional)", type: "text", placeholder: "What to look for on the page" },
+        ],
+      },
+      {
+        id: "scrape_page",
+        label: "Scrape Page",
+        description: "Extract structured data (title, headings, links, paragraphs) from a URL",
+        fields: [
+          { key: "url", label: "URL", type: "text", placeholder: "https://example.com", required: true },
+          { key: "prompt", label: "Instructions", type: "text", placeholder: "Extract product prices and names" },
+        ],
+      },
+      {
+        id: "screenshot_page",
+        label: "Screenshot Page",
+        description: "Capture a full-page screenshot using headless Chromium",
+        fields: [
+          { key: "url", label: "URL", type: "text", placeholder: "https://example.com", required: true },
+        ],
+      },
+      {
+        id: "run_python",
+        label: "Run Python",
+        description: "Execute arbitrary Python code in an isolated E2B container",
+        fields: [
+          { key: "prompt", label: "Python Code", type: "textarea", placeholder: "print('Hello from E2B!')", required: true },
+        ],
+      },
+      {
+        id: "run_javascript",
+        label: "Run JavaScript",
+        description: "Execute arbitrary JavaScript (Node.js) in an isolated E2B container",
+        fields: [
+          { key: "prompt", label: "JavaScript Code", type: "textarea", placeholder: "console.log('Hello from E2B!')", required: true },
         ],
       },
     ],

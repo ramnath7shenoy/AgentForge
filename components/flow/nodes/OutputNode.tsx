@@ -1,15 +1,20 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
 import { MessageSquare } from "lucide-react";
 import { NodeCard } from "./NodeCard";
 import { useFlowStore } from "@/stores/flowStore";
+import { ImageLightbox } from "@/components/flow/ImageLightbox";
 
 export default function OutputNode({ id, data, selected }: NodeProps) {
   const nodeStatuses = useFlowStore((s) => s.nodeStatuses);
   const nodeOutputs  = useFlowStore((s) => s.nodeOutputs);
   const isRunning = useFlowStore((s) => s.isRunning);
+
+  const outputPayload = nodeOutputs[id]?.payload;
+  const isImageOutput = typeof outputPayload === "string" && outputPayload.startsWith("data:image/");
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const allNodes = useFlowStore((s) => s.nodes);
 
   const skippedEntries = React.useMemo(() => {
@@ -47,9 +52,26 @@ export default function OutputNode({ id, data, selected }: NodeProps) {
         <MessageSquare size={14} fill="currentColor" />
         <span>Final Result</span>
       </div>
-      <p className="text-[10px] opacity-70 font-medium line-clamp-2">
-        {data.resultFormat ? (typeof data.resultFormat === 'string' ? data.resultFormat : 'Complex Result') : "Format your result..."}
-      </p>
+      {isImageOutput ? (
+        <>
+          <img
+            src={outputPayload as string}
+            alt="Agent Result"
+            onClick={() => setLightboxOpen(true)}
+            className="w-full rounded-lg border border-white/10 shadow-2xl mt-1 cursor-zoom-in"
+          />
+          <ImageLightbox
+            src={outputPayload as string}
+            alt="Agent Result"
+            open={lightboxOpen}
+            onClose={() => setLightboxOpen(false)}
+          />
+        </>
+      ) : (
+        <p className="text-[10px] opacity-70 font-medium line-clamp-2">
+          {data.resultFormat ? (typeof data.resultFormat === 'string' ? data.resultFormat : 'Complex Result') : "Format your result..."}
+        </p>
+      )}
 
       {errorEntries.length > 0 && !isRunning && (
         <div className="mt-2 w-full rounded-md bg-red-500/10 border border-red-500/30 px-2 py-1.5 text-left">

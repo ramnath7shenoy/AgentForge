@@ -1,6 +1,8 @@
 // Server-safe execution engine — no "use client", no browser/ReactFlow deps.
 // Used by /api/sandbox/execute for hosted sandbox flow testing.
 
+import { runBrowserActionInE2B, runCodeInE2B } from "@/lib/sandbox/e2bRunner";
+
 // ── Local type aliases (mirrors ReactFlow Node/Edge shape from Prisma JSON) ─
 export interface SandboxNode {
   id: string;
@@ -641,6 +643,33 @@ async function executeNode(
         });
       }
 
+      // E2B-backed browser / code execution actions
+      if (appProvider === "browser") {
+        const e2bLog = (msg: string, type?: "INFO" | "SUCCESS" | "ERROR" | "WARN") =>
+          sendLog(msg, type ?? "INFO", current.id);
+
+        sendLog(`🌐 Browser Agent [${appAction}] → E2B sandbox`, "INFO", current.id);
+
+        let result: string;
+        if (appAction === "run_python") {
+          const { output } = await runCodeInE2B(resolvedInputs.prompt || "", "python", e2bLog);
+          result = output;
+        } else if (appAction === "run_javascript") {
+          const { output } = await runCodeInE2B(resolvedInputs.prompt || "", "javascript", e2bLog);
+          result = output;
+        } else {
+          const url = resolvedInputs.url || "";
+          const prompt = resolvedInputs.prompt || resolvedInputs.instructions || "";
+          if (!url) throw new Error(`Browser Agent [${appAction}] requires a URL.`);
+          const { output } = await runBrowserActionInE2B(appAction, url, prompt, e2bLog);
+          result = output;
+        }
+
+        sendLog(`✅ Browser Agent [${appAction}] complete.`, "SUCCESS", current.id);
+        return { type: "text", payload: result };
+      }
+
+      // Standard OAuth-backed app actions (unchanged path)
       sendLog(`🔌 App Action [${appProvider}/${appAction}] — dispatching...`, "INFO", current.id);
 
       const { executeAppAction } = await import("@/app/actions/integration");

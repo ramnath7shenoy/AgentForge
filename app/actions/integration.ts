@@ -74,6 +74,26 @@ export async function executeAppAction(
   const user = await getAuthUser();
   if (!user) throw new Error("Unauthorized — please sign in.");
 
+  // Browser Agent uses E2B — no OAuth integration row needed.
+  if (provider === "browser") {
+    const { runBrowserActionInE2B, runCodeInE2B } = await import("@/lib/sandbox/e2bRunner");
+    const logs: string[] = [];
+    const e2bLog = (msg: string) => { logs.push(msg); };
+
+    let output: string;
+    if (action === "run_python") {
+      ({ output } = await runCodeInE2B(resolvedInputs.prompt ?? "", "python", e2bLog));
+    } else if (action === "run_javascript") {
+      ({ output } = await runCodeInE2B(resolvedInputs.prompt ?? "", "javascript", e2bLog));
+    } else {
+      const url = resolvedInputs.url ?? "";
+      if (!url) throw new Error(`Browser Agent [${action}] requires a URL.`);
+      const prompt = resolvedInputs.prompt ?? resolvedInputs.instructions ?? "";
+      ({ output } = await runBrowserActionInE2B(action, url, prompt, e2bLog));
+    }
+    return { result: output };
+  }
+
   const integration = await prisma.integration.findUnique({
     where: { userId_provider: { userId: user.id, provider } },
   });
@@ -199,6 +219,7 @@ export async function executeAppAction(
       }
       break;
     }
+
   }
 
   throw new Error(`Unknown action "${action}" for provider "${provider}".`);

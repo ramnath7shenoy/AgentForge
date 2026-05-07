@@ -255,11 +255,13 @@ function SandboxManifest({
 
   type PrettifiedOutput =
     | { type: "json"; entries: [string, unknown][] }
+    | { type: "image"; src: string }
     | { type: "text"; value: string };
 
   const prettifiedOutput: PrettifiedOutput | null = React.useMemo(() => {
     if (!rawOutput) return null;
     const trimmed = rawOutput.trim();
+    if (trimmed.startsWith("data:image/")) return { type: "image", src: trimmed };
     if (trimmed.startsWith("{")) {
       try {
         const parsed = JSON.parse(trimmed);
@@ -321,7 +323,9 @@ function SandboxManifest({
           <p className="text-[8px] font-bold uppercase tracking-widest text-zinc-500 dark:text-slate-600 mb-2">
             Final Output
           </p>
-          {prettifiedOutput.type === "json" ? (
+          {prettifiedOutput.type === "image" ? (
+            <img src={prettifiedOutput.src} alt="Agent screenshot" className="rounded-lg shadow-xl max-w-full" />
+          ) : prettifiedOutput.type === "json" ? (
             <div className="space-y-2">
               {prettifiedOutput.entries.map(([key, val]) => (
                 <div key={key} className="border border-slate-700 rounded-lg px-3 py-2">
