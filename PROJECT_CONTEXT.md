@@ -25,25 +25,30 @@ app/
   actions/
     ai-architect.ts     # Server action: NL prompt → validated flow JSON (12-node schema)
     integration.ts      # OAuth integration actions: getIntegrations, upsertIntegration, deleteIntegration, executeAppAction
-    auth.ts, flow.ts, project.ts
+    auth.ts             # Sign out (Supabase)
+    flow.ts             # Core flow CRUD: saveFlow, getFlow, getLatestFlow, getUserFlows, publishFlow, toggleStoreDeployment, getDeployedFlows, deleteFlow, createFolder, getCustomTemplates, deleteCustomTemplate
+    project.ts          # Project CRUD: createProject, getProjects, deleteProject, saveAsTemplate, getCustomTemplates, deleteCustomTemplate
   api/
-    execute/route.ts    # Legacy mock POST endpoint (unused — superseded by sandbox/execute)
+    execute/route.ts    # Legacy vault-aware mock endpoint (resolves {{vault.KEY}} refs) — superseded by sandbox/execute
     sandbox/
       execute/route.ts  # POST endpoint: accepts {nodes, edges, input, apiKeys[]} → SSE stream of log/status/output/result/done events; runs serverExecutor server-side
     vector-search/      # BM25 lexical search endpoint — ranks doc chunks by relevance (no external dep)
-  editor/page.tsx       # Main canvas page (FlowCanvas + all panels + Download dropdown)
-  publish/page.tsx      # Universal Preview + Environment Sandbox: env config panel (API keys + Sync from Vault), Run Sandbox (server-side SSE), Share Sandbox (saves flow as public → /sandbox/[id] URL), code export (polyglot TS/JS/Python)
+  editor/page.tsx       # Main canvas page (1700+ lines): FlowCanvas, sidebars, toolbar, AI Architect, template modal, approval banner, chat hub, terminal, dry-run/live split button, cloud auto-save with sync indicator, guest mode
+  publish/page.tsx      # Publish & Export (1000+ lines): sandbox env config, file/folder attachments, Run Sandbox (SSE), Share Sandbox, Deploy to Store, code export (polyglot TS/JS/Python), Refine input via Groq
   sandbox/
     [id]/page.tsx       # Server component: loads flow by ID, access-controls by isPublic + ownership, renders SandboxClient
     [id]/SandboxClient.tsx  # Client component: API key config, prompt input, SandboxGallery; calls /api/sandbox/execute
   dashboard/
-    page.tsx            # Project management
+    page.tsx            # Mission Control: workspace sidebar (Recent flows, Projects CRUD, Templates), recent flows grid, event stream, vault access panel, system health, stats
     integrations/page.tsx  # OAuth integration management UI — 8 providers with official brand SVGs
-  view/[id]/page.tsx    # Public read-only flow viewer
+  store/page.tsx        # Agent Store: browse and run community-deployed public flows (grid with thumbnails)
+  view/[id]/page.tsx    # Public read-only (or editable) flow viewer based on publicEditable flag
+  login/page.tsx        # Supabase Auth UI: magic link + OAuth (Google, GitHub, Apple)
+  auth/callback/route.tsx  # OAuth callback handler
 
 components/
   flow/
-    nodes/              # One file per node type (see Node Types table below)
+    nodes/              # One file per node type (see Node Types table below) + NodeCard.tsx (shared UI wrapper)
     canvas/             # FlowCanvas (editable), ReadOnlyCanvas
     chat/               # ChatHub — floating chat panel + approval routing
     sidebar/            # NodeSettingsSidebar (includes appaction settings panel), NodeSidebar
@@ -65,6 +70,7 @@ lib/
     serverExecutor.ts   # Server-safe reactive engine — no "use client", no ReactFlow/vaultStore deps; accepts apiKeys[] parameter; handles input/ai/output/router/processor/action/appaction; approval+gatekeeper skipped with warning; used by /api/sandbox/execute
     layoutEngine.ts     # Dagre-based auto-layout (TB/LR); skips group containers
     validators.ts       # Kahn's algorithm cycle detection — call before adding edges
+    modelRegistry.ts    # Node type registry and metadata
   providers/
     index.ts            # APP_REGISTRY definition + getApp/getAction lookups (8 providers)
     xService.ts         # X (Twitter): tweet posting
@@ -81,36 +87,41 @@ lib/
     templates.ts        # Flow template definitions (4 built-in templates)
   utils/
     export.ts           # Canvas export: exportAsPng, exportAsJpeg, exportAsPdf
+    contextPacker.ts    # Pack uploaded files (images, code) into text context for LLM prompts
   approvalGate.ts       # Promise-based pause/resume (avoids flowStore circular dep)
   flowCompiler.ts       # Compile flow graphs → Python / TypeScript / JavaScript (8 app providers, 7 HTTP libraries)
   executionEngine.ts    # Legacy node executor (server path / simulation)
-  expressionEvaluator.ts
+  expressionEvaluator.ts  # Boolean/English expression parser for routing conditions
   flowPersistence.ts    # Save/load flow state helpers
   savedAgents.ts        # Reusable agent definitions
   template.ts           # {{key}} template resolver
   versionSnapshots.ts   # Flow version snapshot storage
+  prisma.ts             # Prisma client singleton
+  utils.ts              # General helpers (cn, date formatting, etc.)
   supabase/             # Server + client Supabase instances
 
 stores/
-  flowStore.ts          # Primary store — nodes, edges, execution, chat, nodeOutputs
+  flowStore.ts          # Primary store — nodes, edges, execution, chat, nodeOutputs, projects, undo/redo, layoutDirection, isDryRun, showTerminal
   useLogStore.ts        # Execution log entries (timestamp, type, message, nodeId)
   vaultStore.ts         # API key store + architectKey session persistence
-  registryStore.ts      # Published agent registry
+  registryStore.ts      # Published agent registry (localStorage-backed)
   simulationStore.ts    # Legacy simulation state
   themeStore.ts         # Dark/light theme
 
 types/
-  flowStoreTypes.ts     # NodeData, FlowPacket, FlowState, ExecutionContext
+  flowStoreTypes.ts     # NodeData, FlowPacket, FlowState, ExecutionContext, NodeExecutionStatus, ExecutionLogEntry
+  agent.ts              # AI Agent types
+  dataTypes.ts          # Data packet types (text, JSON, file, etc.)
 
 prisma/
-  schema.prisma         # Includes Integration model: { id, userId, provider, accessToken, refreshToken, metadata }
+  schema.prisma         # Models: Flow, Project, Folder, Vault, Integration; Supabase auth models
 ```
 
 ---
 
 ## Core Data Types
 ```ts
-FlowPacket        { type: "text"|"file"|"data", payload: any, error?, meta? }
+FlowPacket        { type: "text"|"file"|"data", payload: any, error?, meta?, attachments?, fileContext? }
 
 NodeData          { label, instructions, provider, modelName, model, apiKey,
                     routes, conditions, resultFormat, packet,
@@ -145,8 +156,9 @@ ExtendedFlowState {
   isChatOpen, chatHistory[],
 
   // UI
-  theme, showMinimap, showExecutionLogPanel, showVariablesPanel,
+  theme, showMinimap, showExecutionLogPanel, showVariablesPanel, showTerminal,
   tutorialStep, activeProject, projects[],
+  layoutDirection,             // "TB" | "LR" for auto-layout
 
   // Undo/Redo
   past[], future[], lastAction
@@ -258,6 +270,12 @@ Full conversation history is passed as-is from `chatHistory`.
 ### Prettified Output (ResponseGallery / SandboxGallery)
 `ExecutionManifest` component runs a `useMemo` on `rawOutput`. If the trimmed output starts with `{` and parses as a non-array JSON object, renders key-value cards (one bordered row per entry). Otherwise renders as `<pre>`. Prevents raw `{"x":"...", "linkedin":"..."}` blobs from appearing as opaque text.
 
+### File/Folder Attachments (`lib/utils/contextPacker.ts`)
+`contextPacker.ts` packs uploaded files (images, source code, documents) into a structured text context block injected into LLM prompts. Used by the publish page to support file attachments in sandbox runs.
+
+### Guest Mode + Auto-Migration
+Editor supports unauthenticated (guest) users who work entirely in localStorage. On login, the guest flow is auto-migrated to the database. Cloud sync status indicator in the toolbar shows save state.
+
 ---
 
 ## Environment Sandbox
@@ -304,9 +322,10 @@ Isolated client-side hook. Maintains its own `logs`, `nodeStatuses`, `nodeOutput
 
 ### Publish Page Sandbox Flow
 1. User fills "Environment Config" (key/value API keys) — or clicks **Sync from Vault** to 1-click populate from `useVaultStore` entries (one-way, vault → sandbox only; keys never written back or included in shared URL)
-2. User types a test prompt in "Universal Input"
+2. User types a test prompt in "Universal Input" (supports file/folder attachments packed via `contextPacker`)
 3. **Run Sandbox**: `useSandboxExecution.run(nodes, edges, input, envKeys)` → POST to `/api/sandbox/execute` → SSE stream decoded → `SandboxGallery` updates live
 4. **Share Sandbox**: calls `saveFlow(..., isPublic: true)` then `publishFlow(flowId)` → saves flow to Prisma, marks `isPublic: true`, copies `/sandbox/{flowId}` URL to clipboard — API keys are NOT saved
+5. **Deploy to Store**: `toggleStoreDeployment(flowId, true)` → marks `isDeployed: true` → flow appears in `/store` page
 
 ### Shareable Sandbox Page (`/sandbox/[id]`)
 - Server component loads flow from Prisma via `getFlow(id)`; 404 if `!isPublic && !isOwner`
@@ -342,6 +361,8 @@ Isolated client-side hook. Maintains its own `logs`, `nodeStatuses`, `nodeOutput
 
 `AppActionNode.tsx` — canvas node for `appaction` type; shows app icon + action label; live connectivity status dot; alert badge if app/action not configured.
 
+`NodeCard.tsx` — shared UI wrapper for all node types (header, body, handles, selected state styling).
+
 Legacy aliases handled in executor: `ai_agent`, `agent-brain`, `llm` all route to the `ai` handler.
 
 ---
@@ -362,13 +383,16 @@ Legacy aliases handled in executor: `ai_agent`, `agent-brain`, `llm` all route t
 ## Graph Utilities
 
 ### Auto-Layout (`lib/flow/layoutEngine.ts`)
-Dagre-based layout engine. Call with nodes/edges + direction (`"TB"` or `"LR"`). Returns repositioned nodes with `targetPosition`/`sourcePosition` set for ReactFlow handles. Group containers are skipped during layout.
+Dagre-based layout engine. Call with nodes/edges + direction (`"TB"` or `"LR"`). Returns repositioned nodes with `targetPosition`/`sourcePosition` set for ReactFlow handles. Group containers are skipped during layout. Direction stored in `flowStore.layoutDirection`.
 
 ### Cycle Detection (`lib/flow/validators.ts`)
 Kahn's algorithm on the edge list. Returns `true` if cycles exist. Call before committing a new edge to the canvas to prevent invalid DAGs.
 
 ### Vector Search (`app/api/vector-search/route.ts`)
 POST `{ query, chunks, topK }` → ranked matches. BM25 scoring (TF-IDF variant) with no external dependencies. Used by the Vault node for local document retrieval.
+
+### Expression Evaluator (`lib/expressionEvaluator.ts`)
+Boolean/English expression parser for router node conditions. Evaluates expressions like `"output > 100"`, `"tags includes 'urgent'"`, `"is greater than"`. Used by the router node to resolve branching paths.
 
 ---
 
@@ -420,7 +444,7 @@ Three async functions for exporting the React Flow canvas:
 - **`exportAsJpeg()`** — html-to-image `toJpeg()`, pixelRatio 2, quality 0.92, downloads `workflow.jpg`
 - **`exportAsPdf()`** — captures PNG first, auto-detects landscape/portrait, constructs jsPDF at pixel dimensions, saves `workflow.pdf`
 
-Background color is dark-mode aware: `#0f172a` (dark) / `#f8fafc` (light), detected via `.dark` class presence on `document.documentElement`. Triggered from the Download dropdown in the editor toolbar (replaces the old Camera icon).
+Background color is dark-mode aware: `#0f172a` (dark) / `#f8fafc` (light), detected via `.dark` class presence on `document.documentElement`. Triggered from the Download dropdown in the editor toolbar.
 
 ---
 
@@ -442,9 +466,10 @@ The Omnichannel template demonstrates: AI generating structured `{x, linkedin, m
 ## Code Export / Publish (`app/publish/page.tsx` + `lib/flowCompiler.ts`)
 
 ### Publish Page
-- Left panel: universal input textarea, response gallery (final result + sandbox run)
+- Left panel: universal input textarea (with file/folder attachments), response gallery (final result + sandbox run), Deploy to Store
 - Right panel: language tab selector, library dropdown, compiled code viewer (read-only), Copy + Download buttons
 - Library dropdown shows install command + description per library
+- Refine input: uses Groq Llama 3 8B to improve prompt quality before sandbox run
 
 ### Flow Compiler (`lib/flowCompiler.ts`)
 Polyglot compilation using Kahn's topological sort:
@@ -492,12 +517,34 @@ Auto-switches to Terminal on run start, Final Result on completion.
 
 ---
 
+## Agent Store (`app/store/page.tsx`)
+Public marketplace for deployed flows:
+- Browse all flows where `isDeployed: true` via `getDeployedFlows()`
+- Grid layout with flow thumbnails and metadata
+- Users can run deployed agents directly via the sandbox interface
+- Owners deploy/undeploy via `toggleStoreDeployment(flowId, bool)` from the publish page
+
+---
+
 ## Auth & Persistence
-- Supabase handles auth (OAuth callback at `app/auth/callback/`).
+- Supabase handles auth (OAuth callback at `app/auth/callback/`). Providers: Google, GitHub, Apple, magic link.
 - Flows saved via Prisma → Postgres (Supabase).
-- Projects scoped to user; public flows at `/view/[id]` (read-only canvas).
+- Projects scoped to user; public flows at `/view/[id]` (read-only or editable via `publicEditable` flag).
+- Guest mode: unauthenticated users work in localStorage; auto-migrated to DB on login.
 - `lib/flowPersistence.ts` — save/load helpers.
-- `lib/versionSnapshots.ts` — flow version history.
+- `lib/versionSnapshots.ts` — flow version history (localStorage).
+- Auto-save: debounced 2s with cloud sync status indicator in editor toolbar.
+
+---
+
+## Prisma Models
+| Model | Key Fields | Purpose |
+|---|---|---|
+| Flow | id, userId, projectId, nodes (JSON), edges (JSON), isPublic, publicEditable, isDeployed | Core workflow definition |
+| Project | id, userId, name | Groups of flows |
+| Folder | id, userId, name | Legacy flow organization |
+| Vault | id, userId, key, value (encrypted) | Per-user API key storage |
+| Integration | id, userId, provider, accessToken, refreshToken, metadata | OAuth app tokens |
 
 ---
 
@@ -537,3 +584,7 @@ Auto-switches to Terminal on run start, Final Result on completion.
 - `addEntry(key, value)`, `removeEntry(key)`, `getKeys()`
 - `resolveSmartKey(requestedProvider?)` — exact match or auto-select
 - `setArchitectKey(key)` — session key for AI Architect
+
+### `registryStore.ts` — Published Agent Registry
+- `agents: PublishedAgent[]` — localStorage-backed list of deployed agents
+- `loadAgents()`, `publishAgent()`, `deleteAgent()`, `incrementRun()`

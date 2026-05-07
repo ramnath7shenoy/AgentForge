@@ -44,6 +44,7 @@ import MissionBriefing from "@/components/ui/tutorial/MissionBriefing";
 import ResponseGallery from "@/components/flow/ResponseGallery";
 import ApprovalBanner from "@/components/flow/ApprovalBanner";
 import ChatHub from "@/components/flow/chat/ChatHub";
+import ModelFallbackToast from "@/components/ui/ModelFallbackToast";
 
 import { useFlowStore, isAwaitingApproval } from "@/stores/flowStore";
 import { saveFlow, getLatestFlow, publishFlow } from "@/app/actions/flow";
@@ -1227,6 +1228,9 @@ function EditorContent() {
 
           {/* CHAT HUB */}
           <ChatHub />
+
+          {/* MODEL FALLBACK TOAST */}
+          <ModelFallbackToast />
         </main>
 
         {/* RIGHT SIDEBAR TOGGLE */}

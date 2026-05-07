@@ -28,8 +28,8 @@ import {
   EyeOff,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Store,
-  Wand2,
   Paperclip,
   FolderOpen,
   ImageIcon,
@@ -60,24 +60,51 @@ export default function PublishPage() {
   const [libDropdownOpen, setLibDropdownOpen] = useState(false);
 
   // Input & env config — persisted in sessionStorage so Back navigation restores state
-  const [inputValue, setInputValue] = useState(() => {
-    if (typeof window !== "undefined") return sessionStorage.getItem("sb_input") || "";
-    return "";
-  });
-  const [envKeys, setEnvKeys] = useState<SandboxApiKey[]>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const s = sessionStorage.getItem("sb_envkeys");
-        if (s) return JSON.parse(s);
-      } catch {}
-    }
-    return [{ key: "", value: "" }];
-  });
+  const [inputValue, setInputValue] = useState("");
+  const [envKeys, setEnvKeys] = useState<SandboxApiKey[]>([{ key: "", value: "" }]);
   const [envOpen, setEnvOpen] = useState(false);
   const [showValues, setShowValues] = useState<Record<number, boolean>>({});
 
-  useEffect(() => { sessionStorage.setItem("sb_input", inputValue); }, [inputValue]);
-  useEffect(() => { sessionStorage.setItem("sb_envkeys", JSON.stringify(envKeys)); }, [envKeys]);
+  // Sandbox attachments (declared early so backup effects can reference them)
+  type SandboxAttachment = { data: string; mimeType: string; name: string };
+  const attachFileRef = useRef<HTMLInputElement>(null);
+  const attachFolderRef = useRef<HTMLInputElement>(null);
+  const [sandboxAttachments, setSandboxAttachments] = useState<SandboxAttachment[]>([]);
+  const [sandboxTextContext, setSandboxTextContext] = useState<string>("");
+  const [attachWarnings, setAttachWarnings] = useState<string[]>([]);
+
+  const FORGE_STATE_KEY = "FORGE_PUBLISH_STATE";
+
+  // Effect 1 — Rehydrate from localStorage on mount (survives tab close + Back navigation)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(FORGE_STATE_KEY);
+      if (!raw) return;
+      const s = JSON.parse(raw) as any;
+      if (s.inputValue) setInputValue(s.inputValue);
+      if (Array.isArray(s.envKeys) && s.envKeys.length) setEnvKeys(s.envKeys);
+      if (Array.isArray(s.attachments) && s.attachments.length) setSandboxAttachments(s.attachments);
+      if (s.fileContext) setSandboxTextContext(s.fileContext);
+      if (Array.isArray(s.logs) || s.finalResult) {
+        sandboxExec.restoreState(Array.isArray(s.logs) ? s.logs : [], s.finalResult ?? null);
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Effect 2 — Persist on every relevant state change
+  useEffect(() => {
+    try {
+      localStorage.setItem(FORGE_STATE_KEY, JSON.stringify({
+        inputValue,
+        envKeys,
+        attachments: sandboxAttachments,
+        fileContext: sandboxTextContext,
+        logs: sandboxExec.logs,
+        finalResult: sandboxExec.finalResult,
+      }));
+    } catch {}
+  }, [inputValue, envKeys, sandboxAttachments, sandboxTextContext, sandboxExec.logs, sandboxExec.finalResult]);
 
   // Vault sync
   const [vaultSynced, setVaultSynced] = useState(false);
@@ -92,7 +119,16 @@ export default function PublishPage() {
 
   const handleClearAllKeys = () => {
     setEnvKeys([{ key: "", value: "" }]);
-    sessionStorage.removeItem("sb_envkeys");
+  };
+
+  const handleResetSandbox = () => {
+    setInputValue("");
+    setEnvKeys([{ key: "", value: "" }]);
+    setSandboxAttachments([]);
+    setSandboxTextContext("");
+    setAttachWarnings([]);
+    localStorage.removeItem(FORGE_STATE_KEY);
+    sandboxExec.clearResult();
   };
 
   // Share state
@@ -105,32 +141,6 @@ export default function PublishPage() {
   const [deployedFlowId, setDeployedFlowId] = useState<string | null>(null);
   const [isDeployed, setIsDeployed] = useState(false);
 
-  // Sandbox attachments — staged files for the next Run Sandbox call
-  type SandboxAttachment = { data: string; mimeType: string; name: string };
-  const attachFileRef = useRef<HTMLInputElement>(null);
-  const attachFolderRef = useRef<HTMLInputElement>(null);
-  const [sandboxAttachments, setSandboxAttachments] = useState<SandboxAttachment[]>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const s = sessionStorage.getItem("sb_attachments");
-        if (s) return JSON.parse(s);
-      } catch {}
-    }
-    return [];
-  });
-  const [sandboxTextContext, setSandboxTextContext] = useState<string>(() => {
-    if (typeof window !== "undefined") return sessionStorage.getItem("sb_filecontext") || "";
-    return "";
-  });
-  const [attachWarnings, setAttachWarnings] = useState<string[]>([]);
-
-  useEffect(() => {
-    try { sessionStorage.setItem("sb_attachments", JSON.stringify(sandboxAttachments)); } catch {}
-  }, [sandboxAttachments]);
-  useEffect(() => {
-    sessionStorage.setItem("sb_filecontext", sandboxTextContext);
-  }, [sandboxTextContext]);
-
   const addSandboxFiles = async (files: FileList | File[] | null) => {
     if (!files?.length) return;
     const fileArr = Array.from(files);
@@ -140,39 +150,6 @@ export default function PublishPage() {
       setSandboxAttachments((prev) => [...prev, ...newImgAtts]);
     if (textBlock)
       setSandboxTextContext((prev) => prev ? `${prev}\n${textBlock}` : textBlock);
-  };
-
-  // Refine state — Groq Llama 3 8B grammar + prompt optimization
-  const [refineLoading, setRefineLoading] = useState(false);
-  const handleRefine = async () => {
-    if (!inputValue.trim() || refineLoading) return;
-    const groqKey =
-      envKeys.find((k) => k.value.startsWith("gsk_"))?.value ||
-      useVaultStore.getState().entries.find((e) => e.value.startsWith("gsk_"))?.value;
-    if (!groqKey) return;
-    setRefineLoading(true);
-    try {
-      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${groqKey}` },
-        body: JSON.stringify({
-          model: "llama3-8b-8192",
-          max_tokens: 512,
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are a prompt engineer. Fix grammar, improve clarity, and optimize the user's text for better AI results. Return ONLY the improved text — no explanation, no preamble, no quotes.",
-            },
-            { role: "user", content: inputValue },
-          ],
-        }),
-      });
-      const data = await res.json();
-      const refined = data.choices?.[0]?.message?.content?.trim();
-      if (refined) setInputValue(refined);
-    } catch {}
-    finally { setRefineLoading(false); }
   };
 
   // Keep library in sync when switching tabs
@@ -475,29 +452,14 @@ export default function PublishPage() {
             <div className="flex flex-col gap-3">
               <div className="flex items-center gap-2">
                 <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Universal Input</h2>
+                <button
+                  onClick={handleResetSandbox}
+                  className="ml-auto flex items-center gap-1 text-[9px] font-bold text-slate-600 hover:text-rose-400 transition-colors px-1.5 py-0.5 rounded border border-slate-800 hover:border-rose-500/30"
+                  title="Reset all inputs and results"
+                >
+                  <RotateCcw size={9} /> Reset
+                </button>
                 <div className="ml-auto flex items-center gap-1.5">
-                  {/* Refine button */}
-                  <button
-                    onClick={handleRefine}
-                    disabled={refineLoading || !inputValue.trim()}
-                    title="Refine with Groq Llama 3 8B (requires a Groq key)"
-                    className={cn(
-                      "flex items-center gap-1 text-[9px] font-bold transition-all px-2 py-1 rounded-lg border",
-                      refineLoading
-                        ? "text-indigo-400 border-indigo-500/30 bg-indigo-500/10 cursor-wait"
-                        : inputValue.trim()
-                        ? "text-slate-500 border-slate-700/50 hover:text-indigo-400 hover:border-indigo-500/30"
-                        : "text-slate-700 border-slate-800 cursor-not-allowed"
-                    )}
-                  >
-                    {refineLoading ? (
-                      <Loader2 size={9} className="animate-spin" />
-                    ) : (
-                      <Wand2 size={9} />
-                    )}
-                    {refineLoading ? "Refining…" : "Refine"}
-                  </button>
-
                   {/* Attach files button */}
                   <button
                     onClick={() => attachFileRef.current?.click()}

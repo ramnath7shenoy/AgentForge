@@ -55,6 +55,7 @@ const detectProvider = (key: string): string => {
 };
 
 import { MODEL_DEFAULTS, resolveModelChain } from "@/lib/flow/modelRegistry";
+import { calculateExecutionCost } from "@/lib/utils/tokenCost";
 
 // ── API key resolver (from injected keys, not vaultStore) ─────────────
 function resolveApiKeyFromList(
@@ -104,7 +105,8 @@ async function dispatchLLM(
   apiKey: string,
   userMessage: string,
   onLog: (msg: string, type: any) => void,
-  attachments?: Attachment[]
+  attachments?: Attachment[],
+  onCost?: (amount: number) => void
 ): Promise<string> {
   const provider = providerKey || detectProvider(apiKey);
   onLog(`📡 Dispatching to ${provider.toUpperCase()} via ${modelName || "default"}...`, "INFO");
@@ -204,7 +206,8 @@ async function dispatchLLM(
     return obj;
   };
 
-  const STALE = new Set([404, 410]);
+  // 404/410 = model gone; 429 = rate limit — cascade in all cases
+  const STALE = new Set([404, 410, 429]);
   let lastError: Error | null = null;
 
   for (const candidate of modelChain) {
@@ -230,21 +233,53 @@ async function dispatchLLM(
     const data = await response.json();
 
     if (!response.ok) {
-      if (STALE.has(response.status)) {
-        onLog(`⚠️ "${candidate}" unavailable (${response.status}), trying next fallback…`, "WARN");
-        lastError = new Error(data.error?.message || `Model ${candidate} returned ${response.status}`);
+      const errMsg = (
+        data.error?.message || data.error?.code || data.error?.type || ""
+      ).toLowerCase();
+      const isStaleByMessage =
+        errMsg.includes("model_not_found") ||
+        errMsg.includes("decommissioned") ||
+        errMsg.includes("deprecated") ||
+        errMsg.includes("does not exist") ||
+        errMsg.includes("not supported");
+
+      if (STALE.has(response.status) || isStaleByMessage) {
+        onLog(
+          `⚠️ "${candidate}" unavailable (${response.status})${isStaleByMessage ? ` — ${errMsg.slice(0, 60)}` : ""}, trying next fallback…`,
+          "WARN"
+        );
+        lastError = new Error(
+          data.error?.message || `Model ${candidate} returned ${response.status}`
+        );
         continue;
       }
-      if (response.status === 429)
-        throw new Error(`Rate limit exceeded (429) on ${provider.toUpperCase()}.`);
       if (response.status >= 500)
         throw new Error(`${provider.toUpperCase()} server error (${response.status}).`);
       throw new Error(data.error?.message || `${provider.toUpperCase()} API Error ${response.status}`);
     }
 
-    if (provider === "gemini") return data.candidates[0].content.parts[0].text;
-    if (provider === "anthropic") return data.content[0].text;
-    return data.choices[0].message.content;
+    // Extract response text
+    let resultText: string;
+    if (provider === "gemini") resultText = data.candidates[0].content.parts[0].text;
+    else if (provider === "anthropic") resultText = data.content[0].text;
+    else resultText = data.choices[0].message.content;
+
+    // Token cost tracking
+    let inputTokens = 0, outputTokens = 0;
+    if (provider === "gemini") {
+      inputTokens  = data.usageMetadata?.promptTokenCount      ?? 0;
+      outputTokens = data.usageMetadata?.candidatesTokenCount  ?? 0;
+    } else if (provider === "anthropic") {
+      inputTokens  = data.usage?.input_tokens  ?? 0;
+      outputTokens = data.usage?.output_tokens ?? 0;
+    } else {
+      inputTokens  = data.usage?.prompt_tokens     ?? 0;
+      outputTokens = data.usage?.completion_tokens ?? 0;
+    }
+    const cost = calculateExecutionCost(candidate, inputTokens, outputTokens);
+    if (cost > 0) onCost?.(cost);
+
+    return resultText;
   }
 
   throw lastError || new Error(`All fallback models exhausted for ${provider.toUpperCase()}`);
@@ -364,7 +399,8 @@ async function executeNode(
   edges: SandboxEdge[],
   initialInput: string,
   apiKeys: SandboxApiKey[],
-  sendLog: LogFn
+  sendLog: LogFn,
+  onCost?: (amount: number) => void
 ): Promise<SandboxFlowPacket> {
   const type = current.type;
 
@@ -439,7 +475,7 @@ async function executeNode(
           try {
             sendLog(`📡 Probing ${resolvedProvider.toUpperCase()} via ${model}...`, "INFO", current.id);
             responseText = await withTimeout(
-              dispatchLLM(resolvedProvider, model, jitKey, resolvedPrompt, (msg, t) => sendLog(msg, t, current.id), inputAttachments),
+              dispatchLLM(resolvedProvider, model, jitKey, resolvedPrompt, (msg, t) => sendLog(msg, t, current.id), inputAttachments, onCost),
               30_000,
               `${resolvedProvider.toUpperCase()}/${model}`
             );
@@ -651,7 +687,7 @@ export async function executeGraphServer(
   apiKeys: SandboxApiKey[],
   onLog?: LogFn,
   options: SandboxWalkerOptions = {}
-): Promise<{ success: boolean; context: SandboxExecutionContext }> {
+): Promise<{ success: boolean; context: SandboxExecutionContext; totalCostUsd: number }> {
   const context: SandboxExecutionContext = {
     variables: { input: { type: "text", payload: initialInput } },
     nodes: {},
@@ -660,6 +696,9 @@ export async function executeGraphServer(
   const sendLog: LogFn = (message, type = "INFO", nodeId) => {
     onLog?.(message, type, nodeId);
   };
+
+  let totalCostUsd = 0;
+  const accumulateCost = (amount: number) => { totalCostUsd += amount; };
 
   const { onNodeStatusChange, onNodeComplete } = options;
 
@@ -738,7 +777,7 @@ export async function executeGraphServer(
     let routerRoute: string | undefined;
 
     try {
-      packet = await executeNode(current, context, edges, initialInput, apiKeys, sendLog);
+      packet = await executeNode(current, context, edges, initialInput, apiKeys, sendLog, accumulateCost);
 
       context.nodes[nodeId] = packet;
       onNodeComplete?.(nodeId, packet);
@@ -767,7 +806,7 @@ export async function executeGraphServer(
   const roots = nodes.filter((n) => (remainingDeps.get(n.id) || 0) === 0);
   if (roots.length === 0) {
     sendLog("❌ No root nodes found — flow has no entry point.", "ERROR");
-    return { success: false, context };
+    return { success: false, context, totalCostUsd: 0 };
   }
 
   await Promise.all(roots.map((n) => dispatch(n.id)));
@@ -785,5 +824,5 @@ export async function executeGraphServer(
     finalResult ? "SUCCESS" : "WARN"
   );
 
-  return { success: true, context };
+  return { success: true, context, totalCostUsd };
 }

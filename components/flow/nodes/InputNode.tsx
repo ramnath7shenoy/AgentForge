@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useRef, useState, useCallback } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import React, { useRef, useState, useCallback, useEffect } from "react";
+import { Handle, Position, NodeProps, useReactFlow } from "reactflow";
 import { Play, FileText, X, Paperclip, FolderOpen, AlertTriangle } from "lucide-react";
 import { NodeCard } from "./NodeCard";
 import { useFlowStore } from "@/stores/flowStore";
@@ -9,50 +9,86 @@ import { cn } from "@/lib/utils";
 import { FlowPacket, FlowAttachment } from "@/types/flowStoreTypes";
 import { packFiles } from "@/lib/utils/contextPacker";
 
-export default function InputNode({ id, data, selected }: NodeProps) {
+export default function InputNode({ id, data, selected, xPos, yPos }: NodeProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const { nodes, setNodes, theme } = useFlowStore();
+  const { theme } = useFlowStore();
+  const { setCenter, getViewport } = useReactFlow();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const currentPacket: FlowPacket = data.packet || { type: "text", payload: "" };
+  // ── Local textarea state (prevents cursor jump) ───────────────────────
+  // The textarea controls its own text via local state; the Zustand store
+  // is updated only on blur (or explicit patchPacket calls from other
+  // actions). External store changes (Chat Hub, Clear all) are synced back
+  // via the useEffect below.
+  const [localText, setLocalText] = useState<string>(() => {
+    const p = data?.packet;
+    return p?.type === "text" ? (p.payload ?? "") : "";
+  });
+  const lastSyncedText = useRef<string>(localText);
 
-  const patchPacket = (patch: Partial<FlowPacket>) => {
-    const next: FlowPacket = { ...currentPacket, ...patch };
-    setNodes(nodes.map((n) => n.id === id ? { ...n, data: { ...n.data, packet: next } } : n));
-  };
+  // Sync store → local when something external changes the packet's text
+  // (e.g. ChatHub seeding the value, Clear all button).
+  const storeText: string = (() => {
+    const p = data?.packet;
+    return p?.type === "text" ? (p.payload ?? "") : "";
+  })();
+  useEffect(() => {
+    if (storeText !== lastSyncedText.current) {
+      setLocalText(storeText);
+      lastSyncedText.current = storeText;
+    }
+  }, [storeText]);
 
+  // ── Fresh-state patchPacket (avoids stale closure) ────────────────────
+  // Reads the node's latest packet directly from Zustand at call time so
+  // attachments/fileContext are never lost due to a stale closure.
+  const patchPacket = useCallback((patch: Partial<FlowPacket>) => {
+    const store = useFlowStore.getState();
+    const freshNode = store.nodes.find((n) => n.id === id);
+    const freshPacket: FlowPacket = freshNode?.data?.packet ?? { type: "text", payload: "" };
+    const next: FlowPacket = { ...freshPacket, ...patch };
+    store.setNodes(store.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, packet: next } } : n)));
+  }, [id]);
+
+  // ── File handling ─────────────────────────────────────────────────────
   const addFiles = useCallback(async (files: File[]) => {
     if (!files.length) return;
     const { textBlock, attachments: newImgAtts, warnings: w } = await packFiles(files);
     setWarnings(w);
-
     const patch: Partial<FlowPacket> = {};
 
     if (newImgAtts.length > 0) {
-      const existing: FlowAttachment[] = currentPacket.attachments || [];
+      const store = useFlowStore.getState();
+      const freshNode = store.nodes.find((n) => n.id === id);
+      const freshPacket: FlowPacket = freshNode?.data?.packet ?? { type: "text", payload: "" };
+      const existing: FlowAttachment[] = freshPacket.attachments || [];
       patch.attachments = [...existing, ...newImgAtts];
     }
-
     if (textBlock) {
-      const prev = currentPacket.fileContext || "";
+      const store = useFlowStore.getState();
+      const freshNode = store.nodes.find((n) => n.id === id);
+      const freshPacket: FlowPacket = freshNode?.data?.packet ?? { type: "text", payload: "" };
+      const prev = freshPacket.fileContext || "";
       patch.fileContext = prev ? `${prev}\n${textBlock}` : textBlock;
     }
-
     if (Object.keys(patch).length > 0) patchPacket(patch);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPacket, nodes, id]);
+  }, [id, patchPacket]);
 
-  const removeAttachment = (idx: number) => {
-    const next = (currentPacket.attachments || []).filter((_, i) => i !== idx);
+  const removeAttachment = useCallback((idx: number) => {
+    const store = useFlowStore.getState();
+    const freshNode = store.nodes.find((n) => n.id === id);
+    const freshPacket: FlowPacket = freshNode?.data?.packet ?? { type: "text", payload: "" };
+    const next = (freshPacket.attachments || []).filter((_, i) => i !== idx);
     patchPacket({ attachments: next.length ? next : undefined });
-  };
+  }, [id, patchPacket]);
 
-  const clearFileContext = () => {
+  const clearFileContext = useCallback(() => {
     patchPacket({ fileContext: undefined });
     setWarnings([]);
-  };
+  }, [patchPacket]);
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -61,16 +97,57 @@ export default function InputNode({ id, data, selected }: NodeProps) {
     if (files.length) addFiles(files);
   };
 
-  const textValue = currentPacket.type === "text" ? (currentPacket.payload || "") : "";
+  // ── Textarea handlers ─────────────────────────────────────────────────
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setLocalText(val);
+    // Debounced store sync (500ms) — eliminates cursor jump on fast typing
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      lastSyncedText.current = val;
+      patchPacket({ type: "text", payload: val });
+    }, 500);
+  };
+
+  // Double-click: zoom to 1.4× (the only time zoom level changes)
+  const handleZoomIn = useCallback(() => {
+    const NODE_W = 260;
+    const NODE_H = 220;
+    setCenter(xPos + NODE_W / 2, yPos + NODE_H / 2, { zoom: 1.4, duration: 600 });
+  }, [setCenter, xPos, yPos]);
+
+  // Text focus / file button click: soft pan to node center at current zoom (no zoom change)
+  const handleSoftPan = useCallback(() => {
+    const NODE_W = 260;
+    const NODE_H = 220;
+    const { zoom } = getViewport();
+    setCenter(xPos + NODE_W / 2, yPos + NODE_H / 2, { zoom, duration: 300 });
+  }, [setCenter, getViewport, xPos, yPos]);
+
+  const handleTextFocus = () => handleSoftPan();
+
+  const handleTextBlur = () => {
+    // Cancel any pending debounce and flush immediately to store (no fitView — only paneClick zooms out)
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    lastSyncedText.current = localText;
+    patchPacket({ type: "text", payload: localText });
+  };
+
+  // Double-click header also zooms in at 1.4×
+  const handleDoubleClick = () => handleZoomIn();
+
+  // Derive display values from store packet (for chips/badges; text comes from localText)
+  const currentPacket: FlowPacket = data.packet || { type: "text", payload: "" };
   const attachments = currentPacket.attachments || [];
   const fileContext = currentPacket.fileContext || "";
-
-  // Count packed text files (estimate from header markers)
   const packedFileCount = fileContext ? (fileContext.match(/^--- File:/gm) || []).length : 0;
 
   return (
     <NodeCard nodeId={id} selected={selected} className="min-w-[240px]">
-      <div className="flex items-center gap-2 font-bold text-blue-500 uppercase tracking-tighter mb-3">
+      <div
+        onDoubleClick={handleDoubleClick}
+        className="flex items-center gap-2 font-bold text-blue-500 uppercase tracking-tighter mb-3 cursor-zoom-in select-none"
+      >
         <Play size={14} fill="currentColor" />
         <span>Starting Point</span>
       </div>
@@ -96,8 +173,10 @@ export default function InputNode({ id, data, selected }: NodeProps) {
               : "bg-white border-slate-200 text-slate-800 placeholder:text-slate-300"
           )}
           placeholder="What information are we starting with?"
-          value={textValue}
-          onChange={(e) => patchPacket({ type: "text", payload: e.target.value })}
+          value={localText}
+          onChange={handleTextChange}
+          onFocus={handleTextFocus}
+          onBlur={handleTextBlur}
         />
 
         {/* Image attachment chips */}
@@ -146,23 +225,31 @@ export default function InputNode({ id, data, selected }: NodeProps) {
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onMouseDown={(e) => e.preventDefault()} // prevent textarea blur before click
+              onClick={() => { handleSoftPan(); fileInputRef.current?.click(); }}
               className="flex items-center gap-1 text-[9px] font-bold text-blue-500 hover:underline uppercase tracking-widest"
             >
               <Paperclip size={10} />
               Files
             </button>
             <button
-              onClick={() => folderInputRef.current?.click()}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { handleSoftPan(); folderInputRef.current?.click(); }}
               className="flex items-center gap-1 text-[9px] font-bold text-indigo-400 hover:underline uppercase tracking-widest"
             >
               <FolderOpen size={10} />
               Folder
             </button>
           </div>
-          {(textValue || attachments.length > 0 || fileContext) && (
+          {(localText || attachments.length > 0 || fileContext) && (
             <button
-              onClick={() => { patchPacket({ type: "text", payload: "", attachments: undefined, fileContext: undefined }); setWarnings([]); }}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setLocalText("");
+                lastSyncedText.current = "";
+                patchPacket({ type: "text", payload: "", attachments: undefined, fileContext: undefined });
+                setWarnings([]);
+              }}
               className="text-[9px] text-slate-500 hover:text-rose-400 transition-colors"
             >
               Clear all

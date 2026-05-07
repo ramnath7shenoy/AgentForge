@@ -240,6 +240,7 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
         onNodeDragStart={editable ? onNodeDragStart : undefined}
         onNodeDragStop={editable ? onNodeDragStop : undefined}
         onNodeClick={(_, n) => setSelectedNodeId(n.id)}
+        onPaneClick={() => fitView({ duration: 800, padding: 0.15 })}
         nodesDraggable={editable}
         nodesConnectable={editable}
         elementsSelectable={editable}

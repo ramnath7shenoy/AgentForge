@@ -130,6 +130,8 @@ const applySeqAttn = (
 import { MODEL_DEFAULTS, resolveModelChain } from "@/lib/flow/modelRegistry";
 // MODEL_DEFAULTS: { gemini: [...], groq: [...], openai: [...], anthropic: [...] }
 // resolveModelChain: builds ordered fallback list for a provider + capability
+import { calculateExecutionCost } from "@/lib/utils/tokenCost";
+import { toastBus } from "@/lib/utils/toastEvents";
 
 const detectProvider = (key: string): string => {
   if (key.startsWith("gsk_")) return "groq";
@@ -166,7 +168,8 @@ async function dispatchLLM(
   userMessage: string,
   conversationHistory: ChatMessage[],
   onLog: (msg: string, type: any) => void,
-  attachments?: Attachment[]
+  attachments?: Attachment[],
+  onCost?: (amount: number) => void
 ): Promise<string> {
   const provider = providerKey || detectProvider(apiKey);
   const turnCount = conversationHistory.length + 1;
@@ -194,7 +197,7 @@ async function dispatchLLM(
 
     // Both OpenAI and Groq accept the image_url content-array format.
     // Groq vision requires a vision-capable model — switch automatically.
-    let resolvedModel = modelName || (provider === "groq" ? "mixtral-8x7b-32768" : "gpt-4-turbo");
+    let resolvedModel = modelName || (provider === "groq" ? "llama-4-scout-17b" : "gpt-5.5-pro");
     let userContent: any;
 
     if (imageAtts.length > 0) {
@@ -221,7 +224,7 @@ async function dispatchLLM(
     };
   } else if (provider === "gemini") {
     url = `https://generativelanguage.googleapis.com/v1beta/models/${
-      modelName || "gemini-2.0-flash"
+      modelName || "gemini-3.1-pro"
     }:generateContent?key=${apiKey}`;
     headers = {};
 
@@ -273,7 +276,7 @@ async function dispatchLLM(
 
   // ── Model resilience: compute fallback chain, retry on 404/410 ──────────
   const initialModel = provider === "gemini"
-    ? (modelName || "gemini-2.0-flash")
+    ? (modelName || "gemini-3.1-pro")
     : (body.model as string);
   const modelChain = resolveModelChain(provider, initialModel, imageAtts.length > 0);
 
@@ -285,7 +288,8 @@ async function dispatchLLM(
     return obj;
   };
 
-  const STALE = new Set([404, 410]);
+  // 404/410 = model gone; 429 = rate limit — cascade to next model in all cases
+  const STALE = new Set([404, 410, 429]);
   let lastError: Error | null = null;
 
   for (const candidate of modelChain) {
@@ -312,21 +316,58 @@ async function dispatchLLM(
     const data = await response.json();
 
     if (!response.ok) {
-      if (STALE.has(response.status)) {
-        onLog(`⚠️ "${candidate}" unavailable (${response.status}), trying next fallback…`, "WARN");
-        lastError = new Error(data.error?.message || `Model ${candidate} returned ${response.status}`);
+      const errMsg = (
+        data.error?.message || data.error?.code || data.error?.type || ""
+      ).toLowerCase();
+      const isStaleByMessage =
+        errMsg.includes("model_not_found") ||
+        errMsg.includes("decommissioned") ||
+        errMsg.includes("deprecated") ||
+        errMsg.includes("does not exist") ||
+        errMsg.includes("not supported");
+
+      if (STALE.has(response.status) || isStaleByMessage) {
+        const toastMsg =
+          response.status === 429
+            ? "Rate limit — switching to next model…"
+            : "Switching to fallback model…";
+        onLog(
+          `⚠️ "${candidate}" unavailable (${response.status})${isStaleByMessage ? ` — ${errMsg.slice(0, 60)}` : ""}, trying next fallback…`,
+          "WARN"
+        );
+        toastBus.emit({ message: toastMsg, level: "warn" });
+        lastError = new Error(
+          data.error?.message || `Model ${candidate} returned ${response.status}`
+        );
         continue;
       }
-      if (response.status === 429)
-        throw new Error(`Rate limit exceeded (429) on ${provider.toUpperCase()}. Wait a moment or switch providers.`);
       if (response.status >= 500)
         throw new Error(`${provider.toUpperCase()} server error (${response.status}). Try again later.`);
       throw new Error(data.error?.message || `${provider.toUpperCase()} API Error ${response.status}`);
     }
 
-    if (provider === "gemini") return data.candidates[0].content.parts[0].text;
-    if (provider === "anthropic") return data.content[0].text;
-    return data.choices[0].message.content;
+    // Extract response text
+    let resultText: string;
+    if (provider === "gemini") resultText = data.candidates[0].content.parts[0].text;
+    else if (provider === "anthropic") resultText = data.content[0].text;
+    else resultText = data.choices[0].message.content;
+
+    // Token cost tracking
+    let inputTokens = 0, outputTokens = 0;
+    if (provider === "gemini") {
+      inputTokens  = data.usageMetadata?.promptTokenCount      ?? 0;
+      outputTokens = data.usageMetadata?.candidatesTokenCount  ?? 0;
+    } else if (provider === "anthropic") {
+      inputTokens  = data.usage?.input_tokens  ?? 0;
+      outputTokens = data.usage?.output_tokens ?? 0;
+    } else {
+      inputTokens  = data.usage?.prompt_tokens     ?? 0;
+      outputTokens = data.usage?.completion_tokens ?? 0;
+    }
+    const cost = calculateExecutionCost(candidate, inputTokens, outputTokens);
+    if (cost > 0) onCost?.(cost);
+
+    return resultText;
   }
 
   throw lastError || new Error(`All fallback models exhausted for ${provider.toUpperCase()}`);
@@ -659,7 +700,11 @@ async function executeNode(
                 resolvedPrompt,
                 chatHistory,
                 (msg, type) => sendLog(msg, type, current.id),
-                inputAttachments
+                inputAttachments,
+                async (cost) => {
+                  const { useCostStore } = await import("@/stores/useCostStore");
+                  useCostStore.getState().addCost(cost);
+                }
               ),
               30_000,
               `${resolvedProvider.toUpperCase()}/${model}`

@@ -51,6 +51,7 @@ export default function SandboxGallery({
   executedNodeIds,
   finalResult,
   running,
+  runCostFormatted,
   nodes,
   onClearLogs,
 }: SandboxGalleryProps) {
@@ -125,6 +126,14 @@ export default function SandboxGallery({
         </div>
 
         <div className="flex items-center gap-2 px-4">
+          {runCostFormatted !== "$0.00" && (
+            <span
+              className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 dark:text-emerald-400"
+              title="Run token cost"
+            >
+              {runCostFormatted}
+            </span>
+          )}
           {activeTab === "terminal" && logs.length > 0 && (
             <>
               <span className="text-[9px] text-slate-600 font-mono">{logs.length}</span>

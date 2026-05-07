@@ -30,7 +30,7 @@ export const NodeCard: React.FC<{
   const isError   = nodeStatus === "error";
   const isSuccess = nodeStatus === "success";
 
-  const { setCenter, fitView, getNode, project, getZoom } = useReactFlow();
+  const { setCenter, getNode, project, getZoom } = useReactFlow();
   const cardRef = useRef<HTMLDivElement>(null);
 
   const handleFocus = useCallback(() => {
@@ -62,18 +62,13 @@ export const NodeCard: React.FC<{
   }, [nodeId, getNode, setCenter, getZoom, project]);
 
   const handleBlur = useCallback((e: React.FocusEvent<HTMLDivElement>) => {
+    // Camera zoom-out is handled exclusively by onPaneClick in FlowCanvas.
+    // Blur only resets the zoomedNodeId tracker — no fitView.
     const next = e.relatedTarget as HTMLElement | null;
-    // If focus moved to another node card, its onFocus will handle the pan — skip fitView.
-    if (next && next.closest("[data-nodeid]") && !cardRef.current?.contains(next)) {
-      zoomedNodeId = null;
-      return;
-    }
-    // Focus returned to canvas background or left the editor — restore overview.
     if (!cardRef.current?.contains(next)) {
       zoomedNodeId = null;
-      fitView({ duration: 600, padding: 0.15 });
     }
-  }, [fitView]);
+  }, []);
 
   return (
     <div

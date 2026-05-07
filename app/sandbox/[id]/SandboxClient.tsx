@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import {
   Play,
   Loader2,
@@ -39,6 +39,10 @@ export default function SandboxClient({
   edges,
 }: SandboxClientProps) {
   const sandboxExec = useSandboxExecution();
+
+  // Always start as a clean slate — never inherit editor sessionStorage state
+  useEffect(() => { sandboxExec.clearResult(); }, []);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -216,14 +220,14 @@ export default function SandboxClient({
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-1 text-[9px] font-bold text-slate-500 hover:text-sky-400 transition-colors"
+                  className="flex items-center gap-1 text-[9px] font-bold text-slate-400 hover:text-sky-400 transition-all px-2 py-1 rounded-lg border border-slate-700/50 hover:border-sky-500/30"
                 >
                   <Paperclip size={9} />
                   Files
                 </button>
                 <button
                   onClick={() => folderInputRef.current?.click()}
-                  className="flex items-center gap-1 text-[9px] font-bold text-slate-500 hover:text-indigo-400 transition-colors"
+                  className="flex items-center gap-1 text-[9px] font-bold text-slate-400 hover:text-indigo-400 transition-all px-2 py-1 rounded-lg border border-slate-700/50 hover:border-indigo-500/30"
                 >
                   <FolderOpen size={9} />
                   Folder

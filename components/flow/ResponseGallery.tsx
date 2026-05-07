@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useLogStore, LogType } from "@/stores/useLogStore";
 import { useFlowStore } from "@/stores/flowStore";
+import { useCostStore } from "@/stores/useCostStore";
 import { Trash2, Terminal as TerminalIcon, Download, Sparkles, Copy, CheckCheck, Bot, Clock, Workflow, FlaskConical, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { NodeExecutionStatus } from "@/types/flowStoreTypes";
@@ -24,6 +25,7 @@ const badgeMap: Record<LogType, string> = {
 export default function ResponseGallery() {
   const { logs, clearLogs } = useLogStore();
   const { currentContext, finalResult, running, nodes, activeProject, nodeStatuses, executedNodeIds, isDryRun, nodeOutputs } = useFlowStore();
+  const { formatted: costFormatted } = useCostStore();
   const [activeTab, setActiveTab] = useState<"terminal" | "result">("terminal");
   const [stateSearch, setStateSearch] = useState("");
   const [copied, setCopied] = useState(false);
@@ -122,11 +124,19 @@ export default function ResponseGallery() {
         </div>
 
         <div className="flex items-center gap-2 px-4">
+          {costFormatted !== "$0.00" && (
+            <span
+              className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 dark:text-emerald-400"
+              title="Session token cost"
+            >
+              {costFormatted}
+            </span>
+          )}
           {activeTab === "terminal" && logs.length > 0 && (
             <>
               <span className="text-[9px] text-slate-600 font-mono">{logs.length}</span>
-              <button 
-                onClick={clearLogs} 
+              <button
+                onClick={clearLogs}
                 className="flex items-center gap-1 text-[9px] text-slate-400 hover:text-white transition-colors px-2 py-1 rounded-lg border border-white/10 hover:border-white/20 hover:bg-white/5 font-bold uppercase tracking-wider"
               >
                 <Trash2 size={10} /> Clear

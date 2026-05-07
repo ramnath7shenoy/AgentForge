@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useFlowStore } from "@/stores/flowStore";
 import { isApprovalPending, resolveApproval } from "@/lib/approvalGate";
+import { useCostStore } from "@/stores/useCostStore";
 import { cn } from "@/lib/utils";
 
 export default function ChatHub() {
@@ -34,8 +35,10 @@ export default function ChatHub() {
   const [awaitingApproval, setAwaitingApproval] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const seededRef = useRef(false);
 
   const inputNode = nodes.find((n) => n.type === "input");
+  const { formatted: costFormatted } = useCostStore();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -60,13 +63,16 @@ export default function ChatHub() {
     }
   }, [isOpen, isRunning, awaitingApproval]);
 
-  // Keep input box in sync with the canvas input node (canvas → chat direction)
+  // Seed the input text once from the canvas input node's pre-configured payload.
+  // After the user has interacted, the two stay decoupled — typing in the chat
+  // does NOT update the input node so attachments/fileContext remain sticky.
   useEffect(() => {
-    if (inputNode) {
+    if (!seededRef.current && inputNode && !isRunning) {
       const nodeText =
         inputNode.data?.packet?.payload || inputNode.data?.instructions || "";
-      if (typeof nodeText === "string" && nodeText !== inputText && !isRunning) {
+      if (typeof nodeText === "string" && nodeText) {
         setInputText(nodeText);
+        seededRef.current = true;
       }
     }
   }, [inputNode, isRunning]);
@@ -78,28 +84,28 @@ export default function ChatHub() {
     if (isRunning && !awaitingApproval) return;
 
     const submittedText = inputText.trim();
-    setInputText(""); // clear immediately so UI feels responsive
 
     // Flow is paused at an approval/gatekeeper node — route to gate
     if (awaitingApproval) {
       addMessage("user", submittedText);
+      setInputText("");
+      if (inputRef.current) inputRef.current.value = "";
       const words = submittedText.toLowerCase().split(/\W+/);
       const isApproval = APPROVAL_WORDS.some((w) => words.includes(w));
       resolveApproval(isApproval);
       return;
     }
 
-    // Normal turn — sync text to input node then run flow
+    // Normal turn — clear input, update canvas node, then run
+    setInputText("");
+    if (inputRef.current) inputRef.current.value = "";
     if (inputNode) {
+      const existingPacket = inputNode.data?.packet || {};
       updateNodeData(inputNode.id, {
-        packet: { type: "text", payload: submittedText },
+        packet: { ...existingPacket, type: "text", payload: submittedText },
       });
     }
     await runClientFlow(submittedText);
-    // Guard: canvas-sync useEffect fires when isRunning goes false. If the
-    // node packet is briefly non-empty at that moment, it would restore the
-    // old text. Explicitly clear again so the box stays empty.
-    setInputText("");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -169,6 +175,14 @@ export default function ChatHub() {
                     {turnCount} turn{turnCount !== 1 ? "s" : ""}
                   </span>
                 )}
+                {costFormatted !== "$0.00" && (
+                  <span
+                    className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
+                    title="Session token cost"
+                  >
+                    {costFormatted}
+                  </span>
+                )}
               </div>
 
               <div className="flex items-center gap-1">
@@ -176,7 +190,11 @@ export default function ChatHub() {
                 {chatHistory.length > 0 && (
                   <button
                     onClick={() => {
-                      if (confirm("Clear conversation history?")) clearChatHistory();
+                      if (confirm("Clear conversation history?")) {
+                        clearChatHistory();
+                        setInputText("");
+                        seededRef.current = false; // allow re-seed from canvas next interaction
+                      }
                     }}
                     className="p-1.5 rounded-md text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
                     title="Clear conversation"
@@ -276,14 +294,7 @@ export default function ChatHub() {
                   type="text"
                   value={inputText}
                   disabled={isRunning && !awaitingApproval}
-                  onChange={(e) => {
-                    setInputText(e.target.value);
-                    if (!awaitingApproval && inputNode) {
-                      updateNodeData(inputNode.id, {
-                        packet: { type: "text", payload: e.target.value },
-                      });
-                    }
-                  }}
+                  onChange={(e) => setInputText(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={
                     awaitingApproval

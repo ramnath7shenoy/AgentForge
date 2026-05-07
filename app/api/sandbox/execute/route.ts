@@ -16,6 +16,7 @@ type SseEvent =
   | { t: "status"; nodeId: string; status: SandboxNodeStatus }
   | { t: "output"; nodeId: string; packet: SandboxFlowPacket }
   | { t: "result"; packet: SandboxFlowPacket }
+  | { t: "cost"; amount: number }
   | { t: "done" }
   | { t: "error"; message: string };
 
@@ -52,7 +53,7 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        const { context } = await executeGraphServer(
+        const { context, totalCostUsd } = await executeGraphServer(
           nodes,
           edges,
           input,
@@ -73,6 +74,7 @@ export async function POST(req: NextRequest) {
         const resultPacket: SandboxFlowPacket =
           context.variables.output || { type: "text", payload: "" };
         enqueue({ t: "result", packet: resultPacket });
+        if (totalCostUsd > 0) enqueue({ t: "cost", amount: totalCostUsd });
       } catch (err: any) {
         enqueue({ t: "error", message: err.message || "Execution failed" });
       } finally {
