@@ -35,6 +35,7 @@ model Flow {
   isDeployed     Boolean?  @default(false) @map("is_deployed")
   description    String?
   thumbnail      String?
+  creatorName    String?   @map("creator_name")
   folderId       String?   @map("folder_id") @db.Uuid
   folder         Folder?   @relation(fields: [folderId], references: [id])
   project        Project?  @relation(fields: [projectId], references: [id], onUpdate: NoAction)

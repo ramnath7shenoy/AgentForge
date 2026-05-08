@@ -77,8 +77,11 @@ export default function PublishPage() {
 
   const FORGE_STATE_KEY = "FORGE_PUBLISH_STATE";
 
-  // Effect 1 — Rehydrate from localStorage on mount (survives tab close + Back navigation)
+  // Effect 1 — Rehydrate user config from localStorage (input, keys, attachments only).
+  // Execution results (logs, finalResult) are intentionally NOT restored so opening
+  // the page for a new flow never shows a stale screenshot from a previous run.
   useEffect(() => {
+    sandboxExec.clearResult(); // nuke any sessionStorage remnant from prior session
     try {
       const raw = localStorage.getItem(FORGE_STATE_KEY);
       if (!raw) return;
@@ -87,14 +90,17 @@ export default function PublishPage() {
       if (Array.isArray(s.envKeys) && s.envKeys.length) setEnvKeys(s.envKeys);
       if (Array.isArray(s.attachments) && s.attachments.length) setSandboxAttachments(s.attachments);
       if (s.fileContext) setSandboxTextContext(s.fileContext);
-      if (Array.isArray(s.logs) || s.finalResult) {
-        sandboxExec.restoreState(Array.isArray(s.logs) ? s.logs : [], s.finalResult ?? null);
-      }
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Effect 2 — Persist on every relevant state change
+  // Clear execution state on unmount so Back-navigation never leaks results
+  useEffect(() => {
+    return () => { sandboxExec.clearResult(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Effect 2 — Persist user config on change (results excluded — don't want stale ghosts)
   useEffect(() => {
     try {
       localStorage.setItem(FORGE_STATE_KEY, JSON.stringify({
@@ -102,11 +108,9 @@ export default function PublishPage() {
         envKeys,
         attachments: sandboxAttachments,
         fileContext: sandboxTextContext,
-        logs: sandboxExec.logs,
-        finalResult: sandboxExec.finalResult,
       }));
     } catch {}
-  }, [inputValue, envKeys, sandboxAttachments, sandboxTextContext, sandboxExec.logs, sandboxExec.finalResult]);
+  }, [inputValue, envKeys, sandboxAttachments, sandboxTextContext]);
 
   // Vault sync
   const [vaultSynced, setVaultSynced] = useState(false);
@@ -237,7 +241,12 @@ export default function PublishPage() {
   const handleDeployConfirm = async (name: string, description: string) => {
     setDeployLoading(true);
     try {
-      const result = await deployToStore(name, description, nodes as object, edges as object, deployedFlowId ?? undefined);
+      const thumbnail =
+        typeof sandboxExec.finalResult?.payload === "string" &&
+        sandboxExec.finalResult.payload.startsWith("data:image/")
+          ? sandboxExec.finalResult.payload
+          : undefined;
+      const result = await deployToStore(name, description, nodes as object, edges as object, deployedFlowId ?? undefined, thumbnail);
       if (result.success && result.flowId) {
         setDeployedFlowId(result.flowId);
         setIsDeployed(true);
@@ -281,13 +290,6 @@ export default function PublishPage() {
                 <h1 className="text-lg font-bold text-white uppercase tracking-wider">Universal Preview</h1>
                 <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-widest">Environment Sandbox</p>
               </div>
-              <button
-                onClick={() => router.push("/store")}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-[10px] font-bold text-slate-400 hover:text-violet-400 hover:border-violet-500/30 transition-all"
-              >
-                <ShoppingBag size={12} />
-                AgentStore
-              </button>
             </div>
             <div className="flex items-center gap-2">
               {/* Deploy to Store */}

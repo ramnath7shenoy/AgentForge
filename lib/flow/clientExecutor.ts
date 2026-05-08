@@ -169,7 +169,8 @@ async function dispatchLLM(
   conversationHistory: ChatMessage[],
   onLog: (msg: string, type: any) => void,
   attachments?: Attachment[],
-  onCost?: (amount: number) => void
+  onCost?: (amount: number) => void,
+  systemPrompt?: string
 ): Promise<string> {
   const provider = providerKey || detectProvider(apiKey);
   const turnCount = conversationHistory.length + 1;
@@ -179,6 +180,7 @@ async function dispatchLLM(
   );
 
   const SYSTEM_PROMPT =
+    systemPrompt?.trim() ||
     "You are a helpful AI assistant running inside the AgentForge platform. " +
     "Maintain context across the entire conversation.";
 
@@ -636,9 +638,8 @@ async function executeNode(
         current.id
       );
 
-      // C. Variable resolution via {{key}} / {{key.property}}
-      // ".output" is a semantic alias for ".payload" — architect-generated instructions
-      // often write {{researcher.output}} but FlowPackets store their content in .payload.
+      // C. Resolve {{refs}} in instructions — this becomes the system prompt.
+      // ".output" is a semantic alias for ".payload" so {{node.output}} works.
       const resolvedPrompt = rawPrompt.replace(
         /\{\{(.*?)\}\}/g,
         (_: string, path: string) => {
@@ -647,8 +648,16 @@ async function executeNode(
         }
       );
 
-      // D. Full conversation history — passed as native API message arrays by
-      //    dispatchLLM; no string-concatenation, no turn cap.
+      // D. User message = immediate predecessor output (clean data, no instructions).
+      // Instructions go to system role; this prevents them from leaking into the query.
+      const _incomingEdge = edges.find((e) => e.target === current.id);
+      const _predecessorPacket = _incomingEdge ? context.nodes[_incomingEdge.source] : null;
+      const userInputMessage = _predecessorPacket
+        ? getRawValue(_predecessorPacket)
+        : context.variables.input
+          ? getRawValue(context.variables.input)
+          : initialInput;
+
       sendLog(
         `💬 Memory: ${chatHistory.length} prior turn(s) in context`,
         "INFO",
@@ -697,14 +706,15 @@ async function executeNode(
                 resolvedProvider,
                 model,
                 jitKey,
-                resolvedPrompt,
+                userInputMessage,   // user role: the clean data/query
                 chatHistory,
                 (msg, type) => sendLog(msg, type, current.id),
                 inputAttachments,
                 async (cost) => {
                   const { useCostStore } = await import("@/stores/useCostStore");
                   useCostStore.getState().addCost(cost);
-                }
+                },
+                resolvedPrompt      // system role: the node instructions
               ),
               30_000,
               `${resolvedProvider.toUpperCase()}/${model}`
@@ -738,6 +748,24 @@ async function executeNode(
       }
 
       if (!success) throw new Error(`All models failed. Last error logged above.`);
+
+      // URL Safety: if this node's instructions mention URL/link goals, ensure the
+      // output is a valid browser-safe URL. Handles three cases:
+      //   1. LLM returned plain text → wrap as Google search
+      //   2. LLM returned bare search base with no query → append input as search term
+      //   3. LLM returned a valid http URL → pass through unchanged
+      const _instructionsLower = rawPrompt.toLowerCase();
+      if (/\b(url|link|website|navigate|href|browse to|open the)\b/.test(_instructionsLower)) {
+        const _trimmed = responseText.trim();
+        const _SEARCH = "https://www.google.com/search?q=";
+        if (!_trimmed || _trimmed === _SEARCH || /[?&]q=\s*$/.test(_trimmed)) {
+          responseText = `${_SEARCH}${encodeURIComponent(userInputMessage.slice(0, 200))}`;
+          sendLog(`🔗 URL Safety: missing query — rebuilt from user input`, "WARN", current.id);
+        } else if (!_trimmed.startsWith("http")) {
+          responseText = `${_SEARCH}${encodeURIComponent(_trimmed)}`;
+          sendLog(`🔗 URL Safety: plain text wrapped as search query`, "INFO", current.id);
+        }
+      }
 
       // F. Exit keyword detection — only triggers if EXIT or STOP is the entire message.
       // A substring match would kill the flow whenever the AI mentions "stop doing X" or
@@ -959,6 +987,17 @@ async function executeNode(
             return val != null ? getRawValue(val) : "";
           }
         );
+      }
+
+      // Browser: URL is always the immediate parent node's output — no fallback to initial input.
+      if (appProvider === "browser") {
+        const incomingEdge = edges.find((e) => e.target === current.id);
+        const upstreamPacket = incomingEdge ? context.nodes[incomingEdge.source] : null;
+        if (!upstreamPacket) throw new Error(`Browser Agent requires a connected upstream node.`);
+        const urlToVisit = getRawValue(upstreamPacket).trim();
+        if (!urlToVisit) throw new Error(`Browser Agent [${appAction}]: upstream node produced no output.`);
+        resolvedInputs.url = urlToVisit;
+        sendLog(`🔗 Browser URL: "${urlToVisit.slice(0, 80)}"`, "INFO", current.id);
       }
 
       sendLog(

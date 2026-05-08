@@ -23,7 +23,12 @@ import {
   ShieldAlert,
   PlugZap,
   X,
+  Paperclip,
+  FolderOpen,
+  FileText,
+  AlertTriangle,
 } from "lucide-react";
+import { packFiles } from "@/lib/utils/contextPacker";
 
 // ── Reusable key-value pair editor ────────────────────────────────────────────
 interface KVPair { key: string; value: string }
@@ -137,6 +142,67 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
   const [sidebarTab, setSidebarTab] = React.useState<"settings" | "logs">("settings");
+
+  // ── Input node sidebar textarea state ─────────────────────────────────
+  const [inputSidebarText, setInputSidebarText] = React.useState<string>("");
+  const inputDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSyncedInputText = React.useRef<string>("");
+
+  // Sync local text when the selected node changes
+  React.useEffect(() => {
+    if (selectedNode?.type === "input") {
+      const text = selectedNode.data?.packet?.payload || "";
+      setInputSidebarText(text);
+      lastSyncedInputText.current = text;
+    }
+  }, [selectedNodeId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep in sync with external changes (ChatHub seeding, Clear-all)
+  const _storeInputPayload = selectedNode?.type === "input"
+    ? (selectedNode.data?.packet?.payload || "")
+    : "";
+  React.useEffect(() => {
+    if (selectedNode?.type === "input" && _storeInputPayload !== lastSyncedInputText.current) {
+      setInputSidebarText(_storeInputPayload);
+      lastSyncedInputText.current = _storeInputPayload;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_storeInputPayload]);
+
+  // ── Input node file-upload state ──────────────────────────────────────
+  const inputFileRef = React.useRef<HTMLInputElement>(null);
+  const inputFolderRef = React.useRef<HTMLInputElement>(null);
+  const [inputSidebarWarnings, setInputSidebarWarnings] = React.useState<string[]>([]);
+
+  const patchInputPacket = React.useCallback((patch: Record<string, any>) => {
+    if (!selectedNodeId) return;
+    const store = useFlowStore.getState();
+    const freshNode = store.nodes.find((n) => n.id === selectedNodeId);
+    const freshPacket = freshNode?.data?.packet ?? { type: "text", payload: "" };
+    const next = { ...freshPacket, ...patch };
+    store.setNodes(store.nodes.map((n) => n.id === selectedNodeId ? { ...n, data: { ...n.data, packet: next } } : n));
+  }, [selectedNodeId]);
+
+  const addInputFiles = React.useCallback(async (files: File[]) => {
+    if (!files.length) return;
+    const { textBlock, attachments: newImgAtts, warnings: w } = await packFiles(files);
+    setInputSidebarWarnings(w);
+    const patch: Record<string, any> = {};
+    if (newImgAtts.length > 0) {
+      const store = useFlowStore.getState();
+      const freshNode = store.nodes.find((n) => n.id === selectedNodeId);
+      const freshPacket = freshNode?.data?.packet ?? { type: "text", payload: "" };
+      patch.attachments = [...(freshPacket.attachments || []), ...newImgAtts];
+    }
+    if (textBlock) {
+      const store = useFlowStore.getState();
+      const freshNode = store.nodes.find((n) => n.id === selectedNodeId);
+      const freshPacket = freshNode?.data?.packet ?? { type: "text", payload: "" };
+      const prev = freshPacket.fileContext || "";
+      patch.fileContext = prev ? `${prev}\n${textBlock}` : textBlock;
+    }
+    if (Object.keys(patch).length > 0) patchInputPacket(patch);
+  }, [selectedNodeId, patchInputPacket]);
   const allLogs = useLogStore((state) => state.logs);
   const nodeLogs = selectedNode ? allLogs.filter(l => l.nodeId === selectedNode.id) : [];
 
@@ -171,20 +237,152 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
     );
   }
 
-  const renderInputNodeSettings = () => (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2 text-blue-500">
-        <Terminal size={16} />
-        <h3 className="text-sm font-bold uppercase tracking-tight">Starting Point</h3>
+  const renderInputNodeSettings = () => {
+    const inputPacket: any = selectedNode!.data?.packet || {};
+    const sidebarAttachments: any[] = inputPacket.attachments || [];
+    const sidebarFileContext: string = inputPacket.fileContext || "";
+    const sidebarFileCount = sidebarFileContext
+      ? (sidebarFileContext.match(/^--- File:/gm) || []).length
+      : 0;
+
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-2 text-blue-500">
+          <Terminal size={16} />
+          <h3 className="text-sm font-bold uppercase tracking-tight">Starting Point</h3>
+        </div>
+
+        {/* Message textarea */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Starting Message</label>
+          <textarea
+            className="w-full h-32 p-2.5 text-xs rounded-lg border resize-none outline-none transition-all bg-background border-border text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+            placeholder="What information are we starting with?"
+            value={inputSidebarText}
+            onChange={(e) => {
+              const val = e.target.value;
+              setInputSidebarText(val);
+              if (inputDebounceRef.current) clearTimeout(inputDebounceRef.current);
+              inputDebounceRef.current = setTimeout(() => {
+                lastSyncedInputText.current = val;
+                patchInputPacket({ type: "text", payload: val });
+              }, 500);
+            }}
+            onBlur={() => {
+              if (inputDebounceRef.current) clearTimeout(inputDebounceRef.current);
+              lastSyncedInputText.current = inputSidebarText;
+              patchInputPacket({ type: "text", payload: inputSidebarText });
+            }}
+          />
+        </div>
+
+        {/* Image attachment chips */}
+        {sidebarAttachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {sidebarAttachments.map((att: any, i: number) => (
+              <div key={i} className="flex items-center gap-1 px-2 py-1 bg-blue-500/10 border border-blue-500/20 rounded-lg text-[9px] font-bold text-blue-400 max-w-[160px]">
+                <FileText size={10} className="shrink-0" />
+                <span className="truncate">{att.name || "image"}</span>
+                <button
+                  onClick={() => {
+                    const next = sidebarAttachments.filter((_: any, idx: number) => idx !== i);
+                    patchInputPacket({ attachments: next.length ? next : undefined });
+                  }}
+                  className="text-blue-300 hover:text-rose-400 ml-0.5 shrink-0"
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Packed file context indicator */}
+        {sidebarFileContext && (
+          <div className="flex items-center gap-1.5 px-2 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+            <FolderOpen size={10} className="text-emerald-400 shrink-0" />
+            <span className="text-[9px] font-bold text-emerald-400 flex-1">
+              {sidebarFileCount} file{sidebarFileCount !== 1 ? "s" : ""} packed as context
+            </span>
+            <button
+              onClick={() => patchInputPacket({ fileContext: undefined })}
+              className="text-emerald-300 hover:text-rose-400 shrink-0"
+            >
+              <X size={10} />
+            </button>
+          </div>
+        )}
+
+        {/* Warnings */}
+        {inputSidebarWarnings.map((w, i) => (
+          <div key={i} className="flex items-start gap-1 text-[9px] text-amber-400">
+            <AlertTriangle size={9} className="shrink-0 mt-0.5" />
+            <span>{w}</span>
+          </div>
+        ))}
+
+        {/* File + Folder buttons + Clear all */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => inputFileRef.current?.click()}
+              className="flex items-center gap-1.5 text-[9px] font-bold text-blue-500 hover:underline uppercase tracking-widest"
+            >
+              <Paperclip size={10} />
+              Attach Files
+            </button>
+            <button
+              onClick={() => inputFolderRef.current?.click()}
+              className="flex items-center gap-1.5 text-[9px] font-bold text-indigo-400 hover:underline uppercase tracking-widest"
+            >
+              <FolderOpen size={10} />
+              Folder
+            </button>
+          </div>
+          {(inputSidebarText || sidebarAttachments.length > 0 || sidebarFileContext) && (
+            <button
+              onClick={() => {
+                setInputSidebarText("");
+                lastSyncedInputText.current = "";
+                setInputSidebarWarnings([]);
+                patchInputPacket({ type: "text", payload: "", attachments: undefined, fileContext: undefined });
+              }}
+              className="text-[9px] text-slate-500 hover:text-rose-400 transition-colors"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+
+        {/* Hidden file inputs */}
+        <input
+          ref={inputFileRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            if (files.length) addInputFiles(files);
+            e.target.value = "";
+          }}
+        />
+        <input
+          ref={(el) => {
+            (inputFolderRef as React.MutableRefObject<HTMLInputElement | null>).current = el;
+            if (el) el.setAttribute("webkitdirectory", "");
+          }}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            if (files.length) addInputFiles(files);
+            e.target.value = "";
+          }}
+        />
       </div>
-      <div className="flex flex-col gap-2">
-        <label className="text-[10px] font-bold uppercase text-slate-500">What information are we starting with?</label>
-        <p className="text-[10px] text-slate-400 italic leading-relaxed">
-          Use the node on the canvas to type text or drop files directly.
-        </p>
-      </div>
-    </div>
-  );
+    );
+  };
 
   const renderTriggerNodeSettings = () => {
     const handleCopyWebhook = () => {

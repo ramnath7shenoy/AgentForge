@@ -108,12 +108,14 @@ async function dispatchLLM(
   userMessage: string,
   onLog: (msg: string, type: any) => void,
   attachments?: Attachment[],
-  onCost?: (amount: number) => void
+  onCost?: (amount: number) => void,
+  systemPrompt?: string
 ): Promise<string> {
   const provider = providerKey || detectProvider(apiKey);
   onLog(`📡 Dispatching to ${provider.toUpperCase()} via ${modelName || "default"}...`, "INFO");
 
   const SYSTEM_PROMPT =
+    systemPrompt?.trim() ||
     "You are a helpful AI assistant running inside the AgentForge platform.";
 
   let url: string;
@@ -208,8 +210,8 @@ async function dispatchLLM(
     return obj;
   };
 
-  // 404/410 = model gone; 429 = rate limit — cascade in all cases
-  const STALE = new Set([404, 410, 429]);
+  // 404/410 = model gone; 413 = payload too large; 429 = rate limit — cascade in all cases
+  const STALE = new Set([404, 410, 413, 429]);
   let lastError: Error | null = null;
 
   for (const candidate of modelChain) {
@@ -243,7 +245,11 @@ async function dispatchLLM(
         errMsg.includes("decommissioned") ||
         errMsg.includes("deprecated") ||
         errMsg.includes("does not exist") ||
-        errMsg.includes("not supported");
+        errMsg.includes("not supported") ||
+        errMsg.includes("too large") ||
+        errMsg.includes("payload too large") ||
+        errMsg.includes("context_length") ||
+        errMsg.includes("max_tokens");
 
       if (STALE.has(response.status) || isStaleByMessage) {
         onLog(
@@ -436,17 +442,34 @@ async function executeNode(
     case "llm":
     case "ai": {
       const rawPrompt = current.data?.instructions || "";
-      assertTemplateDeps(rawPrompt, context, current.data?.label || current.id);
-      const prunedContext = applySeqAttn(context, rawPrompt);
+      const hasTemplateRefs = /\{\{.*?\}\}/.test(rawPrompt);
 
-      const prunedKeyCount = Object.keys(prunedContext.nodes).length + Object.keys(prunedContext.variables).length;
-      const totalKeyCount = Object.keys(context.nodes).length + Object.keys(context.variables).length;
-      sendLog(`🧠 SeqAttn: ${totalKeyCount} → ${prunedKeyCount} context keys`, "INFO", current.id);
+      // Always: instructions → system prompt, predecessor output → user message.
+      // This prevents node instructions from leaking into the user query.
+      const incomingEdge = edges.find((e) => e.target === current.id);
+      const predecessorPacket = incomingEdge ? context.nodes[incomingEdge.source] : null;
+      const resolvedUserMessage = predecessorPacket
+        ? getRawValue(predecessorPacket)
+        : (context.variables.input ? getRawValue(context.variables.input) : initialInput);
 
-      const resolvedPrompt = rawPrompt.replace(/\{\{(.*?)\}\}/g, (_: string, path: string) => {
-        const val = resolveTemplatePath(path, prunedContext);
-        return val != null ? getRawValue(val) : "";
-      });
+      // Resolve any {{refs}} in instructions so multi-node context reaches the system prompt.
+      let systemPromptOverride: string | undefined;
+      if (rawPrompt.trim()) {
+        if (hasTemplateRefs) {
+          assertTemplateDeps(rawPrompt, context, current.data?.label || current.id);
+          const prunedContext = applySeqAttn(context, rawPrompt);
+          const prunedKeyCount = Object.keys(prunedContext.nodes).length + Object.keys(prunedContext.variables).length;
+          const totalKeyCount = Object.keys(context.nodes).length + Object.keys(context.variables).length;
+          sendLog(`🧠 SeqAttn: ${totalKeyCount} → ${prunedKeyCount} context keys`, "INFO", current.id);
+          systemPromptOverride = rawPrompt.replace(/\{\{(.*?)\}\}/g, (_: string, path: string) => {
+            const val = resolveTemplatePath(path, prunedContext);
+            return val != null ? getRawValue(val) : "";
+          });
+        } else {
+          systemPromptOverride = rawPrompt.trim();
+          sendLog(`🎯 Context: system-prompt mode (instructions → system, predecessor → user)`, "INFO", current.id);
+        }
+      }
 
       sendLog("🔍 Resolving API key...", "INFO", current.id);
 
@@ -477,7 +500,7 @@ async function executeNode(
           try {
             sendLog(`📡 Probing ${resolvedProvider.toUpperCase()} via ${model}...`, "INFO", current.id);
             responseText = await withTimeout(
-              dispatchLLM(resolvedProvider, model, jitKey, resolvedPrompt, (msg, t) => sendLog(msg, t, current.id), inputAttachments, onCost),
+              dispatchLLM(resolvedProvider, model, jitKey, resolvedUserMessage, (msg, t) => sendLog(msg, t, current.id), inputAttachments, onCost, systemPromptOverride),
               30_000,
               `${resolvedProvider.toUpperCase()}/${model}`
             );
@@ -499,6 +522,24 @@ async function executeNode(
       }
 
       if (!success) throw new Error("All models failed.");
+
+      // URL Safety: if instructions mention URL/link goals, ensure output is browser-safe
+      const instructionsLower = rawPrompt.toLowerCase();
+      const isUrlGoal = /\b(url|link|website|navigate|href|browse to|open the)\b/.test(instructionsLower);
+      if (isUrlGoal) {
+        const trimmed = responseText.trim();
+        const SEARCH_BASE = "https://www.google.com/search?q=";
+        if (!trimmed || trimmed === SEARCH_BASE || /[?&]q=\s*$/.test(trimmed)) {
+          // Empty or incomplete search URL — use the user's query as the search term
+          const query = encodeURIComponent(resolvedUserMessage.slice(0, 200));
+          responseText = `${SEARCH_BASE}${query}`;
+          sendLog(`🔗 URL Safety: missing query — rebuilt from user message`, "WARN", current.id);
+        } else if (!trimmed.startsWith("http")) {
+          // LLM returned plain text instead of a URL — wrap as search
+          responseText = `${SEARCH_BASE}${encodeURIComponent(trimmed)}`;
+          sendLog(`🔗 URL Safety: output wrapped as search query`, "INFO", current.id);
+        }
+      }
 
       if (/^\s*(EXIT|STOP)\s*$/i.test(responseText.trim())) {
         sendLog("🛑 Exit keyword detected. Terminating.", "WARN", current.id);
@@ -641,6 +682,17 @@ async function executeNode(
           const val = resolveTemplatePath(path, context);
           return val != null ? getRawValue(val) : "";
         });
+      }
+
+      // Browser: URL is always the immediate parent node's output — no fallback to initial input.
+      if (appProvider === "browser") {
+        const incomingEdge = edges.find((e) => e.target === current.id);
+        const upstreamPacket = incomingEdge ? context.nodes[incomingEdge.source] : null;
+        if (!upstreamPacket) throw new Error(`Browser Agent requires a connected upstream node.`);
+        const urlToVisit = getRawValue(upstreamPacket).trim();
+        if (!urlToVisit) throw new Error(`Browser Agent [${appAction}]: upstream node produced no output.`);
+        resolvedInputs.url = urlToVisit;
+        sendLog(`🔗 Browser URL: "${urlToVisit.slice(0, 80)}"`, "INFO", current.id);
       }
 
       // E2B-backed browser / code execution actions

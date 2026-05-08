@@ -47,6 +47,7 @@ import ChatHub from "@/components/flow/chat/ChatHub";
 import ModelFallbackToast from "@/components/ui/ModelFallbackToast";
 
 import { useFlowStore, isAwaitingApproval } from "@/stores/flowStore";
+import { useVaultStore } from "@/stores/vaultStore";
 import { saveFlow, getLatestFlow, publishFlow } from "@/app/actions/flow";
 import { generateWorkflow } from "@/app/actions/ai-architect";
 import type { ArchitectProvider } from "@/app/actions/ai-architect";
@@ -178,11 +179,13 @@ function EditorContent() {
     supabase.auth.getUser().then(({ data: { user } }) => {
       setUserId(user?.id ?? null);
       setUser(user ?? null);
+      if (user) useVaultStore.getState().loadFromDb();
     });
     // Listen for auth changes (e.g. login in another tab)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserId(session?.user?.id ?? null);
       setUser(session?.user ?? null);
+      if (session?.user) useVaultStore.getState().loadFromDb();
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -1280,11 +1283,11 @@ function EditorContent() {
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 10 }}
               transition={{ type: "spring", stiffness: 300, damping: 25 }}
-              className="w-full max-w-2xl bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
+              className="w-full max-w-2xl bg-card border border-border rounded-2xl shadow-2xl flex flex-col max-h-[85vh]"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Modal Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+              {/* Modal Header — fixed, never scrolls */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 shrink-0">
                 <div>
                   <h2 className="font-bold text-white flex items-center gap-2">
                     <LayoutTemplate size={16} className="text-indigo-400" />
@@ -1300,8 +1303,8 @@ function EditorContent() {
                 </button>
               </div>
 
-              {/* Template Grid */}
-              <div className="p-6 grid grid-cols-1 gap-3">
+              {/* Scrollable template list */}
+              <div className="overflow-y-auto flex-1 p-5 grid grid-cols-1 gap-2.5">
                 {FLOW_TEMPLATES.map((template) => (
                   <div
                     key={template.id}

@@ -278,7 +278,7 @@ export async function getDeployedFlows() {
   try {
     const flows = await prisma.flow.findMany({
       where: { isDeployed: true, isPublic: true },
-      select: { id: true, name: true, description: true, thumbnail: true, userId: true, updated_at: true, nodes: true, edges: true },
+      select: { id: true, name: true, description: true, thumbnail: true, userId: true, creatorName: true, updated_at: true, nodes: true, edges: true },
       orderBy: { updated_at: 'desc' },
     });
     return { success: true, flows };
@@ -297,7 +297,8 @@ export async function deployToStore(
   description: string,
   nodes: object,
   edges: object,
-  existingFlowId?: string
+  existingFlowId?: string,
+  thumbnail?: string
 ) {
   try {
     const supabase = await createClient();
@@ -306,9 +307,13 @@ export async function deployToStore(
 
     const flowId = existingFlowId || crypto.randomUUID();
 
+    const meta = user.user_metadata || {};
+    const creatorName =
+      meta.full_name || meta.name || user.email?.split('@')[0] || 'Anonymous';
+
     const flow = await prisma.flow.upsert({
       where: { id: flowId },
-      update: { name, description, nodes, edges, isDeployed: true, isPublic: true } as any,
+      update: { name, description, nodes, edges, isDeployed: true, isPublic: true, creatorName, ...(thumbnail ? { thumbnail } : {}) } as any,
       create: {
         id: flowId,
         name,
@@ -318,6 +323,8 @@ export async function deployToStore(
         userId: user.id,
         isDeployed: true,
         isPublic: true,
+        creatorName,
+        ...(thumbnail ? { thumbnail } : {}),
       } as any,
     });
 

@@ -26,6 +26,7 @@ export interface StoreFlow {
   description?: string | null;
   thumbnail?: string | null;
   userId?: string | null;
+  creatorName?: string | null;
   updated_at: Date;
   isMultimodal: boolean;
   nodes: any[];
@@ -41,7 +42,7 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
   const [codeOpen, setCodeOpen] = useState(false);
 
   const isOwner = currentUserId && flow.userId === currentUserId;
-  const creatorHandle = flow.userId ? flow.userId.slice(-8).toUpperCase() : "COMMUNITY";
+  const creatorHandle = flow.creatorName || (flow.userId ? flow.userId.slice(-8).toUpperCase() : "COMMUNITY");
 
   const handleClone = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -106,8 +107,8 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
           </h3>
 
           <div className="flex items-center gap-2">
-            <span className="font-mono text-[9px] font-bold text-muted-foreground bg-muted border border-border px-1.5 py-0.5 rounded">
-              {creatorHandle}
+            <span className="font-mono text-[9px] font-bold text-muted-foreground bg-muted border border-border px-1.5 py-0.5 rounded" title="Deployed by">
+              by {creatorHandle}
             </span>
             <span className="text-[9px] text-muted-foreground">
               {new Date(flow.updated_at).toLocaleDateString("en-US", {

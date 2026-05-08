@@ -30,6 +30,7 @@ export default async function StorePage() {
     description: f.description ?? null,
     thumbnail: f.thumbnail ?? null,
     userId: f.userId ?? null,
+    creatorName: f.creatorName ?? null,
     updated_at: f.updated_at,
     isMultimodal: detectMultimodal(f.nodes),
     nodes: Array.isArray(f.nodes) ? f.nodes : [],

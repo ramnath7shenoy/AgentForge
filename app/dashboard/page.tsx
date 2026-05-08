@@ -57,6 +57,7 @@ export default function DashboardPage() {
   const { theme } = useFlowStore();
   const logs = useLogStore((s) => s.logs);
   const vaultEntries = useVaultStore((s) => s.entries);
+  const loadVaultFromDb = useVaultStore((s) => s.loadFromDb);
   const [mounted, setMounted] = useState(false);
   const [flows, setFlows] = useState<FlowRecord[]>([]);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
@@ -79,6 +80,7 @@ export default function DashboardPage() {
         setProjects(result.projects as ProjectRecord[]);
       }
     });
+    loadVaultFromDb(); // restore persisted API keys from DB
   }, []);
 
   if (!mounted) return null;
@@ -475,7 +477,10 @@ export default function DashboardPage() {
                         {vaultEntries.slice(0, 3).map(entry => (
                           <div key={entry.key} className="flex items-center justify-between px-3 py-2 bg-muted border border-border rounded-xl">
                             <span className="text-[10px] font-mono text-cyan-400">{entry.key}</span>
-                            <span className="text-[9px] text-slate-600 font-mono">••••••</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] text-slate-600 font-mono">••••••</span>
+                              <span className="text-[8px] font-bold text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full">Saved</span>
+                            </div>
                           </div>
                         ))}
                         {vaultEntries.length === 0 && <p className="text-[10px] text-slate-600 italic text-center py-2">No active secrets</p>}

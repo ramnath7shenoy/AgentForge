@@ -33,11 +33,13 @@ export default function ChatHub() {
   } = useFlowStore();
 
   const [inputText, setInputText] = useState("");
+  const [inputKey, setInputKey] = useState(0);
   const [awaitingApproval, setAwaitingApproval] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const seededRef = useRef(false);
+  const justSentRef = useRef(false);
 
   const inputNode = nodes.find((n) => n.type === "input");
   const { formatted: costFormatted } = useCostStore();
@@ -65,6 +67,15 @@ export default function ChatHub() {
     }
   }, [isOpen, isRunning, awaitingApproval]);
 
+  // Definitively wipe the input after each completed flow run
+  useEffect(() => {
+    if (!isRunning && justSentRef.current) {
+      justSentRef.current = false;
+      setInputText("");
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }, [isRunning]);
+
   // Seed the input text once from the canvas input node's pre-configured payload.
   // After the user has interacted, the two stay decoupled — typing in the chat
   // does NOT update the input node so attachments/fileContext remain sticky.
@@ -81,26 +92,35 @@ export default function ChatHub() {
 
   const APPROVAL_WORDS = ['go', 'post', 'yes', 'approve', 'send', 'confirm', 'publish', 'proceed', 'ok'];
 
-  const handleSend = async () => {
+  const nukeInput = () => {
+    setInputText("");
+    setInputKey((k) => k + 1);          // unmounts + remounts the <input> DOM node
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
+  const handleSend = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+
     if (!inputText.trim()) return;
     if (isRunning && !awaitingApproval) return;
 
     const submittedText = inputText.trim();
 
+    // Nuclear clear — fires before any async work so there's zero visible lag
+    nukeInput();
+    seededRef.current = true;   // prevent seed-effect re-population
+    justSentRef.current = true; // flag for post-run cleanup effect
+
     // Flow is paused at an approval/gatekeeper node — route to gate
     if (awaitingApproval) {
       addMessage("user", submittedText);
-      setInputText("");
-      if (inputRef.current) inputRef.current.value = "";
       const words = submittedText.toLowerCase().split(/\W+/);
       const isApproval = APPROVAL_WORDS.some((w) => words.includes(w));
       resolveApproval(isApproval);
       return;
     }
 
-    // Normal turn — clear input, update canvas node, then run
-    setInputText("");
-    if (inputRef.current) inputRef.current.value = "";
+    // Normal turn — update canvas node, then run
     if (inputNode) {
       const existingPacket = inputNode.data?.packet || {};
       updateNodeData(inputNode.id, {
@@ -108,13 +128,6 @@ export default function ChatHub() {
       });
     }
     await runClientFlow(submittedText);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
   };
 
   const turnCount = Math.ceil(
@@ -299,14 +312,14 @@ export default function ChatHub() {
 
             {/* Input */}
             <div className="shrink-0 p-3 bg-black/60 border-t border-white/10">
-              <div className="relative flex items-center gap-2">
+              <form onSubmit={handleSend} className="relative flex items-center gap-2">
                 <input
+                  key={inputKey}
                   ref={inputRef}
                   type="text"
                   value={inputText}
                   disabled={isRunning && !awaitingApproval}
                   onChange={(e) => setInputText(e.target.value)}
-                  onKeyDown={handleKeyDown}
                   placeholder={
                     awaitingApproval
                       ? "Type \"go\" to approve or \"abort\" to cancel…"
@@ -318,8 +331,8 @@ export default function ChatHub() {
                   autoComplete="off"
                 />
                 <button
+                  type="submit"
                   disabled={!inputText.trim() || (isRunning && !awaitingApproval)}
-                  onClick={handleSend}
                   className="absolute right-1 p-2 rounded-full bg-violet-600 text-white disabled:opacity-40 disabled:bg-slate-800 disabled:text-slate-500 hover:bg-violet-500 transition-colors shadow-lg shadow-violet-500/20"
                 >
                   {isRunning ? (
@@ -328,7 +341,7 @@ export default function ChatHub() {
                     <Send size={13} className="ml-0.5" />
                   )}
                 </button>
-              </div>
+              </form>
             </div>
           </motion.div>
         )}

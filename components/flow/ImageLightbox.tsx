@@ -1,6 +1,7 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
+import ReactDOM from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 
@@ -12,15 +13,24 @@ interface ImageLightboxProps {
 }
 
 export function ImageLightbox({ src, alt = "Image", open, onClose }: ImageLightboxProps) {
-  // Close on Escape key
-  React.useEffect(() => {
+  const [mounted, setMounted] = useState(false);
+
+  // Avoid SSR mismatch — portal target only exists in browser
+  useEffect(() => { setMounted(true); }, []);
+
+  // Close on Escape
+  useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [open, onClose]);
 
-  return (
+  if (!mounted) return null;
+
+  // Portal to document.body so the overlay escapes any CSS transform context
+  // (e.g. ReactFlow's canvas transform which breaks position:fixed children)
+  return ReactDOM.createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
@@ -43,7 +53,7 @@ export function ImageLightbox({ src, alt = "Image", open, onClose }: ImageLightb
             <X size={18} />
           </button>
 
-          {/* Image */}
+          {/* Image — stopPropagation so clicking the image doesn't close */}
           <motion.img
             src={src}
             alt={alt}
@@ -56,6 +66,7 @@ export function ImageLightbox({ src, alt = "Image", open, onClose }: ImageLightb
           />
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }

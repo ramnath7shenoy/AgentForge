@@ -56,16 +56,9 @@ export function useSandboxExecution(): SandboxExecutionHook {
 
   const addGlobalCost = useCostStore((s) => s.addCost);
 
-  // Restore last result from sessionStorage on mount (survives Back navigation)
-  useEffect(() => {
-    try {
-      const saved = sessionStorage.getItem(SANDBOX_RESULT_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as SandboxFlowPacket;
-        if (parsed?.payload) setFinalResult(parsed);
-      }
-    } catch { /* ignore */ }
-  }, []);
+  // sessionStorage is written after each run (see "result" case below).
+  // Callers decide whether to restore it via restoreState() — no auto-restore here
+  // so stale results from a previous flow never appear on a fresh page open.
 
   const clearResult = useCallback(() => {
     setLogs([]);
