@@ -36,6 +36,7 @@ import {
   ImageIcon,
   X,
   AlertTriangle,
+  Terminal,
 } from "lucide-react";
 import { packFiles } from "@/lib/utils/contextPacker";
 import { cn } from "@/lib/utils";
@@ -60,6 +61,8 @@ export default function PublishPage() {
   const [copied, setCopied] = useState(false);
   const [compiledCode, setCompiledCode] = useState("");
   const [libDropdownOpen, setLibDropdownOpen] = useState(false);
+  // Prevents the compile effect from overwriting code restored from localStorage on mount
+  const skipNextCompile = useRef(false);
 
   // Input & env config — persisted in sessionStorage so Back navigation restores state
   const [inputValue, setInputValue] = useState("");
@@ -75,9 +78,10 @@ export default function PublishPage() {
   const [sandboxTextContext, setSandboxTextContext] = useState<string>("");
   const [attachWarnings, setAttachWarnings] = useState<string[]>([]);
 
-  const FORGE_STATE_KEY = "FORGE_PUBLISH_STATE";
+  // Keyed by flowId so each project has independent persisted state
+  const FORGE_STATE_KEY = `FORGE_PUBLISH_STATE_${activeProject?.id ?? "default"}`;
 
-  // Effect 1 — Rehydrate user config from localStorage (input, keys, attachments only).
+  // Effect 1 — Rehydrate user config from localStorage (input, keys, attachments, compiled code).
   // Execution results (logs, finalResult) are intentionally NOT restored so opening
   // the page for a new flow never shows a stale screenshot from a previous run.
   useEffect(() => {
@@ -90,6 +94,11 @@ export default function PublishPage() {
       if (Array.isArray(s.envKeys) && s.envKeys.length) setEnvKeys(s.envKeys);
       if (Array.isArray(s.attachments) && s.attachments.length) setSandboxAttachments(s.attachments);
       if (s.fileContext) setSandboxTextContext(s.fileContext);
+      // Restore compiled code — skip the compile effect so manual edits survive a refresh
+      if (s.compiledCode) {
+        setCompiledCode(s.compiledCode);
+        skipNextCompile.current = true;
+      }
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -100,7 +109,7 @@ export default function PublishPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Effect 2 — Persist user config on change (results excluded — don't want stale ghosts)
+  // Effect 2 — Persist user config + compiled code on change (execution results excluded)
   useEffect(() => {
     try {
       localStorage.setItem(FORGE_STATE_KEY, JSON.stringify({
@@ -108,9 +117,10 @@ export default function PublishPage() {
         envKeys,
         attachments: sandboxAttachments,
         fileContext: sandboxTextContext,
+        compiledCode,
       }));
     } catch {}
-  }, [inputValue, envKeys, sandboxAttachments, sandboxTextContext]);
+  }, [inputValue, envKeys, sandboxAttachments, sandboxTextContext, compiledCode]);
 
   // Vault sync
   const [vaultSynced, setVaultSynced] = useState(false);
@@ -137,6 +147,11 @@ export default function PublishPage() {
     sandboxExec.clearResult();
   };
 
+  const handleRecompile = () => {
+    skipNextCompile.current = false;
+    setCompiledCode(compileFlow(nodes, edges, activeTab, activeLibrary));
+  };
+
   // Share state
   const [shareLoading, setShareLoading] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
@@ -147,6 +162,27 @@ export default function PublishPage() {
   const [deployedFlowId, setDeployedFlowId] = useState<string | null>(null);
   const [isDeployed, setIsDeployed] = useState(false);
   const [deployModalOpen, setDeployModalOpen] = useState(false);
+
+  // Dual-trigger execution status
+  type ExecStatus = "idle" | "loading" | "success" | "error";
+  const [workflowStatus, setWorkflowStatus] = useState<ExecStatus>("idle");
+  const [codeStatusMap, setCodeStatusMap] = useState<Record<Tab, ExecStatus>>({
+    python: "idle",
+    javascript: "idle",
+    typescript: "idle",
+  });
+  const [codeLogsMap, setCodeLogsMap] = useState<Record<Tab, string[]>>({
+    python: [],
+    javascript: [],
+    typescript: [],
+  });
+  const [codeTerminalOpen, setCodeTerminalOpen] = useState(false);
+  const codeTerminalBottomRef = useRef<HTMLDivElement>(null);
+  const rightPanelScrollRef = useRef<HTMLDivElement>(null);
+  const prevRunningRef = useRef(false);
+
+  const codeStatus = codeStatusMap[activeTab];
+  const codeLogs = codeLogsMap[activeTab];
 
   const addSandboxFiles = async (files: FileList | File[] | null) => {
     if (!files?.length) return;
@@ -165,8 +201,28 @@ export default function PublishPage() {
   }, [activeTab]);
 
   useEffect(() => {
+    if (skipNextCompile.current) {
+      skipNextCompile.current = false;
+      return;
+    }
     setCompiledCode(compileFlow(nodes, edges, activeTab, activeLibrary));
   }, [nodes, edges, activeTab, activeLibrary]);
+
+  // Track workflow completion after sandboxExec.running flips back to false
+  useEffect(() => {
+    if (prevRunningRef.current && !sandboxExec.running && workflowStatus === "loading") {
+      const hasErrors = sandboxExec.logs.some((l) => l.type === "ERROR");
+      setWorkflowStatus(sandboxExec.finalResult !== null && !hasErrors ? "success" : "error");
+    }
+    prevRunningRef.current = sandboxExec.running;
+  }, [sandboxExec.running]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-scroll code terminal
+  useEffect(() => {
+    if (codeTerminalOpen) {
+      codeTerminalBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [codeLogs, codeTerminalOpen]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(compiledCode);
@@ -186,34 +242,90 @@ export default function PublishPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleRunSandbox = async () => {
+  const executeWorkflow = async () => {
     const validKeys = envKeys.filter((k) => k.key.trim() && k.value.trim());
     const effectiveInput = inputValue || "Hello";
-
-    // Inject staged attachments + packed file context into the InputNode's packet.
     const hasExtras = sandboxAttachments.length > 0 || sandboxTextContext;
     let nodesForRun: any[] = nodes as any;
     if (hasExtras) {
-      nodesForRun = (nodes as any[]).map((n: any) => {
-        if (n.type === "input") {
-          return {
-            ...n,
-            data: {
-              ...n.data,
-              packet: {
-                type: "text",
-                payload: effectiveInput,
-                ...(sandboxAttachments.length > 0 && { attachments: sandboxAttachments }),
-                ...(sandboxTextContext && { fileContext: sandboxTextContext }),
-              },
-            },
-          };
-        }
-        return n;
-      });
+      nodesForRun = (nodes as any[]).map((n: any) =>
+        n.type === "input"
+          ? { ...n, data: { ...n.data, packet: { type: "text", payload: effectiveInput, ...(sandboxAttachments.length > 0 && { attachments: sandboxAttachments }), ...(sandboxTextContext && { fileContext: sandboxTextContext }) } } }
+          : n
+      );
     }
-
     await sandboxExec.run(nodesForRun, edges as any, effectiveInput, validKeys);
+  };
+
+  const executeCode = async (lang: Tab) => {
+    setCodeLogsMap((prev) => ({ ...prev, [lang]: [] }));
+    setCodeStatusMap((prev) => ({ ...prev, [lang]: "loading" }));
+    setCodeTerminalOpen(true);
+    
+    // Auto-scroll to bottom of right panel to show terminal logs
+    setTimeout(() => {
+      rightPanelScrollRef.current?.scrollTo({
+        top: rightPanelScrollRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    }, 100);
+
+    // Auto-inject all vault entries; explicit envKeys override vault values for same key
+    const vaultEntries = useVaultStore.getState().entries.filter((e) => e.key.trim() && e.value.trim());
+    const vaultMap = Object.fromEntries(vaultEntries.map((e) => [e.key, e.value]));
+    const explicitMap = Object.fromEntries(
+      envKeys.filter((k) => k.key.trim() && k.value.trim()).map((k) => [k.key, k.value])
+    );
+    const envVarsMap = { ...vaultMap, ...explicitMap };
+    try {
+      const res = await fetch("/api/sandbox/execute-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: compiledCode, language: lang, envVars: envVarsMap }),
+      });
+      if (!res.ok || !res.body) {
+        setCodeStatusMap((prev) => ({ ...prev, [lang]: "error" }));
+        setCodeLogsMap((prev) => ({ ...prev, [lang]: [`Server error: ${res.status} ${res.statusText}`] }));
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let didSucceed = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t.startsWith("data: ")) continue;
+          try {
+            const ev = JSON.parse(t.slice(6));
+            if (ev.t === "log") setCodeLogsMap((prev) => ({ ...prev, [lang]: [...prev[lang], ev.text] }));
+            else if (ev.t === "stdout") setCodeLogsMap((prev) => ({ ...prev, [lang]: [...prev[lang], ev.line] }));
+            else if (ev.t === "stderr") setCodeLogsMap((prev) => ({ ...prev, [lang]: [...prev[lang], `[stderr] ${ev.line}`] }));
+            else if (ev.t === "error") setCodeLogsMap((prev) => ({ ...prev, [lang]: [...prev[lang], `❌ ${ev.message}`] }));
+            else if (ev.t === "done") didSucceed = ev.success as boolean;
+          } catch { /* skip malformed */ }
+        }
+      }
+      setCodeStatusMap((prev) => ({ ...prev, [lang]: didSucceed ? "success" : "error" }));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setCodeStatusMap((prev) => ({ ...prev, [lang]: "error" }));
+      setCodeLogsMap((prev) => ({ ...prev, [lang]: [...prev[lang], `Network error: ${message}`] }));
+    }
+  };
+
+  const handleRunWorkflow = async () => {
+    setWorkflowStatus("loading");
+    await executeWorkflow();
+  };
+
+  const handleExecuteCode = async () => {
+    await executeCode(activeTab);
   };
 
   const handleShare = async () => {
@@ -260,7 +372,7 @@ export default function PublishPage() {
     }
   };
 
-  const canDeploy = sandboxExec.finalResult !== null && !sandboxExec.running;
+  const canDeploy = workflowStatus === "success";
 
   const libMeta = getLibraryMeta(activeLibrary);
   const availableLibs = getLibrariesForTab(activeTab);
@@ -297,26 +409,26 @@ export default function PublishPage() {
                 <button
                   onClick={() => canDeploy && setDeployModalOpen(true)}
                   disabled={deployLoading || !canDeploy}
-                  title={!canDeploy ? "Run a successful sandbox to unlock deployment." : undefined}
+                  title={
+                    !canDeploy
+                      ? "Workflow verification required — run sandbox first."
+                      : undefined
+                  }
                   className={cn(
                     "flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all border",
                     isDeployed
                       ? "bg-violet-600/20 text-violet-400 border-violet-500/30"
                       : canDeploy
-                        ? "bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700"
+                        ? "bg-violet-600 hover:bg-violet-700 text-white border-violet-500/30 shadow-lg shadow-violet-500/20"
                         : "bg-slate-900 text-slate-600 border-slate-800 cursor-not-allowed opacity-50"
                   )}
                 >
-                  {deployLoading ? (
-                    <Loader2 size={13} className="animate-spin" />
-                  ) : (
-                    <Store size={13} />
-                  )}
+                  {deployLoading ? <Loader2 size={13} className="animate-spin" /> : <Store size={13} />}
                   {isDeployed ? "Deployed" : "Deploy to Store"}
                 </button>
                 {!canDeploy && (
                   <span className="text-[9px] text-slate-600 font-medium pr-0.5">
-                    Run a successful sandbox to unlock.
+                    Verification Required
                   </span>
                 )}
               </div>
@@ -344,7 +456,7 @@ export default function PublishPage() {
 
               {/* Run Sandbox */}
               <button
-                onClick={handleRunSandbox}
+                onClick={handleRunWorkflow}
                 disabled={sandboxExec.running}
                 className={cn(
                   "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg",
@@ -393,16 +505,17 @@ export default function PublishPage() {
                   Environment Config
                 </button>
                 <div className="ml-auto flex items-center gap-2">
+                  <span className="text-[9px] text-slate-600 font-normal italic">Vault keys auto-injected</span>
                   <button
                     onClick={handleSyncFromVault}
                     className={cn(
-                      "flex items-center gap-1 text-[9px] font-bold transition-all px-1.5 py-0.5 rounded border",
+                      "flex items-center gap-1 text-[9px] font-bold transition-all px-2 py-1 rounded-lg border",
                       vaultSynced
                         ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
-                        : "text-slate-600 border-slate-700/50 hover:text-indigo-400 hover:border-indigo-500/30"
+                        : "text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/10"
                     )}
                   >
-                    <RefreshCw size={9} className={vaultSynced ? "text-emerald-400" : ""} />
+                    {vaultSynced ? <CheckCircle size={9} /> : <RefreshCw size={9} className={vaultSynced ? "" : "animate-spin-once"} />}
                     {vaultSynced ? "Synced!" : "Sync from Vault"}
                   </button>
                   <button
@@ -412,9 +525,6 @@ export default function PublishPage() {
                     <Trash2 size={9} />
                     Clear All
                   </button>
-                  <span className="text-[9px] text-slate-600 font-normal">
-                    {envKeys.filter((k) => k.value.trim()).length} key{envKeys.filter((k) => k.value.trim()).length !== 1 ? "s" : ""} set
-                  </span>
                 </div>
               </div>
 
@@ -627,112 +737,204 @@ export default function PublishPage() {
         </div>
 
         {/* RIGHT COLUMN: Code Export */}
-        <div className="w-1/2 flex flex-col h-full bg-background">
-          {/* Language tabs */}
-          <header className="p-6 border-b border-border flex items-center justify-between bg-card">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-indigo-500/10 rounded-lg">
-                <Code2 size={18} className="text-indigo-500" />
-              </div>
-              <div>
-                <h1 className="text-lg font-bold text-white uppercase tracking-wider">Export Source</h1>
-                <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-widest">Compiled Production Script</p>
-              </div>
-            </div>
-            <div className="flex bg-slate-900 border border-slate-800 rounded-xl p-1.5 shadow-inner">
-              {(["python", "javascript", "typescript"] as Tab[]).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={cn(
-                    "px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
-                    activeTab === tab ? "bg-slate-800 text-white shadow-lg" : "text-slate-500 hover:text-slate-300"
-                  )}
-                >
-                  {tab === "javascript" ? "Node.js" : tab.charAt(0).toUpperCase() + tab.slice(1)}
-                </button>
-              ))}
-            </div>
-          </header>
+        <div className="w-1/2 flex flex-col h-full bg-background overflow-hidden relative">
+          {/* Unified Source Disclaimer — Sticky at the top */}
+          <div className="flex-shrink-0 bg-slate-900/50 border-b border-slate-800/60 px-6 py-2.5 z-20 sticky top-0 backdrop-blur-md">
+            <p className="text-[10px] md:text-[11px] font-medium text-amber-500/90 flex items-center gap-2 leading-relaxed">
+              <span className="text-sm">🛠️</span>
+              <span>
+                <strong className="text-amber-500 uppercase tracking-tight">Developer Sandbox:</strong> This is a standalone execution of the compiled source code. Use this to verify dependencies and logic before exporting and manually review before local use.
+              </span>
+            </p>
+          </div>
 
-          {/* Library Config section */}
-          <div className="px-6 py-3 border-b border-border bg-card flex items-center gap-4">
-            <div className="flex items-center gap-2 text-slate-400">
-              <Package size={13} />
-              <span className="text-[10px] font-black uppercase tracking-widest">Library</span>
-            </div>
-
-            <div className="relative">
-              <button
-                onClick={() => setLibDropdownOpen((v) => !v)}
-                className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/80 border border-slate-700 rounded-lg text-[11px] font-bold text-white hover:border-indigo-500/50 transition-all"
-              >
-                <span>{libMeta.label}</span>
-                <ChevronDown size={11} className={cn("transition-transform", libDropdownOpen && "rotate-180")} />
-              </button>
-              {libDropdownOpen && (
-                <div className="absolute top-full mt-1 left-0 z-50 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
-                  {availableLibs.map((l) => (
+          <div 
+            ref={rightPanelScrollRef}
+            className="flex-1 overflow-y-auto scrollbar-hide flex flex-col"
+            onClick={() => setLibDropdownOpen(false)}
+          >
+            {/* Language tabs */}
+            <header className="p-6 border-b border-border flex items-center justify-between bg-card flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-500/10 rounded-lg">
+                  <Code2 size={18} className="text-indigo-500" />
+                </div>
+                <div>
+                  <h1 className="text-lg font-bold text-white uppercase tracking-wider">Export Source</h1>
+                  <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-widest">Compiled Production Script</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                {/* Language tabs */}
+                <div className="flex bg-slate-900 border border-slate-800 rounded-xl p-1.5 shadow-inner">
+                  {(["python", "javascript", "typescript"] as Tab[]).map((tab) => (
                     <button
-                      key={l.id}
-                      onClick={() => { setActiveLibrary(l.id); setLibDropdownOpen(false); }}
+                      key={tab}
+                      onClick={() => setActiveTab(tab)}
                       className={cn(
-                        "w-full text-left px-4 py-3 transition-colors hover:bg-slate-800 border-b border-slate-800 last:border-0",
-                        activeLibrary === l.id && "bg-indigo-600/10"
+                        "px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                        activeTab === tab ? "bg-slate-800 text-white shadow-lg" : "text-slate-500 hover:text-slate-300"
                       )}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className={cn("text-xs font-bold", activeLibrary === l.id ? "text-indigo-400" : "text-white")}>
-                          {l.label}
-                        </span>
-                        {l.isAsync && (
-                          <span className="text-[9px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 rounded font-bold">async</span>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-slate-500 mt-0.5">{l.description}</p>
-                      <p className="text-[9px] text-slate-600 mt-1 font-mono">{l.installCmd}</p>
+                      {tab === "javascript" ? "Node.js" : tab.charAt(0).toUpperCase() + tab.slice(1)}
                     </button>
                   ))}
                 </div>
-              )}
-            </div>
-
-            <div className="ml-auto flex items-center gap-1.5 px-2 py-1 bg-slate-800/50 border border-slate-700 rounded-lg">
-              <span className="text-[9px] font-mono text-slate-400">{libMeta.installCmd}</span>
-            </div>
-          </div>
-
-          {/* Code panel */}
-          <div className="flex-1 p-8 relative flex flex-col overflow-hidden" onClick={() => setLibDropdownOpen(false)}>
-            <div className="absolute top-12 right-12 flex items-center gap-2 z-10">
-              <button
-                onClick={handleDownload}
-                className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl border border-slate-600"
-              >
-                <Download size={14} />
-                Download
-              </button>
-              <button
-                onClick={handleCopy}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl shadow-indigo-500/20 border border-indigo-400/20"
-              >
-                {copied ? <CheckCircle size={14} /> : <Copy size={14} />}
-                {copied ? "Copied" : "Copy Source"}
-              </button>
-            </div>
-
-            <div className="flex-1 bg-card border border-border rounded-2xl p-8 overflow-hidden flex flex-col shadow-2xl">
-              <div className="flex items-center gap-2 mb-6 opacity-40">
-                <div className="w-2.5 h-2.5 rounded-full bg-rose-500" />
-                <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                <span className="ml-2 text-[9px] font-mono text-slate-500">
-                  agentforge_{activeTab}_{activeLibrary}.{activeTab === "python" ? "py" : activeTab === "javascript" ? "js" : "ts"}
-                </span>
               </div>
-              <pre className="flex-1 overflow-y-auto w-full text-[11px] font-mono text-slate-300 scrollbar-hide selection:bg-indigo-500/30">
-                <code>{compiledCode}</code>
-              </pre>
+            </header>
+
+            {/* Library Config section */}
+            <div className="px-6 py-3 border-b border-border bg-card flex items-center gap-4 flex-shrink-0">
+              <div className="flex items-center gap-2 text-slate-400">
+                <Package size={13} />
+                <span className="text-[10px] font-black uppercase tracking-widest">Library</span>
+              </div>
+
+              <div className="relative">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setLibDropdownOpen((v) => !v); }}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/80 border border-slate-700 rounded-lg text-[11px] font-bold text-white hover:border-indigo-500/50 transition-all"
+                >
+                  <span>{libMeta.label}</span>
+                  <ChevronDown size={11} className={cn("transition-transform", libDropdownOpen && "rotate-180")} />
+                </button>
+                {libDropdownOpen && (
+                  <div className="absolute top-full mt-1 left-0 z-50 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+                    {availableLibs.map((l) => (
+                      <button
+                        key={l.id}
+                        onClick={() => { setActiveLibrary(l.id); setLibDropdownOpen(false); }}
+                        className={cn(
+                          "w-full text-left px-4 py-3 transition-colors hover:bg-slate-800 border-b border-slate-800 last:border-0",
+                          activeLibrary === l.id && "bg-indigo-600/10"
+                        )}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className={cn("text-xs font-bold", activeLibrary === l.id ? "text-indigo-400" : "text-white")}>
+                            {l.label}
+                          </span>
+                          {l.isAsync && (
+                            <span className="text-[9px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 rounded font-bold">async</span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-0.5">{l.description}</p>
+                        <p className="text-[9px] text-slate-600 mt-1 font-mono">{l.installCmd}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="ml-auto flex items-center gap-1.5 px-2 py-1 bg-slate-800/50 border border-slate-700 rounded-lg">
+                <span className="text-[9px] font-mono text-slate-400">{libMeta.installCmd}</span>
+              </div>
+            </div>
+
+            {/* Code + Terminal wrapper */}
+            <div className="p-6 flex flex-col gap-4">
+              {/* Toolbar row: Execute + Recompile + Download + Copy */}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={handleExecuteCode}
+                  disabled={codeStatus === "loading"}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg border",
+                    codeStatus === "loading"
+                      ? "bg-emerald-600/30 text-emerald-400/50 border-emerald-500/20 cursor-not-allowed"
+                      : "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500/30 shadow-emerald-500/20"
+                  )}
+                >
+                  {codeStatus === "loading" ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} className="fill-current" />}
+                  Execute
+                </button>
+                <button
+                  onClick={handleRecompile}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border text-slate-400 border-slate-700 hover:text-white hover:border-slate-600 bg-slate-800/50"
+                  title="Regenerates code from the current visual flow."
+                >
+                  <RotateCcw size={11} />
+                  Recompile
+                </button>
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    onClick={handleDownload}
+                    className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl border border-slate-600"
+                  >
+                    <Download size={13} />
+                    Download
+                  </button>
+                  <button
+                    onClick={handleCopy}
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl shadow-indigo-500/20 border border-indigo-400/20"
+                  >
+                    {copied ? <CheckCircle size={13} /> : <Copy size={13} />}
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Editable code panel */}
+              <div className="bg-card border border-border rounded-2xl overflow-hidden flex flex-col shadow-2xl min-h-[450px]">
+                <div className="flex items-center gap-2 px-6 pt-4 pb-3 opacity-40 flex-shrink-0">
+                  <div className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                  <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  <span className="ml-2 text-[9px] font-mono text-slate-500">
+                    agentforge_{activeTab}_{activeLibrary}.{activeTab === "python" ? "py" : activeTab === "javascript" ? "js" : "ts"}
+                  </span>
+                </div>
+                <textarea
+                  className="flex-1 w-full text-[11px] font-mono text-slate-300 bg-transparent resize-none focus:outline-none scrollbar-hide selection:bg-indigo-500/30 px-6 pb-4 min-h-[400px]"
+                  value={compiledCode}
+                  onChange={(e) => setCompiledCode(e.target.value)}
+                  spellCheck={false}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                />
+              </div>
+
+              {/* Code Terminal - Now inside the scroll stack */}
+              <div className={cn(
+                "border border-border bg-[#0b0e14] rounded-2xl flex flex-col transition-all duration-200 overflow-hidden",
+                codeTerminalOpen ? "min-h-[200px]" : "h-11"
+              )}>
+                <button
+                  onClick={() => setCodeTerminalOpen((v) => !v)}
+                  className="flex items-center gap-2 px-4 h-11 text-[9px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-300 transition-colors flex-shrink-0 w-full"
+                >
+                  <Terminal size={10} />
+                  <span>Code Output</span>
+                  {codeStatus === "loading" && <Loader2 size={9} className="animate-spin text-indigo-400 ml-1" />}
+                  {codeStatus === "success" && <CheckCircle size={9} className="text-emerald-400 ml-1" />}
+                  {codeStatus === "error" && <X size={9} className="text-rose-400 ml-1" />}
+                  {codeLogs.length > 0 && (
+                    <span className="text-[8px] font-mono text-slate-600 ml-1">{codeLogs.length} lines</span>
+                  )}
+                  <ChevronRight size={10} className={cn("ml-auto transition-transform", codeTerminalOpen && "rotate-90")} />
+                </button>
+                {codeTerminalOpen && (
+                  <div className="flex-1 px-4 pb-4 font-mono text-[10px] leading-relaxed space-y-0.5 overflow-hidden">
+                    {codeLogs.length === 0 ? (
+                      <span className="text-slate-600 italic">Awaiting code execution...</span>
+                    ) : codeLogs.map((line, i) => (
+                      <div
+                        key={i}
+                        className={cn(
+                          "whitespace-pre-wrap break-all",
+                          line.startsWith("[stderr]") ? "text-amber-400" :
+                          line.startsWith("❌") ? "text-rose-400" :
+                          line.startsWith("🐳") || line.startsWith("⚡") || line.startsWith("✅") ? "text-indigo-400" :
+                          "text-slate-300"
+                        )}
+                      >
+                        {line}
+                      </div>
+                    ))}
+                    <div ref={codeTerminalBottomRef} />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

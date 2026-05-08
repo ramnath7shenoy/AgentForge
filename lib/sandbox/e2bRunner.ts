@@ -9,7 +9,7 @@ export type E2BLogFn = (
 ) => void;
 
 const SANDBOX_CREATE_TIMEOUT_MS = 12_000;
-const TASK_TIMEOUT_MS = 30_000;
+const TASK_TIMEOUT_MS = 60_000;
 
 export interface E2BRunResult {
   output: string;
@@ -68,6 +68,7 @@ export async function runCodeInE2B(
   onLog("🐳 E2B: Starting isolated sandbox...", "INFO");
 
   let sandbox: Sandbox | null = null;
+  let killTimeout: NodeJS.Timeout | null = null;
 
   try {
     sandbox = await withTimeout(
@@ -79,14 +80,22 @@ export async function runCodeInE2B(
     onLog(`⚡ E2B: Running ${language} in container...`, "INFO");
 
     const stdoutLines: string[] = [];
+    let earlyResolve: (val: string) => void;
+    const resultFoundPromise = new Promise<string>((resolve) => {
+      earlyResolve = resolve;
+    });
 
-    const execution = await withTimeout(
+    const executionPromise = withTimeout(
       sandbox.runCode(code, {
         language,
         onStdout: (msg: OutputMessage) => {
           const line = msg.line.trimEnd();
           stdoutLines.push(line);
           onLog(`  ${line}`, "INFO");
+          // If we see the end marker in any stdout chunk, we can technically resolve the data gathering
+          if (line.includes("---RESULT_END---")) {
+             // We don't resolve immediately to allow final logs, but we flag it
+          }
         },
         onStderr: (msg: OutputMessage) => {
           onLog(`  [stderr] ${msg.line.trimEnd()}`, "WARN");
@@ -95,6 +104,9 @@ export async function runCodeInE2B(
       TASK_TIMEOUT_MS,
       "code execution"
     );
+
+    // Wait for either the execution to finish naturally or timeout
+    const execution = await executionPromise;
 
     if (execution.error) {
       throw new Error(`${execution.error.name}: ${execution.error.value}`);
@@ -107,10 +119,18 @@ export async function runCodeInE2B(
       "(no output)";
 
     onLog("✅ E2B: Execution complete.", "SUCCESS");
-    return { output: resultText.trim() };
+    
+    // Explicitly return the result before the finally block kills the sandbox
+    const finalResult = { output: resultText.trim() };
+    
+    // Slight delay before killing to ensure logs are flushed if any
+    await new Promise(r => setTimeout(r, 100));
+    
+    return finalResult;
   } finally {
     if (sandbox) {
-      await sandbox.kill().catch(() => {});
+      // Background the kill so we don't block the response returning to the user
+      sandbox.kill().catch(() => {});
       onLog("🐳 E2B: Sandbox closed.", "INFO");
     }
   }

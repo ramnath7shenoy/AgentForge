@@ -151,89 +151,144 @@ export function genLLMImports(lib: Library, provider: LLMProvider): string {
   }
 }
 
+// Simplified: all AI nodes call the universal helper — no per-provider switch needed.
 export function genLLMBlock(
   lib: Library,
-  provider: LLMProvider,
-  modelName: string,
+  _provider: LLMProvider,
+  _modelName: string,
   varName: string,
-  promptExpr: string,
+  _promptExpr: string,
   ind: string,
 ): string {
-  const envKey = LLM_ENV_KEYS[provider];
-  const model = modelName || LLM_DEFAULT_MODELS[provider];
-  const lines: string[] = [];
-
   if (isPythonLib(lib)) {
-    switch (provider) {
-      case 'groq':
-        lines.push(`_groq = Groq(api_key=os.environ.get('${envKey}', ''))`);
-        lines.push(`_groq_resp = _groq.chat.completions.create(`);
-        lines.push(`    model="${model}",`);
-        lines.push(`    messages=[{"role": "user", "content": ${varName}_prompt}]`);
-        lines.push(`)`);
-        lines.push(`ctx['${varName}'] = {'type': 'text', 'payload': _groq_resp.choices[0].message.content}`);
-        break;
-      case 'openai':
-        lines.push(`_openai = OpenAI(api_key=os.environ.get('${envKey}', ''))`);
-        lines.push(`_openai_resp = _openai.chat.completions.create(`);
-        lines.push(`    model="${model}",`);
-        lines.push(`    messages=[{"role": "user", "content": ${varName}_prompt}]`);
-        lines.push(`)`);
-        lines.push(`ctx['${varName}'] = {'type': 'text', 'payload': _openai_resp.choices[0].message.content}`);
-        break;
-      case 'gemini':
-        lines.push(`genai.configure(api_key=os.environ.get('${envKey}', ''))`);
-        lines.push(`_gemini = genai.GenerativeModel("${model}")`);
-        lines.push(`_gemini_resp = _gemini.generate_content(${varName}_prompt)`);
-        lines.push(`ctx['${varName}'] = {'type': 'text', 'payload': _gemini_resp.text}`);
-        break;
-      case 'anthropic':
-        lines.push(`_anthropic = anthropic.Anthropic(api_key=os.environ.get('${envKey}', ''))`);
-        lines.push(`_anthropic_resp = _anthropic.messages.create(`);
-        lines.push(`    model="${model}",`);
-        lines.push(`    max_tokens=1024,`);
-        lines.push(`    messages=[{"role": "user", "content": ${varName}_prompt}]`);
-        lines.push(`)`);
-        lines.push(`ctx['${varName}'] = {'type': 'text', 'payload': _anthropic_resp.content[0].text}`);
-        break;
-    }
-  } else {
-    switch (provider) {
-      case 'groq':
-        lines.push(`const _groq = new Groq({ apiKey: process.env.${envKey} });`);
-        lines.push(`const _groqResp = await _groq.chat.completions.create({`);
-        lines.push(`  model: '${model}',`);
-        lines.push(`  messages: [{ role: 'user', content: ${varName}_prompt }],`);
-        lines.push(`});`);
-        lines.push(`ctx['${varName}'] = { type: 'text', payload: _groqResp.choices[0].message.content ?? '' };`);
-        break;
-      case 'openai':
-        lines.push(`const _openai = new OpenAI({ apiKey: process.env.${envKey} });`);
-        lines.push(`const _openaiResp = await _openai.chat.completions.create({`);
-        lines.push(`  model: '${model}',`);
-        lines.push(`  messages: [{ role: 'user', content: ${varName}_prompt }],`);
-        lines.push(`});`);
-        lines.push(`ctx['${varName}'] = { type: 'text', payload: _openaiResp.choices[0].message.content ?? '' };`);
-        break;
-      case 'gemini':
-        lines.push(`const _genAI = new GoogleGenerativeAI(process.env.${envKey} ?? '');`);
-        lines.push(`const _gemini = _genAI.getGenerativeModel({ model: '${model}' });`);
-        lines.push(`const _geminiResp = await _gemini.generateContent(${varName}_prompt);`);
-        lines.push(`ctx['${varName}'] = { type: 'text', payload: _geminiResp.response.text() };`);
-        break;
-      case 'anthropic':
-        lines.push(`const _anthropic = new Anthropic({ apiKey: process.env.${envKey} });`);
-        lines.push(`const _anthropicResp = await _anthropic.messages.create({`);
-        lines.push(`  model: '${model}',`);
-        lines.push(`  max_tokens: 1024,`);
-        lines.push(`  messages: [{ role: 'user', content: ${varName}_prompt }],`);
-        lines.push(`});`);
-        lines.push(`ctx['${varName}'] = { type: 'text', payload: (_anthropicResp.content[0] as any).text ?? '' };`);
-        break;
-    }
+    return `${ind}ctx['${varName}'] = {'type': 'text', 'payload': call_universal_llm(${varName}_prompt, initial_input)}`;
+  }
+  return `${ind}ctx['${varName}'] = { type: 'text', payload: await callUniversalLlm(${varName}_prompt, initialInput) };`;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Universal LLM helper — auto-detects key (GROQ → OPENAI → ANTHROPIC → GEMINI)
+// Injected once into the generated script header when any AI node is present.
+// ─────────────────────────────────────────────────────────────────────
+export function genUniversalLLMHelper(lib: Library, isTS = true): string {
+  if (isPythonLib(lib)) {
+    return `def call_universal_llm(system_prompt: str, user_input: str = "") -> str:
+    """Auto-detects LLM key (GROQ → OPENAI → ANTHROPIC → GEMINI) and calls that provider."""
+    import os as _os_llm
+    _usr = user_input or "Run"
+    if _os_llm.environ.get("GROQ_API_KEY"):
+        from groq import Groq as _Groq
+        _r = _Groq(api_key=_os_llm.environ["GROQ_API_KEY"]).chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": _usr}]
+        )
+        return _r.choices[0].message.content or ""
+    if _os_llm.environ.get("OPENAI_API_KEY"):
+        from openai import OpenAI as _OpenAI
+        _r = _OpenAI(api_key=_os_llm.environ["OPENAI_API_KEY"]).chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": _usr}]
+        )
+        return _r.choices[0].message.content or ""
+    if _os_llm.environ.get("ANTHROPIC_API_KEY"):
+        import anthropic as _anthropic_llm
+        _r = _anthropic_llm.Anthropic(api_key=_os_llm.environ["ANTHROPIC_API_KEY"]).messages.create(
+            model="claude-3-5-sonnet-20241022", max_tokens=1024,
+            system=system_prompt, messages=[{"role": "user", "content": _usr}]
+        )
+        return _r.content[0].text
+    if _os_llm.environ.get("GEMINI_API_KEY"):
+        import google.generativeai as _genai_llm
+        _genai_llm.configure(api_key=_os_llm.environ["GEMINI_API_KEY"])
+        _r = _genai_llm.GenerativeModel("gemini-1.5-flash").generate_content(
+            f"{system_prompt}\\n\\nInput: {_usr}"
+        )
+        return _r.text
+    raise RuntimeError(
+        "No LLM key found. Set GROQ_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY."
+    )
+
+`;
   }
 
-  return lines.map(l => `${ind}${l}`).join('\n');
+  if (isTS) {
+    return `async function callUniversalLlm(systemPrompt: string, userInput: string): Promise<string> {
+  const usr = userInput || 'Run';
+  if (process.env.GROQ_API_KEY) {
+    const { default: Groq } = await import('groq-sdk');
+    const r = await new Groq({ apiKey: process.env.GROQ_API_KEY }).chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: usr }],
+    });
+    return r.choices[0].message.content ?? '';
+  }
+  if (process.env.OPENAI_API_KEY) {
+    const { default: OpenAI } = await import('openai');
+    const r = await new OpenAI({ apiKey: process.env.OPENAI_API_KEY }).chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: usr }],
+    });
+    return r.choices[0].message.content ?? '';
+  }
+  if (process.env.ANTHROPIC_API_KEY) {
+    const { default: Anthropic } = await import('@anthropic-ai/sdk');
+    const r = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages.create({
+      model: 'claude-3-5-sonnet-20241022', max_tokens: 1024,
+      system: systemPrompt, messages: [{ role: 'user', content: usr }],
+    });
+    return (r.content[0] as any).text ?? '';
+  }
+  if (process.env.GEMINI_API_KEY) {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const r = await new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+      .getGenerativeModel({ model: 'gemini-1.5-flash' })
+      .generateContent(\`\${systemPrompt}\\n\\nInput: \${usr}\`);
+    return r.response.text();
+  }
+  throw new Error('No LLM key found. Set GROQ_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY.');
+}
+
+`;
+  }
+
+  // JavaScript (no types)
+  return `async function callUniversalLlm(systemPrompt, userInput) {
+  const usr = userInput || 'Run';
+  if (process.env.GROQ_API_KEY) {
+    const Groq = require('groq-sdk');
+    const r = await new Groq({ apiKey: process.env.GROQ_API_KEY }).chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: usr }],
+    });
+    return r.choices[0].message.content ?? '';
+  }
+  if (process.env.OPENAI_API_KEY) {
+    const OpenAI = require('openai');
+    const r = await new OpenAI({ apiKey: process.env.OPENAI_API_KEY }).chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: usr }],
+    });
+    return r.choices[0].message.content ?? '';
+  }
+  if (process.env.ANTHROPIC_API_KEY) {
+    const Anthropic = require('@anthropic-ai/sdk');
+    const r = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages.create({
+      model: 'claude-3-5-sonnet-20241022', max_tokens: 1024,
+      system: systemPrompt, messages: [{ role: 'user', content: usr }],
+    });
+    return r.content[0].text ?? '';
+  }
+  if (process.env.GEMINI_API_KEY) {
+    const { GoogleGenerativeAI } = require('@google/generative-ai');
+    const r = await new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+      .getGenerativeModel({ model: 'gemini-1.5-flash' })
+      .generateContent(\`\${systemPrompt}\\n\\nInput: \${usr}\`);
+    return r.response.text();
+  }
+  throw new Error('No LLM key found. Set GROQ_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY.');
+}
+
+`;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -320,8 +375,9 @@ export function liftTemplate(
 
   if (python) {
     const needsF = lifted.includes('{');
-    const escaped = lifted.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    return needsF ? `f"${escaped}"` : `"${escaped}"`;
+    // Triple-quote prevents unterminated string literal when text contains double quotes or literal newlines
+    const escaped = lifted.replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
+    return needsF ? `f"""${escaped}"""` : `"""${escaped}"""`;
   } else {
     const needsTick = lifted.includes('${');
     const escaped = needsTick
@@ -560,7 +616,7 @@ async function vaultLookup(query, topK = 3) {
 // ─────────────────────────────────────────────────────────────────────
 // Install comment generator — emits a pip/npm install comment at file top
 // ─────────────────────────────────────────────────────────────────────
-export function genInstallComment(lib: Library, providers: Set<LLMProvider>, hasSchedule: boolean): string {
+export function genInstallComment(lib: Library, providers: Set<LLMProvider>, hasSchedule: boolean, hasBrowserAction = false): string {
   const llmPyPkgs: Record<LLMProvider, string> = {
     groq: 'groq',
     openai: 'openai',
@@ -575,19 +631,29 @@ export function genInstallComment(lib: Library, providers: Set<LLMProvider>, has
   };
 
   if (isPythonLib(lib)) {
+    // Include all LLM packages — the universal helper lazy-imports whichever key is set
+    const allLlmPyPkgs = providers.size > 0
+      ? ['groq', 'openai', 'anthropic', 'google-generativeai']
+      : [];
     const pkgs: string[] = [
       lib,
       ...(hasSchedule ? ['schedule'] : []),
-      ...[...providers].map(p => llmPyPkgs[p]),
+      ...allLlmPyPkgs,
+      ...(hasBrowserAction ? ['playwright'] : []),
     ];
-    return `# pip install ${pkgs.join(' ')}\n`;
+    const playwrightNote = hasBrowserAction ? '# playwright install chromium\n' : '';
+    return `# pip install ${pkgs.join(' ')}\n${playwrightNote}`;
   }
 
-  // JS/TS
+  // JS/TS — include all LLM packages; dynamic import picks the right one at runtime
+  const allLlmJsPkgs = providers.size > 0
+    ? ['groq-sdk', 'openai', '@anthropic-ai/sdk', '@google/generative-ai']
+    : [];
   const pkgs: string[] = [
     ...(lib !== 'fetch' ? [lib] : []),
     ...(hasSchedule ? ['node-cron'] : []),
-    ...[...providers].map(p => llmJsPkgs[p]),
+    ...allLlmJsPkgs,
+    ...(hasBrowserAction ? ['playwright'] : []),
   ];
   if (!pkgs.length) return '';
   return `// npm install ${pkgs.join(' ')}\n`;

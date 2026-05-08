@@ -28,7 +28,7 @@ export default async function HomePage() {
             <>
               <Link
                 href="/dashboard"
-                className="px-4 py-2 bg-indigo-600 text-white rounded font-semibold hover:bg-indigo-700 transition"
+                className="px-4 py-2 border border-black rounded font-semibold hover:bg-black hover:text-white transition"
               >
                 Dashboard
               </Link>

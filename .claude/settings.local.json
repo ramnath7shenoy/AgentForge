@@ -11,7 +11,8 @@
       "Bash(node *)",
       "Bash(Get-ChildItem -Path \"lib/flow\", \"components/flow\", \"stores\", \"prisma\", \"app\" -Recurse -ErrorAction SilentlyContinue)",
       "Bash(Select-Object FullName)",
-      "Bash(npx prisma *)"
+      "Bash(npx prisma *)",
+      "Bash(echo \"EXIT_CODE=$?\")"
     ]
   }
 }

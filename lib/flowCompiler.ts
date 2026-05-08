@@ -4,7 +4,6 @@ import {
   Library,
   LLMProvider,
   genImports,
-  genLLMImports,
   genLLMBlock,
   genHttpBlock,
   genApprovalPause,
@@ -16,6 +15,7 @@ import {
   APP_PROVIDER_ENV_KEYS,
   genInstallComment,
   genHelperCode,
+  genUniversalLLMHelper,
 } from "./codegen/templates";
 
 // ─────────────────────────────────────────────────────────────────────
@@ -219,12 +219,14 @@ interface FlowMeta {
   llmProviders: Set<LLMProvider>;
   envKeys: Set<string>;
   hasApproval: boolean;
+  hasBrowserAction: boolean;
 }
 
 function collectFlowMeta(nodes: Node<NodeData>[]): FlowMeta {
   const llmProviders = new Set<LLMProvider>();
   const envKeys = new Set<string>();
   let hasApproval = false;
+  let hasBrowserAction = false;
 
   for (const node of nodes) {
     const type = node.type || '';
@@ -235,9 +237,11 @@ function collectFlowMeta(nodes: Node<NodeData>[]): FlowMeta {
     }
     if (type === 'approval' || type === 'gatekeeper') hasApproval = true;
     if (type === 'appaction' || type === 'app_action') {
-      const p = node.data.appProvider;
-      if (p) {
-        const ep = APP_ENDPOINTS[p.toLowerCase()]?.[node.data.appAction || ''];
+      const p = (node.data.appProvider || '').toLowerCase();
+      if (p === 'browser') {
+        hasBrowserAction = true;
+      } else if (p) {
+        const ep = APP_ENDPOINTS[p]?.[node.data.appAction || ''];
         if (ep) envKeys.add(ep.envKey);
         else if (APP_PROVIDER_ENV_KEYS[p]) envKeys.add(APP_PROVIDER_ENV_KEYS[p]);
       }
@@ -247,7 +251,192 @@ function collectFlowMeta(nodes: Node<NodeData>[]): FlowMeta {
     }
   }
 
-  return { llmProviders, envKeys, hasApproval };
+  return { llmProviders, envKeys, hasApproval, hasBrowserAction };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Browser / E2B action block — generates Playwright code for local execution
+// ─────────────────────────────────────────────────────────────────────
+function genBrowserActionBlock(
+  node: Node<NodeData>,
+  varName: string,
+  names: Record<string, string>,
+  lib: Library,
+  ind: string,
+  isTS: boolean,
+  edges: Edge[],
+): string {
+  const python = isPythonLib(lib);
+  const appAction = node.data.appAction || '';
+  const appInputs = node.data.appInputs || {};
+
+  // When URL field is empty, resolve from the upstream node's output (rigid template — no guessing)
+  let urlExpr: string;
+  if (appInputs['url']?.trim()) {
+    urlExpr = liftTemplate(appInputs['url'], names, lib);
+  } else {
+    const upstreamId = edges.find(e => e.target === node.id)?.source;
+    const upstreamVar = upstreamId ? (names[upstreamId] ?? 'input') : 'input';
+    urlExpr = python
+      ? `_get(ctx.get('${upstreamVar}'), 'payload')`
+      : `_get(ctx['${upstreamVar}'], 'payload')`;
+  }
+
+  // Prompt/code: resolve from upstream when empty
+  let promptExpr: string;
+  if (appInputs['prompt']?.trim() || appInputs['instructions']?.trim()) {
+    promptExpr = liftTemplate(appInputs['prompt'] || appInputs['instructions'] || '', names, lib);
+  } else {
+    const upstreamId = edges.find(e => e.target === node.id)?.source;
+    const upstreamVar = upstreamId ? (names[upstreamId] ?? 'input') : 'input';
+    promptExpr = python
+      ? `_get(ctx.get('${upstreamVar}'), 'payload')`
+      : `_get(ctx['${upstreamVar}'], 'payload')`;
+  }
+
+  const lines: string[] = [];
+
+  if (python) {
+    switch (appAction) {
+      case 'screenshot_page': {
+        lines.push(`# Browser: take screenshot (requires: pip install playwright && playwright install chromium)`);
+        lines.push(`import base64 as _b64_${varName}`);
+        lines.push(`from playwright.async_api import async_playwright`);
+        lines.push(`_pw_url_${varName} = ${urlExpr}`);
+        lines.push(`async with async_playwright() as _pw_${varName}:`);
+        lines.push(`    _browser_${varName} = await _pw_${varName}.chromium.launch(headless=True)`);
+        lines.push(`    _ctx_${varName} = await _browser_${varName}.new_context(viewport={"width": 1280, "height": 800})`);
+        lines.push(`    _page_${varName} = await _ctx_${varName}.new_page()`);
+        lines.push(`    await _page_${varName}.goto(_pw_url_${varName}, wait_until="domcontentloaded", timeout=30000)`);
+        lines.push(`    await _page_${varName}.wait_for_timeout(1500)`);
+        lines.push(`    _shot_${varName} = _b64_${varName}.b64encode(await _page_${varName}.screenshot(full_page=True)).decode('utf-8')`);
+        lines.push(`    await _browser_${varName}.close()`);
+        lines.push(`ctx['${varName}'] = {'type': 'file', 'payload': f'data:image/png;base64,{_shot_${varName}}'}`);
+        break;
+      }
+      case 'scrape_page': {
+        lines.push(`# Browser: scrape page text (requires: pip install playwright && playwright install chromium)`);
+        lines.push(`from playwright.async_api import async_playwright`);
+        lines.push(`_pw_url_${varName} = ${urlExpr}`);
+        lines.push(`async with async_playwright() as _pw_${varName}:`);
+        lines.push(`    _browser_${varName} = await _pw_${varName}.chromium.launch(headless=True)`);
+        lines.push(`    _ctx_${varName} = await _browser_${varName}.new_context()`);
+        lines.push(`    _page_${varName} = await _ctx_${varName}.new_page()`);
+        lines.push(`    await _page_${varName}.goto(_pw_url_${varName}, wait_until="domcontentloaded", timeout=30000)`);
+        lines.push(`    _text_${varName} = await _page_${varName}.evaluate("() => document.body.innerText")`);
+        lines.push(`    await _browser_${varName}.close()`);
+        lines.push(`ctx['${varName}'] = {'type': 'text', 'payload': _text_${varName}}`);
+        break;
+      }
+      case 'browse_and_summarize': {
+        lines.push(`# Browser: browse and summarize (requires: pip install playwright && playwright install chromium)`);
+        lines.push(`from playwright.async_api import async_playwright`);
+        lines.push(`_pw_url_${varName} = ${urlExpr}`);
+        lines.push(`async with async_playwright() as _pw_${varName}:`);
+        lines.push(`    _browser_${varName} = await _pw_${varName}.chromium.launch(headless=True)`);
+        lines.push(`    _ctx_${varName} = await _browser_${varName}.new_context()`);
+        lines.push(`    _page_${varName} = await _ctx_${varName}.new_page()`);
+        lines.push(`    await _page_${varName}.goto(_pw_url_${varName}, wait_until="domcontentloaded", timeout=30000)`);
+        lines.push(`    _text_${varName} = await _page_${varName}.evaluate("() => document.body.innerText")`);
+        lines.push(`    await _browser_${varName}.close()`);
+        lines.push(`ctx['${varName}'] = {'type': 'text', 'payload': _text_${varName}[:8000]}  # Truncated for LLM summarization`);
+        break;
+      }
+      case 'run_python': {
+        lines.push(`# Execute Python code with captured stdout`);
+        lines.push(`import io as _io_${varName}, contextlib as _ctx_${varName}`);
+        lines.push(`_py_code_${varName} = ${promptExpr}`);
+        lines.push(`_py_out_${varName} = _io_${varName}.StringIO()`);
+        lines.push(`with _ctx_${varName}.redirect_stdout(_py_out_${varName}):`);
+        lines.push(`    exec(_py_code_${varName}, {"initial_input": initial_input})`);
+        lines.push(`ctx['${varName}'] = {'type': 'text', 'payload': _py_out_${varName}.getvalue() or "Done"}`);
+        break;
+      }
+      case 'run_javascript': {
+        lines.push(`# Execute JavaScript via Node.js subprocess`);
+        lines.push(`import subprocess as _sub_${varName}`);
+        lines.push(`_js_code_${varName} = ${promptExpr}`);
+        lines.push(`_js_result_${varName} = _sub_${varName}.run(['node', '-e', _js_code_${varName}], capture_output=True, text=True, timeout=30)`);
+        lines.push(`ctx['${varName}'] = {'type': 'text', 'payload': _js_result_${varName}.stdout or _js_result_${varName}.stderr}`);
+        break;
+      }
+      default: {
+        lines.push(`# WARNING: Unknown browser action "${appAction}"`);
+        lines.push(`ctx['${varName}'] = {'type': 'text', 'payload': 'unconfigured'}`);
+      }
+    }
+  } else {
+    // TypeScript / JavaScript
+    switch (appAction) {
+      case 'screenshot_page': {
+        lines.push(`// Browser: take screenshot (requires: npm install playwright && npx playwright install chromium)`);
+        lines.push(`const { chromium: _chromium_${varName} } = require('playwright');`);
+        lines.push(`const _url_${varName} = ${urlExpr};`);
+        lines.push(`const _browser_${varName} = await _chromium_${varName}.launch({ headless: true });`);
+        lines.push(`const _ctx_${varName} = await _browser_${varName}.newContext({ viewport: { width: 1280, height: 800 } });`);
+        lines.push(`const _page_${varName} = await _ctx_${varName}.newPage();`);
+        lines.push(`await _page_${varName}.goto(_url_${varName}, { waitUntil: 'domcontentloaded', timeout: 30000 });`);
+        lines.push(`await _page_${varName}.waitForTimeout(1500);`);
+        lines.push(`const _shotBuf_${varName} = await _page_${varName}.screenshot({ fullPage: true });`);
+        lines.push(`const _shotB64_${varName} = _shotBuf_${varName}.toString('base64');`);
+        lines.push(`await _browser_${varName}.close();`);
+        lines.push(`ctx['${varName}'] = { type: 'file', payload: \`data:image/png;base64,\${_shotB64_${varName}}\` };`);
+        break;
+      }
+      case 'scrape_page': {
+        lines.push(`// Browser: scrape page text (requires: npm install playwright && npx playwright install chromium)`);
+        lines.push(`const { chromium: _chromium_${varName} } = require('playwright');`);
+        lines.push(`const _url_${varName} = ${urlExpr};`);
+        lines.push(`const _browser_${varName} = await _chromium_${varName}.launch({ headless: true });`);
+        lines.push(`const _ctx_${varName} = await _browser_${varName}.newContext();`);
+        lines.push(`const _page_${varName} = await _ctx_${varName}.newPage();`);
+        lines.push(`await _page_${varName}.goto(_url_${varName}, { waitUntil: 'domcontentloaded', timeout: 30000 });`);
+        lines.push(`const _text_${varName} = await _page_${varName}.evaluate(() => document.body.innerText);`);
+        lines.push(`await _browser_${varName}.close();`);
+        lines.push(`ctx['${varName}'] = { type: 'text', payload: _text_${varName} };`);
+        break;
+      }
+      case 'browse_and_summarize': {
+        lines.push(`// Browser: browse and summarize (requires: npm install playwright && npx playwright install chromium)`);
+        lines.push(`const { chromium: _chromium_${varName} } = require('playwright');`);
+        lines.push(`const _url_${varName} = ${urlExpr};`);
+        lines.push(`const _browser_${varName} = await _chromium_${varName}.launch({ headless: true });`);
+        lines.push(`const _ctx_${varName} = await _browser_${varName}.newContext();`);
+        lines.push(`const _page_${varName} = await _ctx_${varName}.newPage();`);
+        lines.push(`await _page_${varName}.goto(_url_${varName}, { waitUntil: 'domcontentloaded', timeout: 30000 });`);
+        lines.push(`const _text_${varName} = await _page_${varName}.evaluate(() => document.body.innerText);`);
+        lines.push(`await _browser_${varName}.close();`);
+        lines.push(`ctx['${varName}'] = { type: 'text', payload: _text_${varName}.slice(0, 8000) }; // Truncated for LLM summarization`);
+        break;
+      }
+      case 'run_javascript': {
+        lines.push(`// Execute JavaScript via Function constructor`);
+        lines.push(`const _jsCode_${varName} = ${promptExpr};`);
+        lines.push(isTS
+          ? `const _jsFn_${varName}: (...args: any[]) => any = new Function('initialInput', _jsCode_${varName});`
+          : `const _jsFn_${varName} = new Function('initialInput', _jsCode_${varName});`);
+        lines.push(`let _jsOut_${varName} = '';`);
+        lines.push(`try { _jsOut_${varName} = String(await _jsFn_${varName}(initialInput) ?? ''); } catch (e${isTS ? ': any' : ''}) { _jsOut_${varName} = String(e?.message ?? e); }`);
+        lines.push(`ctx['${varName}'] = { type: 'text', payload: _jsOut_${varName} };`);
+        break;
+      }
+      case 'run_python': {
+        lines.push(`// Execute Python via subprocess (requires Python installed)`);
+        lines.push(`const { execSync: _execSync_${varName} } = require('child_process');`);
+        lines.push(`const _pyCode_${varName} = ${promptExpr};`);
+        lines.push(`let _pyOut_${varName} = '';`);
+        lines.push(`try { _pyOut_${varName} = _execSync_${varName}('python -c ' + JSON.stringify(_pyCode_${varName}), { encoding: 'utf-8', timeout: 30000 }); } catch (e${isTS ? ': any' : ''}) { _pyOut_${varName} = String(e?.stdout ?? e?.message ?? e); }`);
+        lines.push(`ctx['${varName}'] = { type: 'text', payload: _pyOut_${varName} };`);
+        break;
+      }
+      default: {
+        lines.push(`// WARNING: Unknown browser action "${appAction}"`);
+        lines.push(`ctx['${varName}'] = { type: 'text', payload: 'unconfigured' };`);
+      }
+    }
+  }
+
+  return lines.map(l => `${ind}${l}`).join('\n') + '\n';
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -260,11 +449,17 @@ function genAppActionBlock(
   lib: Library,
   ind: string,
   isTS: boolean,
+  edges: Edge[],
 ): string {
   const python = isPythonLib(lib);
   const appProvider = (node.data.appProvider || '').toLowerCase();
   const appAction = node.data.appAction || '';
   const appInputs = node.data.appInputs || {};
+
+  // Browser / E2B actions → Playwright code (no REST endpoint needed)
+  if (appProvider === 'browser') {
+    return genBrowserActionBlock(node, varName, names, lib, ind, isTS, edges);
+  }
 
   const endpoint = APP_ENDPOINTS[appProvider]?.[appAction];
   if (!appProvider || !appAction || !endpoint) {
@@ -739,32 +934,29 @@ function compileTypeScriptOrJS(
   const meta = collectFlowMeta(nodes);
   const fileExt = isTS ? 'ts' : 'js';
 
-  // Collect unique LLM SDK imports
-  const llmImportLines = new Set<string>();
-  for (const p of meta.llmProviders) llmImportLines.add(genLLMImports(lib, p));
-
   // Install comment at very top
-  let code = genInstallComment(lib, meta.llmProviders, hasSchedule);
+  let code = genInstallComment(lib, meta.llmProviders, hasSchedule, meta.hasBrowserAction);
 
   // File header
+  const llmKeyHint = meta.llmProviders.size
+    ? 'GROQ_API_KEY or OPENAI_API_KEY or ANTHROPIC_API_KEY or GEMINI_API_KEY (first found wins)'
+    : null;
+  const envKeysList = [...(llmKeyHint ? [llmKeyHint] : []), ...meta.envKeys].join(', ');
   code += `/**\n * AgentForge — Compiled Flow (${language}${lib !== 'fetch' ? ` / ${lib}` : ''})\n`;
   code += ` * Run: ${isTS ? `npx ts-node agent.${fileExt}` : `node agent.${fileExt}`}\n`;
-  if (meta.envKeys.size) {
-    code += ` *\n * Required ENV variables: ${[...meta.envKeys].join(', ')}\n`;
+  if (envKeysList) {
+    code += ` *\n * Required ENV variables: ${envKeysList}\n`;
     code += ` * Create a .env file or export them before running.\n`;
   }
   code += ` */\n\n`;
 
-  // HTTP library import
+  // HTTP library import (no top-level LLM imports — universal helper uses dynamic import)
   const httpImports = genImports(lib, hasSchedule);
   if (httpImports) code += httpImports;
 
-  // LLM SDK imports
-  for (const imp of llmImportLines) code += imp;
-  if (llmImportLines.size) code += '\n';
-
-  // Helper functions (_s, _get, vaultLookup)
+  // Helper functions (_s, _get, vaultLookup) + universal LLM helper (if AI nodes present)
   code += '\n' + genHelperCode(lib, isTS);
+  if (meta.llmProviders.size) code += genUniversalLLMHelper(lib, isTS);
 
   // TypeScript context interface
   if (isTS) {
@@ -827,7 +1019,7 @@ function compileTypeScriptOrJS(
 
       case 'appaction':
       case 'app_action': {
-        code += genAppActionBlock(node, varName, names, lib, '  ', isTS);
+        code += genAppActionBlock(node, varName, names, lib, '  ', isTS, edges);
         break;
       }
 
@@ -935,31 +1127,38 @@ function compilePython(
   hasSchedule: boolean,
   triggerNode: Node<NodeData> | undefined,
 ): string {
-  const isAsync = lib === 'aiohttp';
   const meta = collectFlowMeta(nodes);
-
-  // Collect unique LLM SDK imports
-  const llmImportLines = new Set<string>();
-  for (const p of meta.llmProviders) llmImportLines.add(genLLMImports(lib, p));
+  const isAsync = lib === 'aiohttp' || meta.hasBrowserAction;
 
   // Install comment at very top
-  let code = genInstallComment(lib, meta.llmProviders, hasSchedule);
+  let code = genInstallComment(lib, meta.llmProviders, hasSchedule, meta.hasBrowserAction);
 
   // File header
+  const llmKeyHint = meta.llmProviders.size
+    ? 'GROQ_API_KEY or OPENAI_API_KEY or ANTHROPIC_API_KEY or GEMINI_API_KEY (first found wins)'
+    : null;
   code += `# AgentForge — Compiled Flow (Python / ${lib})\n# Run: python agent.py\n`;
-  if (meta.envKeys.size) {
-    code += `#\n# Required ENV variables: ${[...meta.envKeys].join(', ')}\n`;
+  if (meta.envKeys.size || llmKeyHint) {
+    const envList = [...(llmKeyHint ? [llmKeyHint] : []), ...meta.envKeys].join(', ');
+    code += `#\n# Required ENV variables: ${envList}\n`;
     code += `# Create a .env file and load with python-dotenv, or export them in your shell.\n`;
   }
   code += `\n`;
 
-  // Imports
+  // Imports (no top-level LLM imports — universal helper lazy-imports them)
   code += genImports(lib, hasSchedule);
-  for (const imp of llmImportLines) code += imp;
+  if (meta.hasBrowserAction && !isAsync) {
+    // This case shouldn't happen now since we force isAsync, but just in case
+  }
+  if (isAsync && lib !== 'aiohttp') {
+     code += `import asyncio\n`;
+  }
   code += '\n\n';
 
-  // Helper functions (_s, _get, vault_lookup)
-  code += genHelperCode(lib) + '\n';
+  // Helper functions (_s, _get, vault_lookup) + universal LLM helper (if AI nodes present)
+  code += genHelperCode(lib);
+  if (meta.llmProviders.size) code += genUniversalLLMHelper(lib) + '\n';
+  else code += '\n';
 
   const ind = '    '; // 4-space indent inside function
   const defLine = isAsync
@@ -1021,7 +1220,7 @@ function compilePython(
 
       case 'appaction':
       case 'app_action': {
-        code += genAppActionBlock(node, varName, names, lib, nodeInd, false);
+        code += genAppActionBlock(node, varName, names, lib, nodeInd, false, edges);
         break;
       }
 
@@ -1112,10 +1311,21 @@ function compilePython(
 
   code += `if __name__ == "__main__":\n`;
   if (hasSchedule && triggerNode) {
-    code += buildCronBlock(triggerNode, 'python');
+    code += buildCronBlock(triggerNode, 'python', isAsync);
   } else if (isAsync) {
-    code += `    result = asyncio.run(run_agent("Hello"))\n`;
-    code += `    print(json.dumps(result, indent=2, default=str))\n`;
+    code += `    import asyncio\n`;
+    code += `    try:\n`;
+    code += `        # Standard standalone execution\n`;
+    code += `        result = asyncio.run(run_agent("Hello"))\n`;
+    code += `        print(json.dumps(result, indent=2, default=str))\n`;
+    code += `    except RuntimeError:\n`;
+    code += `        # Fallback for environments with an existing event loop (E2B/Jupyter)\n`;
+    code += `        loop = asyncio.get_event_loop()\n`;
+    code += `        if loop.is_running():\n`;
+    code += `            loop.create_task(run_agent("Hello"))\n`;
+    code += `        else:\n`;
+    code += `            result = loop.run_until_complete(run_agent("Hello"))\n`;
+    code += `            print(json.dumps(result, indent=2, default=str))\n`;
   } else {
     code += `    result = run_agent("Hello")\n`;
     code += `    print(json.dumps(result, indent=2, default=str))\n`;
@@ -1130,6 +1340,7 @@ function compilePython(
 function buildCronBlock(
   triggerNode: Node<NodeData>,
   lang: 'python' | 'js',
+  isAsync = false,
 ): string {
   const cronSetting = triggerNode.data.cron || 'Every Minute';
   const timeStr = triggerNode.data.time || '09:00';
@@ -1149,7 +1360,8 @@ function buildCronBlock(
     return `// ── Scheduled Execution\ncron.schedule('${cronExpression}', () => {\n  runAgent().catch(console.error);\n});\n`;
   }
 
-  let lines = `    def job():\n        run_agent("Scheduled Run")\n\n`;
+  const runCmd = isAsync ? 'asyncio.run(run_agent("Scheduled Run"))' : 'run_agent("Scheduled Run")';
+  let lines = `    def job():\n        ${runCmd}\n\n`;
   if (cronSetting === 'Every Minute') lines += `    schedule.every(1).minutes.do(job)\n`;
   else if (cronSetting === 'Hourly') lines += `    schedule.every(1).hours.do(job)\n`;
   else if (cronSetting === 'Daily') lines += `    schedule.every().day.at("${timeStr}").do(job)\n`;
