@@ -48,16 +48,55 @@ export interface SandboxWalkerOptions {
 type LogFn = (msg: string, type?: SandboxLogType, nodeId?: string) => void;
 
 // ── Provider detection ────────────────────────────────────────────────
+// Returns the provider string for a known key prefix, or "unknown" for
+// anything that does not match — intentionally never defaults to "gemini"
+// so that non-LLM keys (Tavily, etc.) are excluded from AI auto-selection.
 const detectProvider = (key: string): string => {
   if (key.startsWith("gsk_")) return "groq";
+  if (key.startsWith("sk-ant-")) return "anthropic";
   if (key.startsWith("sk-")) return "openai";
   if (key.startsWith("AIza")) return "gemini";
-  if (key.startsWith("sk-ant-")) return "anthropic";
-  return "gemini";
+  return "unknown";
+};
+
+// Canonical vault key names for each provider
+const PROVIDER_KEY_NAMES: Record<string, string> = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  groq: "GROQ_API_KEY",
 };
 
 import { MODEL_DEFAULTS, resolveModelChain } from "@/lib/flow/modelRegistry";
 import { calculateExecutionCost } from "@/lib/utils/tokenCost";
+
+// ── Priority-ordered LLM key scanner ─────────────────────────────────
+// Scans the injected key list in a fixed priority order and returns the
+// first match, auto-switching the provider to match whatever key is found.
+// Only called when no exact provider match was found.
+const LLM_KEY_PRIORITY: Array<{ name: string; provider: string }> = [
+  { name: "GROQ_API_KEY",      provider: "groq"      },
+  { name: "OPENAI_API_KEY",    provider: "openai"    },
+  { name: "ANTHROPIC_API_KEY", provider: "anthropic" },
+  { name: "GEMINI_API_KEY",    provider: "gemini"    },
+];
+
+function findAvailableLlmKey(
+  available: SandboxApiKey[],
+  onLog: LogFn,
+  nodeId: string
+): { key: string; provider: string } {
+  for (const { name, provider } of LLM_KEY_PRIORITY) {
+    const match = available.find((k) => k.key.toUpperCase() === name);
+    if (match) {
+      onLog(`🔑 Auth: "${match.key}" found → auto-switching provider to ${provider.toUpperCase()}`, "INFO", nodeId);
+      return { key: match.value, provider };
+    }
+  }
+  throw new Error(
+    "No LLM API key found. Add at least one of: GROQ_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY."
+  );
+}
 
 // ── API key resolver (from injected keys, not vaultStore) ─────────────
 function resolveApiKeyFromList(
@@ -67,35 +106,41 @@ function resolveApiKeyFromList(
   onLog: LogFn,
   nodeId: string
 ): { key: string; provider: string } {
+  // 1. Node-level key pasted directly into the node — highest priority
   if (nodeApiKey?.trim()) {
     const p = detectProvider(nodeApiKey.trim());
     onLog(`🔑 Auth: Node-Level Key → ${p.toUpperCase()}`, "INFO", nodeId);
     return { key: nodeApiKey.trim(), provider: p };
   }
 
-  const available = apiKeys.filter(k => k.value?.trim());
+  const available = apiKeys.filter((k) => k.value?.trim());
   if (available.length === 0) {
-    throw new Error(
-      "No API key provided. Add an API key in the Environment Config panel."
-    );
+    throw new Error("No API key provided. Add an API key in the Environment Config panel.");
   }
 
   const effectiveProvider =
     !requestedProvider || requestedProvider === "auto" ? null : requestedProvider;
 
   if (effectiveProvider) {
-    const match = available.find(k => detectProvider(k.value) === effectiveProvider);
+    const expectedKeyName = PROVIDER_KEY_NAMES[effectiveProvider];
+    if (!expectedKeyName) {
+      throw new Error(`Unknown provider "${effectiveProvider}". Supported: openai, anthropic, gemini, groq.`);
+    }
+
+    // Exact name match for the requested provider
+    const match = available.find((k) => k.key.toUpperCase() === expectedKeyName);
     if (match) {
-      onLog(`🔑 Auth: Key "${match.key}" → ${effectiveProvider.toUpperCase()}`, "INFO", nodeId);
+      onLog(`🔑 Auth: "${match.key}" → ${effectiveProvider.toUpperCase()}`, "INFO", nodeId);
       return { key: match.value, provider: effectiveProvider };
     }
-    onLog(`⚠️ No ${effectiveProvider.toUpperCase()} key — auto-selecting`, "WARN", nodeId);
+
+    // Requested key not found — scan for any available LLM key in priority order
+    onLog(`⚠️ ${expectedKeyName} not found — scanning for any available LLM key...`, "WARN", nodeId);
+    return findAvailableLlmKey(available, onLog, nodeId);
   }
 
-  const best = available[0];
-  const autoProvider = detectProvider(best.value);
-  onLog(`🔑 Auth: Auto-selected "${best.key}" → ${autoProvider.toUpperCase()}`, "INFO", nodeId);
-  return { key: best.value, provider: autoProvider };
+  // No provider specified — priority scan
+  return findAvailableLlmKey(available, onLog, nodeId);
 }
 
 interface Attachment { data: string; mimeType: string; name?: string }
@@ -296,7 +341,24 @@ async function dispatchLLM(
 // ── Template helpers ──────────────────────────────────────────────────
 const getRawValue = (val: any): string => {
   if (val === null || val === undefined) return "";
-  if (typeof val === "string") return val;
+  if (typeof val === "string") {
+    // Synthetic payload → convert to readable text so AI nodes receive clean content
+    if (val.includes('"__synthetic__"')) {
+      try {
+        const p = JSON.parse(val);
+        if (p?.__synthetic__ === true && Array.isArray(p.posts)) {
+          const lines = [`Source: ${p.source_url}`, `Platform: ${p.platform}`, ``];
+          (p.posts as any[]).slice(0, 5).forEach((post: any, i: number) => {
+            lines.push(`${i + 1}. ${post.title}${post.subreddit ? ` (r/${post.subreddit})` : ""}`);
+            if (post.snippet) lines.push(`   ${String(post.snippet).slice(0, 300)}`);
+            lines.push(``);
+          });
+          return lines.join("\n").trim();
+        }
+      } catch { /* not synthetic, fall through */ }
+    }
+    return val;
+  }
   if (typeof val === "number" || typeof val === "boolean") return String(val);
   if (typeof val === "object") {
     const inner = val.payload ?? val.text ?? val.message ?? val.status ?? val.value;
@@ -523,22 +585,16 @@ async function executeNode(
 
       if (!success) throw new Error("All models failed.");
 
-      // URL Safety: if instructions mention URL/link goals, ensure output is browser-safe
-      const instructionsLower = rawPrompt.toLowerCase();
-      const isUrlGoal = /\b(url|link|website|navigate|href|browse to|open the)\b/.test(instructionsLower);
-      if (isUrlGoal) {
-        const trimmed = responseText.trim();
-        const SEARCH_BASE = "https://www.google.com/search?q=";
-        if (!trimmed || trimmed === SEARCH_BASE || /[?&]q=\s*$/.test(trimmed)) {
-          // Empty or incomplete search URL — use the user's query as the search term
-          const query = encodeURIComponent(resolvedUserMessage.slice(0, 200));
-          responseText = `${SEARCH_BASE}${query}`;
-          sendLog(`🔗 URL Safety: missing query — rebuilt from user message`, "WARN", current.id);
-        } else if (!trimmed.startsWith("http")) {
-          // LLM returned plain text instead of a URL — wrap as search
-          responseText = `${SEARCH_BASE}${encodeURIComponent(trimmed)}`;
-          sendLog(`🔗 URL Safety: output wrapped as search query`, "INFO", current.id);
-        }
+      // Strip Google Search URLs — the AI sometimes wraps a query as a Google link.
+      // Extract the real search query so the browser agent uses Tavily instead.
+      if (/^https?:\/\/(?:www\.)?google\.[^/]+\/search/i.test(responseText.trim())) {
+        try {
+          const q = new URL(responseText.trim()).searchParams.get("q") || "";
+          if (q) {
+            sendLog(`🚫 Google Search URL in AI output — extracting query: "${q.slice(0, 60)}"`, "WARN", current.id);
+            responseText = q;
+          }
+        } catch { /* leave responseText unchanged */ }
       }
 
       if (/^\s*(EXIT|STOP)\s*$/i.test(responseText.trim())) {
@@ -702,6 +758,8 @@ async function executeNode(
 
         sendLog(`🌐 Browser Agent [${appAction}] → E2B sandbox`, "INFO", current.id);
 
+        const tavilyKey = apiKeys.find((k) => k.key.toUpperCase() === "TAVILY_API_KEY")?.value ?? null;
+
         let result: string;
         if (appAction === "run_python") {
           const { output } = await runCodeInE2B(resolvedInputs.prompt || "", "python", e2bLog);
@@ -710,10 +768,22 @@ async function executeNode(
           const { output } = await runCodeInE2B(resolvedInputs.prompt || "", "javascript", e2bLog);
           result = output;
         } else {
-          const url = resolvedInputs.url || "";
+          const rawUrl = resolvedInputs.url || "";
           const prompt = resolvedInputs.prompt || resolvedInputs.instructions || "";
-          if (!url) throw new Error(`Browser Agent [${appAction}] requires a URL.`);
-          const { output } = await runBrowserActionInE2B(appAction, url, prompt, e2bLog);
+          if (!rawUrl) throw new Error(`Browser Agent [${appAction}] requires a URL.`);
+
+          // Guard: upstream error messages must not be passed as navigation targets
+          if (rawUrl.toLowerCase().includes("error:")) {
+            throw new Error(`Upstream node failed: ${rawUrl}`);
+          }
+
+          const { resolveTargetUrl } = await import("@/lib/utils/resolveTargetUrl");
+          const resolvedUrl = await resolveTargetUrl(rawUrl, tavilyKey, (msg) => sendLog(msg, "INFO", current.id));
+          if (resolvedUrl !== rawUrl) {
+            sendLog(`🔗 Resolved URL: ${resolvedUrl}`, "INFO", current.id);
+          }
+
+          const { output } = await runBrowserActionInE2B(appAction, resolvedUrl, prompt, e2bLog, tavilyKey ?? undefined);
           result = output;
         }
 

@@ -7,6 +7,8 @@ import { useCostStore } from "@/stores/useCostStore";
 import { Trash2, Terminal as TerminalIcon, Download, Sparkles, Copy, CheckCheck, Bot, Clock, Workflow, FlaskConical, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { NodeExecutionStatus } from "@/types/flowStoreTypes";
+import SyntheticContentCard, { parseSyntheticPayload } from "@/components/flow/SyntheticContentCard";
+import type { SyntheticPayload } from "@/components/flow/SyntheticContentCard";
 
 const colorMap: Record<LogType, string> = {
   INFO: "text-slate-500 dark:text-slate-400",
@@ -293,6 +295,7 @@ function ExecutionManifest({
   // Structured display: JSON objects render as labelled key-value rows;
   // plain text (including multi-line action results) renders verbatim.
   type PrettifiedOutput =
+    | { type: "synthetic"; payload: SyntheticPayload }
     | { type: "json"; entries: [string, unknown][] }
     | { type: "image"; src: string }
     | { type: "text"; value: string };
@@ -302,6 +305,8 @@ function ExecutionManifest({
     if (trimmed.startsWith("data:image/")) return { type: "image", src: trimmed };
     if (trimmed.startsWith("{")) {
       try {
+        const synthetic = parseSyntheticPayload(trimmed);
+        if (synthetic) return { type: "synthetic", payload: synthetic };
         const parsed = JSON.parse(trimmed);
         if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
           return { type: "json", entries: Object.entries(parsed) };
@@ -417,7 +422,9 @@ function ExecutionManifest({
           <p className="text-[8px] font-bold uppercase tracking-widest text-zinc-500 dark:text-slate-600 mb-2">
             Final Output
           </p>
-          {prettifiedOutput.type === "image" ? (
+          {prettifiedOutput.type === "synthetic" ? (
+            <SyntheticContentCard payload={prettifiedOutput.payload} />
+          ) : prettifiedOutput.type === "image" ? (
             <img src={prettifiedOutput.src} alt="Agent screenshot" className="rounded-lg shadow-xl max-w-full" />
           ) : prettifiedOutput.type === "json" ? (
             <div className="space-y-2">

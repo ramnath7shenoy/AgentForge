@@ -67,7 +67,8 @@ export default function ChatHub() {
     }
   }, [isOpen, isRunning, awaitingApproval]);
 
-  // Definitively wipe the input after each completed flow run
+  // Wipe the visible input field when the flow finishes (covers the case where
+  // the user typed in the canvas node directly rather than through handleSend).
   useEffect(() => {
     if (!isRunning && justSentRef.current) {
       justSentRef.current = false;
@@ -76,38 +77,37 @@ export default function ChatHub() {
     }
   }, [isRunning]);
 
-  // Seed the input text once from the canvas input node's pre-configured payload.
-  // After the user has interacted, the two stay decoupled — typing in the chat
-  // does NOT update the input node so attachments/fileContext remain sticky.
+  // Seed the input once from the canvas node's payload — but ONLY when there is
+  // no chat history yet. chatHistory lives in the Zustand store and survives
+  // panel close/reopen, so this guard is safe across remount cycles.
   useEffect(() => {
-    if (!seededRef.current && inputNode && !isRunning) {
-      const nodeText =
-        inputNode.data?.packet?.payload || inputNode.data?.instructions || "";
-      if (typeof nodeText === "string" && nodeText) {
-        setInputText(nodeText);
-        seededRef.current = true;
-      }
+    if (chatHistory.length > 0) return; // conversation already started — never re-seed
+    if (seededRef.current || !inputNode || isRunning) return;
+    const nodeText =
+      inputNode.data?.packet?.payload || inputNode.data?.instructions || "";
+    if (typeof nodeText === "string" && nodeText) {
+      setInputText(nodeText);
+      if (inputRef.current) inputRef.current.value = nodeText;
+      seededRef.current = true;
     }
-  }, [inputNode, isRunning]);
+  }, [inputNode, isRunning, chatHistory.length]);
 
   const APPROVAL_WORDS = ['go', 'post', 'yes', 'approve', 'send', 'confirm', 'publish', 'proceed', 'ok'];
 
-  const nukeInput = () => {
-    setInputText("");
-    setInputKey((k) => k + 1);          // unmounts + remounts the <input> DOM node
-    if (inputRef.current) inputRef.current.value = "";
-  };
-
   const handleSend = async (e?: React.FormEvent) => {
-    e?.preventDefault();
+    // Read value from the DOM ref FIRST — before any clearing
+    const submittedText = (inputRef.current?.value ?? "").trim();
 
-    if (!inputText.trim()) return;
+    // Nuclear clear: DOM ref + form reset + state, in that order, before any async work
+    if (inputRef.current) inputRef.current.value = "";
+    (e?.target as HTMLFormElement)?.reset?.();
+    e?.preventDefault();
+    setInputText("");
+    setInputKey((k) => k + 1);
+
+    if (!submittedText) return;
     if (isRunning && !awaitingApproval) return;
 
-    const submittedText = inputText.trim();
-
-    // Nuclear clear — fires before any async work so there's zero visible lag
-    nukeInput();
     seededRef.current = true;   // prevent seed-effect re-population
     justSentRef.current = true; // flag for post-run cleanup effect
 
@@ -120,14 +120,23 @@ export default function ChatHub() {
       return;
     }
 
-    // Normal turn — update canvas node, then run
+    // Normal turn — update canvas node, run, then always wipe the stored payload
+    // so that reopening the panel never re-seeds old submitted text.
     if (inputNode) {
       const existingPacket = inputNode.data?.packet || {};
       updateNodeData(inputNode.id, {
         packet: { ...existingPacket, type: "text", payload: submittedText },
       });
     }
-    await runClientFlow(submittedText);
+    try {
+      await runClientFlow(submittedText);
+    } finally {
+      if (inputNode) {
+        updateNodeData(inputNode.id, {
+          packet: { type: "text" as const, ...inputNode.data?.packet, payload: "" },
+        });
+      }
+    }
   };
 
   const turnCount = Math.ceil(
@@ -317,7 +326,7 @@ export default function ChatHub() {
                   key={inputKey}
                   ref={inputRef}
                   type="text"
-                  value={inputText}
+                  defaultValue=""
                   disabled={isRunning && !awaitingApproval}
                   onChange={(e) => setInputText(e.target.value)}
                   placeholder={

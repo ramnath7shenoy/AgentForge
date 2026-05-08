@@ -69,7 +69,8 @@ export async function deleteIntegration(provider: string) {
 export async function executeAppAction(
   provider: string,
   action: string,
-  resolvedInputs: Record<string, string>
+  resolvedInputs: Record<string, string>,
+  tavilyApiKey?: string
 ): Promise<{ result: string }> {
   const user = await getAuthUser();
   if (!user) throw new Error("Unauthorized — please sign in.");
@@ -89,7 +90,7 @@ export async function executeAppAction(
       const url = resolvedInputs.url ?? "";
       if (!url) throw new Error(`Browser Agent [${action}] requires a URL.`);
       const prompt = resolvedInputs.prompt ?? resolvedInputs.instructions ?? "";
-      ({ output } = await runBrowserActionInE2B(action, url, prompt, e2bLog));
+      ({ output } = await runBrowserActionInE2B(action, url, prompt, e2bLog, tavilyApiKey));
     }
     return { result: output };
   }

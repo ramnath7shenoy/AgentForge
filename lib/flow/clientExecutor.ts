@@ -38,6 +38,31 @@ type LogFn = (
 // finally block immediately after dispatchLLM returns/throws — it is
 // never stored, logged, or returned.
 // ─────────────────────────────────────────────────────────────────────
+// ── Priority-ordered LLM key scanner (vault) ─────────────────────────
+const LLM_KEY_PRIORITY: Array<{ name: string; provider: string }> = [
+  { name: "GROQ_API_KEY",      provider: "groq"      },
+  { name: "OPENAI_API_KEY",    provider: "openai"    },
+  { name: "ANTHROPIC_API_KEY", provider: "anthropic" },
+  { name: "GEMINI_API_KEY",    provider: "gemini"    },
+];
+
+function findAvailableLlmKey(
+  entries: Array<{ key: string; value: string }>,
+  onLog: (msg: string, type: "INFO" | "WARN" | "ERROR", nodeId: string) => void,
+  nodeId: string
+): { key: string; provider: string } {
+  for (const { name, provider } of LLM_KEY_PRIORITY) {
+    const match = entries.find((e) => e.key.toUpperCase() === name);
+    if (match) {
+      onLog(`🔑 Auth: "${match.key}" found → auto-switching provider to ${provider.toUpperCase()}`, "INFO", nodeId);
+      return { key: match.value, provider };
+    }
+  }
+  throw new Error(
+    "No LLM API key found in Vault. Add at least one of: GROQ_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY."
+  );
+}
+
 async function resolveApiKey(
   requestedProvider: string | undefined,
   nodeApiKey: string | undefined,
@@ -51,16 +76,13 @@ async function resolveApiKey(
     return { key: nodeApiKey.trim(), provider: p };
   }
 
-  // 2. Scan the vault for any non-empty entry
+  // 2. Load vault entries
   const { useVaultStore } = await import("@/stores/vaultStore");
-  const allEntries = useVaultStore
-    .getState()
-    .entries.filter((e) => e.value?.trim());
+  const allEntries = useVaultStore.getState().entries.filter((e) => e.value?.trim());
 
   if (allEntries.length === 0) {
     throw new Error(
-      "No API key found in Secret Vault. " +
-      "Open the Vault panel and add a Gemini, OpenAI, Groq, or Anthropic key."
+      "No API key found in Vault. Open the Vault panel and add a Groq, OpenAI, Anthropic, or Gemini key."
     );
   }
 
@@ -68,35 +90,25 @@ async function resolveApiKey(
     !requestedProvider || requestedProvider === "auto" ? null : requestedProvider;
 
   if (effectiveProvider) {
-    // Try to find a vault entry whose key VALUE prefix matches the requested provider
-    const match = allEntries.find(
-      (e) => detectProvider(e.value) === effectiveProvider
-    );
+    const expectedKeyName = PROVIDER_KEY_NAMES[effectiveProvider];
+    if (!expectedKeyName) {
+      throw new Error(`Unknown provider "${effectiveProvider}". Supported: openai, anthropic, gemini, groq.`);
+    }
+
+    // Exact name match for the requested provider
+    const match = allEntries.find((e) => e.key.toUpperCase() === expectedKeyName);
     if (match) {
-      onLog(
-        `🔑 Auth: Vault Key "${match.key}" → ${effectiveProvider.toUpperCase()}`,
-        "INFO",
-        nodeId
-      );
+      onLog(`🔑 Auth: "${match.key}" → ${effectiveProvider.toUpperCase()}`, "INFO", nodeId);
       return { key: match.value, provider: effectiveProvider };
     }
-    // Requested provider not in vault — fall through and auto-select
-    onLog(
-      `⚠️ No ${effectiveProvider.toUpperCase()} key in vault — auto-selecting best available`,
-      "WARN",
-      nodeId
-    );
+
+    // Requested key not found — scan for any available LLM key in priority order
+    onLog(`⚠️ ${expectedKeyName} not found — scanning for any available LLM key...`, "WARN", nodeId);
+    return findAvailableLlmKey(allEntries, onLog, nodeId);
   }
 
-  // 3. Auto-select: first vault entry wins; infer provider from its value
-  const best = allEntries[0];
-  const autoProvider = detectProvider(best.value);
-  onLog(
-    `🔑 Auth: Auto-selected "${best.key}" → ${autoProvider.toUpperCase()}`,
-    "INFO",
-    nodeId
-  );
-  return { key: best.value, provider: autoProvider };
+  // No provider specified — priority scan
+  return findAvailableLlmKey(allEntries, onLog, nodeId);
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -133,11 +145,22 @@ import { MODEL_DEFAULTS, resolveModelChain } from "@/lib/flow/modelRegistry";
 import { calculateExecutionCost } from "@/lib/utils/tokenCost";
 import { toastBus } from "@/lib/utils/toastEvents";
 
+// Returns the provider string for a known key prefix, or "unknown" for
+// anything that does not match — intentionally never defaults to "gemini"
+// so that non-LLM keys (Tavily, etc.) are excluded from AI auto-selection.
 const detectProvider = (key: string): string => {
   if (key.startsWith("gsk_")) return "groq";
+  if (key.startsWith("sk-ant-")) return "anthropic";
   if (key.startsWith("sk-")) return "openai";
   if (key.startsWith("AIza")) return "gemini";
-  return "gemini"; // default for any other format (e.g. older Gemini key formats)
+  return "unknown";
+};
+
+const PROVIDER_KEY_NAMES: Record<string, string> = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  groq: "GROQ_API_KEY",
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -383,7 +406,24 @@ async function dispatchLLM(
 // ─────────────────────────────────────────────────────────────────────
 const getRawValue = (val: any): string => {
   if (val === null || val === undefined) return "";
-  if (typeof val === "string") return val;
+  if (typeof val === "string") {
+    // Synthetic payload → convert to readable text so AI nodes receive clean content
+    if (val.includes('"__synthetic__"')) {
+      try {
+        const p = JSON.parse(val);
+        if (p?.__synthetic__ === true && Array.isArray(p.posts)) {
+          const lines = [`Source: ${p.source_url}`, `Platform: ${p.platform}`, ``];
+          (p.posts as any[]).slice(0, 5).forEach((post: any, i: number) => {
+            lines.push(`${i + 1}. ${post.title}${post.subreddit ? ` (r/${post.subreddit})` : ""}`);
+            if (post.snippet) lines.push(`   ${String(post.snippet).slice(0, 300)}`);
+            lines.push(``);
+          });
+          return lines.join("\n").trim();
+        }
+      } catch { /* not synthetic, fall through */ }
+    }
+    return val;
+  }
   if (typeof val === "number" || typeof val === "boolean") return String(val);
   if (typeof val === "object") {
     // Prefer human-readable fields; recurse so nested objects are unwrapped
@@ -749,25 +789,19 @@ async function executeNode(
 
       if (!success) throw new Error(`All models failed. Last error logged above.`);
 
-      // URL Safety: if this node's instructions mention URL/link goals, ensure the
-      // output is a valid browser-safe URL. Handles three cases:
-      //   1. LLM returned plain text → wrap as Google search
-      //   2. LLM returned bare search base with no query → append input as search term
-      //   3. LLM returned a valid http URL → pass through unchanged
-      const _instructionsLower = rawPrompt.toLowerCase();
-      if (/\b(url|link|website|navigate|href|browse to|open the)\b/.test(_instructionsLower)) {
-        const _trimmed = responseText.trim();
-        const _SEARCH = "https://www.google.com/search?q=";
-        if (!_trimmed || _trimmed === _SEARCH || /[?&]q=\s*$/.test(_trimmed)) {
-          responseText = `${_SEARCH}${encodeURIComponent(userInputMessage.slice(0, 200))}`;
-          sendLog(`🔗 URL Safety: missing query — rebuilt from user input`, "WARN", current.id);
-        } else if (!_trimmed.startsWith("http")) {
-          responseText = `${_SEARCH}${encodeURIComponent(_trimmed)}`;
-          sendLog(`🔗 URL Safety: plain text wrapped as search query`, "INFO", current.id);
-        }
+      // F. Strip Google Search URLs — the AI sometimes wraps a query as a Google link.
+      //    Extract the real search query so the browser agent uses Tavily instead.
+      if (/^https?:\/\/(?:www\.)?google\.[^/]+\/search/i.test(responseText.trim())) {
+        try {
+          const q = new URL(responseText.trim()).searchParams.get("q") || "";
+          if (q) {
+            sendLog(`🚫 Google Search URL in AI output — extracting query: "${q.slice(0, 60)}"`, "WARN", current.id);
+            responseText = q;
+          }
+        } catch { /* leave responseText unchanged */ }
       }
 
-      // F. Exit keyword detection — only triggers if EXIT or STOP is the entire message.
+      // G. Exit keyword detection — only triggers if EXIT or STOP is the entire message.
       // A substring match would kill the flow whenever the AI mentions "stop doing X" or
       // "the process is done" — far too aggressive for conversational agents.
       if (/^\s*(EXIT|STOP)\s*$/i.test(responseText.trim())) {
@@ -989,6 +1023,9 @@ async function executeNode(
         );
       }
 
+      // Tavily key — fetched from vault inside the browser block, used in executeAppAction for all browser actions
+      let tavilyKey: string | undefined;
+
       // Browser: URL is always the immediate parent node's output — no fallback to initial input.
       if (appProvider === "browser") {
         const incomingEdge = edges.find((e) => e.target === current.id);
@@ -996,8 +1033,19 @@ async function executeNode(
         if (!upstreamPacket) throw new Error(`Browser Agent requires a connected upstream node.`);
         const urlToVisit = getRawValue(upstreamPacket).trim();
         if (!urlToVisit) throw new Error(`Browser Agent [${appAction}]: upstream node produced no output.`);
-        resolvedInputs.url = urlToVisit;
-        sendLog(`🔗 Browser URL: "${urlToVisit.slice(0, 80)}"`, "INFO", current.id);
+
+        // Guard: upstream error messages must not be treated as navigation targets
+        if (urlToVisit.toLowerCase().includes("error:")) {
+          throw new Error(`Upstream node failed: ${urlToVisit}`);
+        }
+
+        // Resolve: if input is a search term (not a URL), find the top URL via Tavily
+        const { useVaultStore: _vs } = await import("@/stores/vaultStore");
+        tavilyKey = _vs.getState().entries.find((e) => e.key.toUpperCase() === "TAVILY_API_KEY")?.value ?? undefined;
+        const { resolveTargetUrl } = await import("@/lib/utils/resolveTargetUrl");
+        const resolvedUrl = await resolveTargetUrl(urlToVisit, tavilyKey ?? null, (msg) => sendLog(msg, "INFO", current.id));
+        resolvedInputs.url = resolvedUrl;
+        sendLog(`🔗 Browser URL: "${resolvedUrl.slice(0, 80)}"`, "INFO", current.id);
       }
 
       sendLog(
@@ -1016,7 +1064,7 @@ async function executeNode(
 
       // Token lives server-side only — delegated to the server action
       const { executeAppAction } = await import("@/app/actions/integration");
-      const { result } = await executeAppAction(appProvider, appAction, resolvedInputs);
+      const { result } = await executeAppAction(appProvider, appAction, resolvedInputs, tavilyKey);
 
       sendLog(`✅ App Action [${appProvider}/${appAction}]: ${result}`, "SUCCESS", current.id);
       return { type: "text", payload: result };
