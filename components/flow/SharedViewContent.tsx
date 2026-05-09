@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 
 import FlowCanvas from "@/components/flow/canvas/FlowCanvas";
+import FlowCollaboration from "@/components/flow/collaboration/FlowCollaboration";
+import CollaborationStatus from "@/components/flow/collaboration/CollaborationStatus";
 import NodeSidebar from "@/components/flow/sidebar/NodeSidebar";
 import NodeSettingsSidebar from "@/components/flow/sidebar/NodeSettingsSidebar";
 import ResponseGallery from "@/components/flow/ResponseGallery";
@@ -31,9 +33,10 @@ import { ReactFlowProvider } from "reactflow";
 interface SharedViewContentProps {
   flow: any;
   editable: boolean;
+  currentUserName?: string | null;
 }
 
-function SharedEditor({ flow, editable }: SharedViewContentProps) {
+function SharedEditor({ flow, editable, currentUserName }: SharedViewContentProps) {
   const {
     nodes,
     edges,
@@ -103,6 +106,7 @@ function SharedEditor({ flow, editable }: SharedViewContentProps) {
   if (!mounted) return null;
 
   const startNodeId = Array.isArray(nodes) && nodes.length > 0 ? nodes[0].id : "";
+  const collaborationEnabled = hasHydrated && editable && !!flow.id;
 
   const handleClearCanvas = () => {
     if (confirm("Are you sure you want to clear the entire canvas? This cannot be undone.")) {
@@ -115,6 +119,11 @@ function SharedEditor({ flow, editable }: SharedViewContentProps) {
       "flex flex-col h-screen w-full transition-colors duration-300",
       theme === "dark" ? "dark bg-[#0b0e14] text-slate-200" : "bg-slate-50 text-slate-900"
     )}>
+      <FlowCollaboration
+        flowId={flow.id}
+        enabled={collaborationEnabled}
+        displayName={currentUserName}
+      />
 
       {/* HEADER */}
       <header className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 px-6 py-3 bg-white dark:bg-[#0b0e14] z-50 shadow-sm">
@@ -150,6 +159,8 @@ function SharedEditor({ flow, editable }: SharedViewContentProps) {
               {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved to Cloud" : "Save Error"}
             </span>
           )}
+
+          <CollaborationStatus enabled={collaborationEnabled} />
         </div>
 
         <div className="flex items-center gap-3">
@@ -221,7 +232,11 @@ function SharedEditor({ flow, editable }: SharedViewContentProps) {
 
         {/* CANVAS */}
         <main className="flex-1 relative bg-slate-50 dark:bg-[#0b0e14]">
-          <FlowCanvas setSelectedNodeId={setSelectedNodeId} editable={editable} />
+          <FlowCanvas
+            setSelectedNodeId={setSelectedNodeId}
+            editable={editable}
+            collaborationEnabled={collaborationEnabled}
+          />
 
           {/* APPROVAL BANNER */}
           <ApprovalBanner />
@@ -296,10 +311,10 @@ function SharedEditor({ flow, editable }: SharedViewContentProps) {
   );
 }
 
-export default function SharedViewContent({ flow, editable }: SharedViewContentProps) {
+export default function SharedViewContent({ flow, editable, currentUserName }: SharedViewContentProps) {
   return (
     <ReactFlowProvider>
-      <SharedEditor flow={flow} editable={editable} />
+      <SharedEditor flow={flow} editable={editable} currentUserName={currentUserName} />
     </ReactFlowProvider>
   );
 }
