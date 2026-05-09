@@ -8,6 +8,23 @@ interface ViewPageProps {
   params: Promise<{ id: string }>;
 }
 
+function getDisplayName(user: any) {
+  const metadataName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.user_metadata?.preferred_username;
+
+  if (typeof metadataName === "string" && metadataName.trim()) {
+    return metadataName.trim();
+  }
+
+  if (typeof user?.email === "string" && user.email) {
+    return user.email.split("@")[0]?.replace(/[._-]+/g, " ").trim() || user.email;
+  }
+
+  return null;
+}
+
 export default async function ViewPage({ params }: ViewPageProps) {
   const { id } = await params;
   const result = await getFlow(id);
@@ -26,12 +43,13 @@ export default async function ViewPage({ params }: ViewPageProps) {
     notFound();
   }
 
-  const isEditable: boolean = !!flow.publicEditable;
+  const isEditable: boolean = isOwner || !!flow.publicEditable;
 
   return (
     <SharedViewContent 
       flow={flow} 
       editable={isEditable} 
+      currentUserName={getDisplayName(user)}
     />
   );
 }

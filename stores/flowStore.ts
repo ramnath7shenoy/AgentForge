@@ -1,6 +1,9 @@
 "use client";
 
 import { create } from "zustand";
+import { liveblocks } from "@liveblocks/zustand";
+import type { WithLiveblocks } from "@liveblocks/zustand";
+import type { Json, JsonObject } from "@liveblocks/client";
 import { 
   Node, 
   Edge, 
@@ -17,11 +20,38 @@ import {
   FlowPacket,
   ExecutionStatus,
 } from "@/types/flowStoreTypes";
+import { liveblocksClient } from "@/lib/liveblocks/client";
+import type { CollaborationCursor, CollaborationUser } from "@/liveblocks.config";
+
+type FlowPresence = {
+  [key: string]: Json | undefined;
+  collaborationCursor: CollaborationCursor;
+  collaborationUser: CollaborationUser | null;
+  hoveredNodeId: string | null;
+  selectedNodeId: string | null;
+};
+
+type FlowStorage = {
+  [key: string]: Json | undefined;
+  nodes: Json;
+  edges: Json;
+};
+
+type FlowUserMeta = {
+  id: string;
+  info: JsonObject;
+};
 
 // If FlowState in types doesn't have projects, we'll patch it here:
 export interface ExtendedFlowState extends FlowState {
   projects: any[];
   setProjects: (projects: any[]) => void;
+  collaborationCursor: CollaborationCursor;
+  collaborationUser: CollaborationUser | null;
+  hoveredNodeId: string | null;
+  setCollaborationCursor: (cursor: CollaborationCursor) => void;
+  setCollaborationUser: (user: CollaborationUser | null) => void;
+  setHoveredNodeId: (id: string | null) => void;
 }
 
 import {
@@ -36,6 +66,8 @@ import { useLogStore } from "@/stores/useLogStore";
 // Helper for visual execution feedback
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const cloneForRealtime = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
 // Global approval signal for the Safety Gatekeeper
 let approvalResolve: ((approved: boolean) => void) | null = null;
 export function sendApprovalSignal(approved: boolean) {
@@ -46,11 +78,17 @@ export function sendApprovalSignal(approved: boolean) {
 }
 export function isAwaitingApproval() { return approvalResolve !== null; }
 
-export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
+export const useFlowStore = create<
+  WithLiveblocks<ExtendedFlowState, FlowPresence, FlowStorage, FlowUserMeta>
+>()(
+  liveblocks((set, get) => ({
   nodes: [],
   edges: [],
   theme: "dark", 
   selectedNodeId: null,
+  collaborationCursor: null,
+  collaborationUser: null,
+  hoveredNodeId: null,
   running: false,
   highlightedNodeId: null,
   currentContext: null,
@@ -93,9 +131,12 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
   },
 
   // --- STANDARD ACTIONS ---
-  setNodes: (nodes) => set({ nodes }),
-  setEdges: (edges) => set({ edges }),
+  setNodes: (nodes) => set({ nodes: cloneForRealtime(nodes) }),
+  setEdges: (edges) => set({ edges: cloneForRealtime(edges) }),
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
+  setCollaborationCursor: (cursor) => set({ collaborationCursor: cursor }),
+  setCollaborationUser: (user) => set({ collaborationUser: user }),
+  setHoveredNodeId: (id) => set({ hoveredNodeId: id }),
   setRunning: (running) => set({ running }),
   setActiveProject: (project) => {
     // Ensure we are setting the project with its actual database ID
@@ -611,4 +652,17 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
       set({ running: false, highlightedNodeId: null, activeEdgeId: null });
     }
   },
-}));
+  }), {
+    client: liveblocksClient,
+    presenceMapping: {
+      collaborationCursor: true,
+      collaborationUser: true,
+      hoveredNodeId: true,
+      selectedNodeId: true,
+    },
+    storageMapping: {
+      nodes: true,
+      edges: true,
+    },
+  })
+);

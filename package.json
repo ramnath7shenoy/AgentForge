@@ -11,6 +11,9 @@
   },
   "dependencies": {
     "@google/genai": "^1.46.0",
+    "@liveblocks/client": "^3.18.5",
+    "@liveblocks/node": "^3.18.5",
+    "@liveblocks/zustand": "^3.18.5",
     "@prisma/adapter-pg": "^7.5.0",
     "@prisma/client": "^7.5.0",
     "@prisma/client-runtime-utils": "^7.5.0",
