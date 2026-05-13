@@ -66,6 +66,40 @@ export async function deleteIntegration(provider: string) {
   return { ok: true };
 }
 
+// Maps each OAuth provider to the env var name used by compiled/sandbox code.
+const PROVIDER_TO_ENV_KEY: Record<string, string> = {
+  x: "X_BEARER_TOKEN",
+  slack: "SLACK_TOKEN",
+  discord: "DISCORD_BOT_TOKEN",
+  github: "GITHUB_TOKEN",
+  notion: "NOTION_TOKEN",
+  instagram: "INSTAGRAM_ACCESS_TOKEN",
+  linkedin: "LINKEDIN_ACCESS_TOKEN",
+  medium: "MEDIUM_INTEGRATION_TOKEN",
+};
+
+/**
+ * Fetches OAuth tokens for a set of providers and returns them keyed by the
+ * canonical env var name (e.g. "DISCORD_BOT_TOKEN"). Used by the sandbox to
+ * avoid requiring users to manually copy tokens into the vault.
+ */
+export async function getIntegrationEnvVars(providers: string[]): Promise<Record<string, string>> {
+  const user = await getAuthUser();
+  if (!user) return {};
+
+  const rows = await prisma.integration.findMany({
+    where: { userId: user.id, provider: { in: providers } },
+    select: { provider: true, accessToken: true },
+  });
+
+  const result: Record<string, string> = {};
+  for (const row of rows) {
+    const envKey = PROVIDER_TO_ENV_KEY[row.provider];
+    if (envKey && row.accessToken) result[envKey] = row.accessToken;
+  }
+  return result;
+}
+
 export async function executeAppAction(
   provider: string,
   action: string,

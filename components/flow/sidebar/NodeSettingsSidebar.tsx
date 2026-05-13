@@ -120,7 +120,7 @@ function jsonToKv(raw: string | undefined): KVPair[] {
 // ─────────────────────────────────────────────────────────────────────────────
 import { cn } from "@/lib/utils";
 import VaultInput from "@/components/ui/VaultInput";
-import { APP_REGISTRY, getApp, getAction } from "@/lib/providers";
+import { APP_REGISTRY, getApp, getAction, CONTENT_FIELD_KEYS } from "@/lib/providers";
 
 interface NodeSettingsSidebarProps {
   isOwner?: boolean;
@@ -168,6 +168,20 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [_storeInputPayload]);
+
+  // ── Auto-sync AppAction node label to match its configured action ─────
+  React.useEffect(() => {
+    if (selectedNode?.type !== "appaction") return;
+    const appProvider = selectedNode.data.appProvider || "";
+    const appAction = selectedNode.data.appAction || "";
+    if (!appProvider || !appAction) return;
+    const app = getApp(appProvider);
+    const action = app ? getAction(app.id, appAction) : undefined;
+    if (action && selectedNode.data.label !== action.label) {
+      updateNodeData(selectedNode.id, { label: action.label });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNodeId, selectedNode?.data?.appAction, selectedNode?.data?.appProvider]);
 
   // ── Input node file-upload state ──────────────────────────────────────
   const inputFileRef = React.useRef<HTMLInputElement>(null);
@@ -1148,7 +1162,12 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
               "bg-background border-border text-foreground focus:border-violet-500"
             )}
             value={appProvider}
-            onChange={(e) => updateNodeData(selectedNode.id, { appProvider: e.target.value, appAction: "", appInputs: {} })}
+            onChange={(e) => {
+              const newProvider = e.target.value;
+              const providerMeta = APP_REGISTRY.find((a) => a.id === newProvider);
+              const newLabel = providerMeta ? providerMeta.name : selectedNode.data.label;
+              updateNodeData(selectedNode.id, { appProvider: newProvider, appAction: "", appInputs: {}, label: newLabel });
+            }}
           >
             <option value="">Choose an app...</option>
             {APP_REGISTRY.map((a) => (
@@ -1191,7 +1210,15 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                 "bg-background border-border text-foreground focus:border-violet-500"
               )}
               value={appAction}
-              onChange={(e) => updateNodeData(selectedNode.id, { appAction: e.target.value, appInputs: {} })}
+              onChange={(e) => {
+                const preserved = Object.fromEntries(
+                  Object.entries(appInputs).filter(([k]) => !CONTENT_FIELD_KEYS.has(k))
+                );
+                const newAction = e.target.value;
+                const actionMeta = app?.actions.find((a) => a.id === newAction);
+                const newLabel = actionMeta ? actionMeta.label : selectedNode.data.label;
+                updateNodeData(selectedNode.id, { appAction: newAction, appInputs: preserved, label: newLabel });
+              }}
             >
               <option value="">Choose an action...</option>
               {app.actions.map((a) => (
@@ -1205,27 +1232,50 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         {action && (
           <div className="flex flex-col gap-3">
             <label className="text-[10px] font-bold uppercase text-slate-500">Input Mapping</label>
-            <p className="text-[10px] text-muted-foreground -mt-1">
-              Use <code className="bg-muted px-1 rounded text-[9px]">{"{{node-id}}"}</code> to inject upstream node output.
-            </p>
-            {/* Schema fields rendered as key-value rows */}
-            {action.fields.map((field) => (
+
+            {/* Auto-fill notice for content fields */}
+            {action.fields.some(f => f.isContent) && (
+              <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-violet-500/5 border border-violet-500/20">
+                <span className="text-[9px] text-violet-400 leading-tight">
+                  ✦ Content auto-filled from the upstream node's output — config fields below.
+                </span>
+              </div>
+            )}
+
+            {/* Config fields only (isContent fields are injected automatically) */}
+            {action.fields.filter(f => !f.isContent).map((field) => (
               <div key={field.key} className="flex items-center gap-1.5">
                 <span className="w-[38%] text-[10px] font-semibold text-slate-400 truncate shrink-0 flex items-center gap-1">
                   {field.label}
                   {field.required && <span className="text-rose-400">*</span>}
                 </span>
                 <span className="text-slate-600 text-xs shrink-0">:</span>
-                <input
-                  type="text"
-                  className={cn(
-                    "flex-1 rounded-md px-2 py-1.5 text-xs border font-mono bg-background text-foreground outline-none focus:ring-1 focus:ring-violet-500/20 focus:border-violet-500 transition-all",
-                    "border-border"
-                  )}
-                  placeholder={field.placeholder}
-                  value={appInputs[field.key] || ""}
-                  onChange={(e) => updateInput(field.key, e.target.value)}
-                />
+                {field.type === "select" ? (
+                  <select
+                    className={cn(
+                      "flex-1 rounded-md px-2 py-1.5 text-xs border bg-background text-foreground outline-none focus:ring-1 focus:ring-violet-500/20 focus:border-violet-500 transition-all",
+                      "border-border"
+                    )}
+                    value={appInputs[field.key] || ""}
+                    onChange={(e) => updateInput(field.key, e.target.value)}
+                  >
+                    {!appInputs[field.key] && <option value="">Choose…</option>}
+                    {(field.options || []).map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    className={cn(
+                      "flex-1 rounded-md px-2 py-1.5 text-xs border font-mono bg-background text-foreground outline-none focus:ring-1 focus:ring-violet-500/20 focus:border-violet-500 transition-all",
+                      "border-border"
+                    )}
+                    placeholder={field.placeholder}
+                    value={appInputs[field.key] || ""}
+                    onChange={(e) => updateInput(field.key, e.target.value)}
+                  />
+                )}
               </div>
             ))}
 

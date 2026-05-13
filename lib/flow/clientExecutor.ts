@@ -107,7 +107,19 @@ async function resolveApiKey(
     return findAvailableLlmKey(allEntries, onLog, nodeId);
   }
 
-  // No provider specified — priority scan
+  // No provider specified — check vault preferred provider, then priority scan
+  const preferred = useVaultStore.getState().preferredProvider;
+  if (preferred && preferred !== "auto") {
+    const preferredKeyName = PROVIDER_KEY_NAMES[preferred];
+    if (preferredKeyName) {
+      const preferredMatch = allEntries.find((e) => e.key.toUpperCase() === preferredKeyName);
+      if (preferredMatch) {
+        onLog(`🔑 Auth: Vault preferred provider "${preferred.toUpperCase()}" → ${preferredMatch.key}`, "INFO", nodeId);
+        return { key: preferredMatch.value, provider: preferred };
+      }
+    }
+  }
+
   return findAvailableLlmKey(allEntries, onLog, nodeId);
 }
 
@@ -515,6 +527,10 @@ function assertTemplateDeps(
       `waits for them to complete before executing this node.`
     );
   }
+}
+
+function resolveNodeLabel(node: { type?: string | null; data?: any; id: string }): string {
+  return node.type || node.id;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1023,6 +1039,21 @@ async function executeNode(
         );
       }
 
+      // Strict upstream injection: if an incoming edge exists, always override the content field.
+      if (appProvider !== "browser") {
+        const { getAction: _getAction } = await import("@/lib/providers");
+        const actionDef = _getAction(appProvider, appAction);
+        const contentField = actionDef?.fields.find((f) => f.isContent);
+        if (contentField) {
+          const incomingEdge = edges.find((e) => e.target === current.id);
+          const upstreamPacket = incomingEdge ? context.nodes[incomingEdge.source] : null;
+          if (upstreamPacket) {
+            resolvedInputs[contentField.key] = getRawValue(upstreamPacket);
+            sendLog(`📝 Content "${contentField.key}" overridden from upstream output`, "INFO", current.id);
+          }
+        }
+      }
+
       // Tavily key — fetched from vault inside the browser block, used in executeAppAction for all browser actions
       let tavilyKey: string | undefined;
 
@@ -1279,7 +1310,7 @@ export function buildDependencyMap(edges: Edge[]): Record<string, string[]> {
 //      complete normally.
 // ═════════════════════════════════════════════════════════════════════
 export async function executeGraph(
-  nodes: Node<NodeData>[],
+  _nodes: Node<NodeData>[],
   edges: Edge[],
   initialInput: string,
   onLog?: LogFn,
@@ -1304,6 +1335,15 @@ export async function executeGraph(
   const { onNodeStatusChange, onNodeComplete, isDryRun } = options;
 
   sendLog("🚀 Reactive Engine started (Smart Merge mode)...", "INFO");
+
+  // Strip zombie nodes — nodes that have no edges at all when the graph has edges.
+  // This prevents stale nodes from prior flows from being dispatched as spurious roots.
+  const connectedNodeIds = edges.length > 0
+    ? new Set(edges.flatMap((e) => [e.source, e.target]))
+    : null;
+  const nodes = (connectedNodeIds
+    ? _nodes.filter((n) => connectedNodeIds.has(n.id))
+    : _nodes);
 
   // ─── 1. Build adjacency, dep counts, and per-child parent-outcome tracking ───
   const adj = new Map<string, string[]>();          // parent → [children]
@@ -1347,7 +1387,7 @@ export async function executeGraph(
     if (unreachable.length > 0) {
       sendLog(
         `⚠️ ${unreachable.length} node(s) unreachable (disconnected or cycle): ` +
-        unreachable.map((n) => n.data?.label || n.id).join(", "),
+        unreachable.map((n) => resolveNodeLabel(n)).join(", "),
         "WARN"
       );
     }
@@ -1401,7 +1441,7 @@ export async function executeGraph(
       skipped.add(childId);
       onNodeStatusChange?.(childId, "skipped");
       sendLog(
-        `⏭ "${child.data?.label || childId}" skipped — no active paths reached this node`,
+        `⏭ "${resolveNodeLabel(child)}" skipped — no active paths reached this node`,
         "WARN",
         childId
       );
@@ -1433,7 +1473,7 @@ export async function executeGraph(
 
     // Sink nodes bypass the exit signal — they always run to produce the flow report.
     if (context.variables.__exit__ && !isSink) {
-      sendLog(`🛑 Exit signal — skipping ${node.data?.label || node.id}`, "WARN", node.id);
+      sendLog(`🛑 Exit signal — skipping ${resolveNodeLabel(node)}`, "WARN", node.id);
       skipped.add(node.id);
       onNodeStatusChange?.(node.id, "skipped");
       for (const childId of adj.get(node.id) || []) {
@@ -1445,7 +1485,7 @@ export async function executeGraph(
     inflight.add(node.id);
     pendingCount++;
     onNodeStatusChange?.(node.id, "running");
-    sendLog(`⚡ Dispatching: ${node.data?.label || node.id}`, "INFO", node.id);
+    sendLog(`⚡ Dispatching: ${resolveNodeLabel(node)}`, "INFO", node.id);
 
     executeNode(node, context, edges, initialInput, chatHistory, sendLog, isDryRun)
       .then((packet) => {
@@ -1453,7 +1493,7 @@ export async function executeGraph(
         executed.add(node.id);
         onNodeStatusChange?.(node.id, "success");
         onNodeComplete?.(node.id, packet);
-        sendLog(`✅ Completed: ${node.data?.label || node.id}`, "SUCCESS", node.id);
+        sendLog(`✅ Completed: ${resolveNodeLabel(node)}`, "SUCCESS", node.id);
 
         if (node.type === "router" || node.type === "decision") {
           // Per-edge resolution: only the selected handle contributes "success".
@@ -1492,7 +1532,7 @@ export async function executeGraph(
       })
       .catch((err) => {
         const errMsg = (err as Error)?.message || String(err);
-        sendLog(`❌ Error in ${node.data?.label || node.id}: ${errMsg}`, "ERROR", node.id);
+        sendLog(`❌ Error in ${resolveNodeLabel(node)}: ${errMsg}`, "ERROR", node.id);
         onNodeStatusChange?.(node.id, "error");
 
         // Store an error packet so downstream nodes (especially sinks) can reference
@@ -1524,7 +1564,7 @@ export async function executeGraph(
   }
 
   sendLog(
-    `📋 Root nodes: ${roots.map((n) => n.data?.label || n.id).join(", ")}`,
+    `📋 Root nodes: ${roots.map((n) => resolveNodeLabel(n)).join(", ")}`,
     "INFO"
   );
 

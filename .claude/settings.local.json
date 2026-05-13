@@ -12,7 +12,13 @@
       "Bash(Get-ChildItem -Path \"lib/flow\", \"components/flow\", \"stores\", \"prisma\", \"app\" -Recurse -ErrorAction SilentlyContinue)",
       "Bash(Select-Object FullName)",
       "Bash(npx prisma *)",
-      "Bash(echo \"EXIT_CODE=$?\")"
+      "Bash(echo \"EXIT_CODE=$?\")",
+      "Bash(Select-String -Path \"E:\\\\agentforge\\\\flowforge-ai\\\\lib\\\\generated\\\\prisma\\\\edge.js\" -Pattern \"visibility\")",
+      "Bash(Measure-Object)",
+      "Bash(Select-Object -ExpandProperty Count)",
+      "PowerShell(npx tsc --noEmit --skipLibCheck 2>&1 | Select-Object -First 30)",
+      "PowerShell(npx tsc --noEmit --skipLibCheck 2>&1 | Select-Object -First 20)",
+      "PowerShell(npx tsc --noEmit --skipLibCheck 2>&1 | Select-Object -First 10)"
     ]
   }
 }

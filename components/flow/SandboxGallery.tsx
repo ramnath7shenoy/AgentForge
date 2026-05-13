@@ -315,7 +315,7 @@ function SandboxManifest({
           {manifestNodes.map((node) => (
             <NodeStatusRow
               key={node.id}
-              label={node.data?.label || node.id}
+              label={node.type || node.id}
               type={node.type || "node"}
               status={nodeStatuses[node.id] || "idle"}
             />

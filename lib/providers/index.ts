@@ -7,7 +7,12 @@ export interface ActionField {
   placeholder?: string;
   required?: boolean;
   options?: { label: string; value: string }[];
+  /** When true this field is auto-filled from the upstream node's output — not shown in the sidebar */
+  isContent?: boolean;
 }
+
+/** Keys that carry the main "content" payload — auto-injected from the upstream node. */
+export const CONTENT_FIELD_KEYS = new Set(["text", "content", "body", "caption"]);
 
 export interface AppAction {
   id: string;
@@ -50,7 +55,7 @@ export const APP_REGISTRY: AppDefinition[] = [
         label: "Post Tweet",
         description: "Post a new tweet",
         fields: [
-          { key: "text", label: "Tweet Text", type: "textarea", placeholder: "What's happening? (max 280 chars)", required: true },
+          { key: "text", label: "Tweet Text", type: "textarea", placeholder: "What's happening? (max 280 chars)", required: true, isContent: true },
         ],
       },
       {
@@ -59,7 +64,7 @@ export const APP_REGISTRY: AppDefinition[] = [
         description: "Send a direct message to a user",
         fields: [
           { key: "recipientId", label: "Recipient User ID", type: "text", placeholder: "User ID (numeric)", required: true },
-          { key: "text", label: "Message", type: "textarea", placeholder: "Your message...", required: true },
+          { key: "text", label: "Message", type: "textarea", placeholder: "Your message...", required: true, isContent: true },
         ],
       },
     ],
@@ -79,7 +84,7 @@ export const APP_REGISTRY: AppDefinition[] = [
         description: "Send a message to a channel",
         fields: [
           { key: "channel", label: "Channel", type: "text", placeholder: "#general", required: true },
-          { key: "text", label: "Message", type: "textarea", placeholder: "Your message...", required: true },
+          { key: "text", label: "Message", type: "textarea", placeholder: "Your message...", required: true, isContent: true },
         ],
       },
       {
@@ -88,7 +93,7 @@ export const APP_REGISTRY: AppDefinition[] = [
         description: "Send a direct message to a user",
         fields: [
           { key: "userId", label: "User ID or Email", type: "text", placeholder: "U12345ABC or user@example.com", required: true },
-          { key: "text", label: "Message", type: "textarea", placeholder: "Your message...", required: true },
+          { key: "text", label: "Message", type: "textarea", placeholder: "Your message...", required: true, isContent: true },
         ],
       },
     ],
@@ -108,7 +113,7 @@ export const APP_REGISTRY: AppDefinition[] = [
         description: "Send a message to a Discord channel",
         fields: [
           { key: "channelId", label: "Channel ID", type: "text", placeholder: "Paste channel ID from Discord", required: true },
-          { key: "content", label: "Message", type: "textarea", placeholder: "Your message...", required: true },
+          { key: "content", label: "Message", type: "textarea", placeholder: "Your message...", required: true, isContent: true },
         ],
       },
       {
@@ -117,7 +122,7 @@ export const APP_REGISTRY: AppDefinition[] = [
         description: "Send a DM to a Discord user",
         fields: [
           { key: "userId", label: "User ID", type: "text", placeholder: "Discord user ID (numeric)", required: true },
-          { key: "content", label: "Message", type: "textarea", placeholder: "Your message...", required: true },
+          { key: "content", label: "Message", type: "textarea", placeholder: "Your message...", required: true, isContent: true },
         ],
       },
     ],
@@ -138,7 +143,7 @@ export const APP_REGISTRY: AppDefinition[] = [
         fields: [
           { key: "repo", label: "Repository", type: "text", placeholder: "owner/repo", required: true },
           { key: "title", label: "Title", type: "text", placeholder: "Issue title", required: true },
-          { key: "body", label: "Body", type: "textarea", placeholder: "Issue description..." },
+          { key: "body", label: "Body", type: "textarea", placeholder: "Issue description...", isContent: true },
         ],
       },
       {
@@ -148,7 +153,7 @@ export const APP_REGISTRY: AppDefinition[] = [
         fields: [
           { key: "repo", label: "Repository", type: "text", placeholder: "owner/repo", required: true },
           { key: "issueNumber", label: "Issue / PR #", type: "text", placeholder: "42", required: true },
-          { key: "body", label: "Comment", type: "textarea", placeholder: "Your comment...", required: true },
+          { key: "body", label: "Comment", type: "textarea", placeholder: "Your comment...", required: true, isContent: true },
         ],
       },
     ],
@@ -169,7 +174,7 @@ export const APP_REGISTRY: AppDefinition[] = [
         fields: [
           { key: "databaseId", label: "Database ID", type: "text", placeholder: "Notion database ID", required: true },
           { key: "title", label: "Title", type: "text", placeholder: "Page title", required: true },
-          { key: "content", label: "Content", type: "textarea", placeholder: "Page content..." },
+          { key: "content", label: "Content", type: "textarea", placeholder: "Page content...", isContent: true },
         ],
       },
     ],
@@ -192,7 +197,7 @@ export const APP_REGISTRY: AppDefinition[] = [
         description: "Publish a photo or reel post",
         fields: [
           { key: "imageUrl", label: "Image URL", type: "text", placeholder: "https://…/image.jpg", required: true },
-          { key: "caption", label: "Caption", type: "textarea", placeholder: "Post caption…" },
+          { key: "caption", label: "Caption", type: "textarea", placeholder: "Post caption…", isContent: true },
         ],
       },
     ],
@@ -215,7 +220,7 @@ export const APP_REGISTRY: AppDefinition[] = [
         label: "Create Post",
         description: "Share a text update on your LinkedIn profile",
         fields: [
-          { key: "text", label: "Post Text", type: "textarea", placeholder: "Share an update…", required: true },
+          { key: "text", label: "Post Text", type: "textarea", placeholder: "Share an update…", required: true, isContent: true },
         ],
       },
     ],
@@ -238,7 +243,7 @@ export const APP_REGISTRY: AppDefinition[] = [
         description: "Publish a new story to Medium",
         fields: [
           { key: "title", label: "Title", type: "text", placeholder: "Post title", required: true },
-          { key: "content", label: "Content", type: "textarea", placeholder: "Post content (HTML or Markdown)…", required: true },
+          { key: "content", label: "Content", type: "textarea", placeholder: "Post content (HTML or Markdown)…", required: true, isContent: true },
           { key: "contentFormat", label: "Format", type: "select", placeholder: "markdown", options: [{ label: "Markdown", value: "markdown" }, { label: "HTML", value: "html" }] },
         ],
       },

@@ -205,7 +205,7 @@ export default function ResponseGallery() {
                     const node = nodes.find(n => n.id === id);
                     const status = nodeStatuses[id] || "idle";
                     const icon = status === "success" ? "✓" : status === "error" ? "✗" : "⏭";
-                    return `  ${icon} ${node?.data?.label || id} [${(node?.type || "node").toUpperCase()}]`;
+                    return `  ${icon} ${node?.type || id} [${(node?.type || "node").toUpperCase()}]`;
                   })
                   .join("\n");
 
@@ -354,7 +354,7 @@ function ExecutionManifest({
                   <div className="flex items-center gap-2 mb-2">
                     <FlaskConical size={10} className="text-amber-400 shrink-0" />
                     <span className="text-[10px] font-semibold text-amber-300">
-                      {node.data?.label || node.id}
+                      {node.type || node.id}
                     </span>
                     <span className="text-[8px] uppercase tracking-wider text-amber-500/60 ml-auto">
                       {node.type}
@@ -408,7 +408,7 @@ function ExecutionManifest({
           {manifestNodes.map(node => (
             <NodeStatusRow
               key={node.id}
-              label={node.data?.label || node.id}
+              label={node.type || node.id}
               type={node.type || "node"}
               status={nodeStatuses[node.id] || "idle"}
             />

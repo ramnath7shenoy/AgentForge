@@ -139,7 +139,20 @@ function resolveApiKeyFromList(
     return findAvailableLlmKey(available, onLog, nodeId);
   }
 
-  // No provider specified — priority scan
+  // No provider specified — check PREFERRED_PROVIDER key, then priority scan
+  const preferredEntry = available.find((k) => k.key.toUpperCase() === "PREFERRED_PROVIDER");
+  if (preferredEntry?.value) {
+    const preferred = preferredEntry.value.toLowerCase();
+    const preferredKeyName = PROVIDER_KEY_NAMES[preferred];
+    if (preferredKeyName) {
+      const preferredMatch = available.find((k) => k.key.toUpperCase() === preferredKeyName);
+      if (preferredMatch) {
+        onLog(`🔑 Auth: Preferred provider "${preferred.toUpperCase()}" → ${preferredMatch.key}`, "INFO", nodeId);
+        return { key: preferredMatch.value, provider: preferred };
+      }
+    }
+  }
+
   return findAvailableLlmKey(available, onLog, nodeId);
 }
 
@@ -453,6 +466,10 @@ function evaluateRouterCondition(condition: string, inputText: string): boolean 
   return input.includes(cond);
 }
 
+function resolveNodeLabel(node: { type?: string | null; data?: any; id: string }): string {
+  return node.type || node.id;
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
     promise,
@@ -740,6 +757,21 @@ async function executeNode(
         });
       }
 
+      // Strict upstream injection: if an incoming edge exists, always override the content field.
+      if (appProvider !== "browser") {
+        const { getAction: _getAction } = await import("@/lib/providers");
+        const actionDef = _getAction(appProvider, appAction);
+        const contentField = actionDef?.fields.find((f) => f.isContent);
+        if (contentField) {
+          const incomingEdge = edges.find((e) => e.target === current.id);
+          const upstreamPacket = incomingEdge ? context.nodes[incomingEdge.source] : null;
+          if (upstreamPacket) {
+            resolvedInputs[contentField.key] = getRawValue(upstreamPacket);
+            sendLog(`📝 Content "${contentField.key}" overridden from upstream output`, "INFO", current.id);
+          }
+        }
+      }
+
       // Browser: URL is always the immediate parent node's output — no fallback to initial input.
       if (appProvider === "browser") {
         const incomingEdge = edges.find((e) => e.target === current.id);
@@ -832,7 +864,7 @@ async function executeNode(
 
 // ── Reactive Engine (server-safe) ─────────────────────────────────────
 export async function executeGraphServer(
-  nodes: SandboxNode[],
+  _nodes: SandboxNode[],
   edges: SandboxEdge[],
   initialInput: string,
   apiKeys: SandboxApiKey[],
@@ -854,6 +886,14 @@ export async function executeGraphServer(
   const { onNodeStatusChange, onNodeComplete } = options;
 
   sendLog("🚀 Sandbox Engine started...", "INFO");
+
+  // Strip zombie nodes — nodes with no edges when the graph has edges.
+  const connectedNodeIds = edges.length > 0
+    ? new Set(edges.flatMap((e) => [e.source, e.target]))
+    : null;
+  const nodes = connectedNodeIds
+    ? _nodes.filter((n) => connectedNodeIds.has(n.id))
+    : _nodes;
 
   const adj = new Map<string, string[]>();
   const remainingDeps = new Map<string, number>();
@@ -922,7 +962,7 @@ export async function executeGraphServer(
     inflight.add(nodeId);
     onNodeStatusChange?.(nodeId, "running");
     const current = nodeMap.get(nodeId)!;
-    sendLog(`▶ ${current.data?.label || nodeId} [${current.type}]`, "INFO", nodeId);
+    sendLog(`▶ ${resolveNodeLabel(current)} [${current.type}]`, "INFO", nodeId);
 
     let packet: SandboxFlowPacket;
     let routerRoute: string | undefined;

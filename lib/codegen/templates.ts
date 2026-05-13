@@ -251,11 +251,11 @@ export function genUniversalLLMHelper(lib: Library, isTS = true): string {
 `;
   }
 
-  // JavaScript (no types)
+  // JavaScript (no types) — uses dynamic import() so ESM-only packages (got, etc.) work
   return `async function callUniversalLlm(systemPrompt, userInput) {
   const usr = userInput || 'Run';
   if (process.env.GROQ_API_KEY) {
-    const Groq = require('groq-sdk');
+    const { default: Groq } = await import('groq-sdk');
     const r = await new Groq({ apiKey: process.env.GROQ_API_KEY }).chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: usr }],
@@ -263,7 +263,7 @@ export function genUniversalLLMHelper(lib: Library, isTS = true): string {
     return r.choices[0].message.content ?? '';
   }
   if (process.env.OPENAI_API_KEY) {
-    const OpenAI = require('openai');
+    const { default: OpenAI } = await import('openai');
     const r = await new OpenAI({ apiKey: process.env.OPENAI_API_KEY }).chat.completions.create({
       model: 'gpt-4o',
       messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: usr }],
@@ -271,7 +271,7 @@ export function genUniversalLLMHelper(lib: Library, isTS = true): string {
     return r.choices[0].message.content ?? '';
   }
   if (process.env.ANTHROPIC_API_KEY) {
-    const Anthropic = require('@anthropic-ai/sdk');
+    const { default: Anthropic } = await import('@anthropic-ai/sdk');
     const r = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages.create({
       model: 'claude-3-5-sonnet-20241022', max_tokens: 1024,
       system: systemPrompt, messages: [{ role: 'user', content: usr }],
@@ -279,7 +279,7 @@ export function genUniversalLLMHelper(lib: Library, isTS = true): string {
     return r.content[0].text ?? '';
   }
   if (process.env.GEMINI_API_KEY) {
-    const { GoogleGenerativeAI } = require('@google/generative-ai');
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const r = await new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
       .getGenerativeModel({ model: 'gemini-1.5-flash' })
       .generateContent(\`\${systemPrompt}\\n\\nInput: \${usr}\`);
@@ -317,10 +317,10 @@ export function genApprovalPause(lib: Library, label: string, varName: string, i
     ].join('\n') + '\n';
   }
   return [
-    `${ind}await new Promise<void>(resolve => {`,
-    `${ind}  const rl = (require('readline') as any).createInterface({ input: process.stdin, output: process.stdout });`,
-    `${ind}  rl.question('\\n⏸  ${msg} — Press Enter to approve and continue... ', () => { rl.close(); resolve(); });`,
-    `${ind}});`,
+    `${ind}{ const { createInterface: _rlCI } = await import('readline/promises');`,
+    `${ind}  const _rl = _rlCI({ input: process.stdin, output: process.stdout });`,
+    `${ind}  await _rl.question('\\n⏸  ${msg} — Press Enter to approve and continue... ');`,
+    `${ind}  _rl.close(); }`,
     `${ind}ctx['${varName}'] = { type: 'text', payload: 'approved' };`,
   ].join('\n') + '\n';
 }
@@ -641,7 +641,8 @@ export function genInstallComment(lib: Library, providers: Set<LLMProvider>, has
       ...allLlmPyPkgs,
       ...(hasBrowserAction ? ['playwright'] : []),
     ];
-    const playwrightNote = hasBrowserAction ? '# playwright install chromium\n' : '';
+    // The playwright browser install is a separate step; remind the user to run it locally
+    const playwrightNote = hasBrowserAction ? '# After pip install, run: playwright install chromium\n' : '';
     return `# pip install ${pkgs.join(' ')}\n${playwrightNote}`;
   }
 

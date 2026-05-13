@@ -12,59 +12,52 @@ AI providers: Gemini · Groq · OpenAI · Anthropic (auto-detected via vault key
 app/
   actions/
     ai-architect.ts      # NL → validated flow JSON (12-node schema)
-    integration.ts       # OAuth CRUD + executeAppAction (8 OAuth + browser/E2B)
+    integration.ts       # OAuth CRUD + executeAppAction (8 OAuth + browser/E2B) + getIntegrationEnvVars()
     flow.ts              # Flow CRUD: save/get/publish/deploy/delete/folders/templates
     project.ts           # Project CRUD + templates
   api/
     sandbox/
       execute/route.ts        # POST → SSE: runs serverExecutor; maxDuration=60
-      execute-code/route.ts   # POST → SSE: raw E2B code execution; pip pre-install from # pip install header; maxDuration=60
-    vector-search/route.ts    # BM25 lexical search
-  editor/page.tsx        # Main canvas (~1700 lines): FlowCanvas, sidebars, toolbar, AI Architect, approval, chat, terminal, dry-run/live, auto-save
-  publish/page.tsx       # Publish & Export: sandbox env config (vault auto-injected), flowId-keyed localStorage persistence, Execute + Recompile buttons, polyglot codegen
+      execute-code/route.ts   # POST → SSE: raw E2B code execution; maxDuration=60
+    vector-search/route.ts
+  editor/page.tsx        # Main canvas (~1700 lines): FlowCanvas, sidebars, toolbar, AI Architect, chat, terminal
+  publish/page.tsx       # Publish & Export: Mirror Mode sandbox, polyglot codegen, flowId-keyed localStorage
   sandbox/[id]/
-    page.tsx             # Server: loads flow, access-control, renders SandboxClient
-    SandboxClient.tsx    # Client: API key config, prompt input, SandboxGallery
-  dashboard/
-    page.tsx             # Mission Control: workspace sidebar, recent flows, vault, stats
-    integrations/page.tsx
-  store/page.tsx + AgentGrid.tsx  # Agent Store: browse/run deployed public flows
-  view/[id]/page.tsx     # Public read-only / editable flow viewer
+    page.tsx / SandboxClient.tsx   # Server-rendered sandbox with API key config
+  dashboard/page.tsx · integrations/page.tsx · store/page.tsx
 
 components/flow/
   nodes/                 # One file per node type + NodeCard.tsx
-  canvas/                # FlowCanvas (editable), ReadOnlyCanvas
-  chat/ChatHub.tsx       # Floating chat + approval routing
-  sidebar/               # NodeSettingsSidebar, NodeSidebar
-  ResponseGallery.tsx    # Editor Terminal + Final Result (reads flowStore/logStore); image-aware
-  SandboxGallery.tsx     # Prop-driven Terminal + Final Result; image-aware
-  ImageLightbox.tsx      # Framer Motion lightbox — Escape/overlay click to close
+  canvas/                # FlowCanvas, ReadOnlyCanvas
+  chat/ChatHub.tsx
+  sidebar/
+    NodeSettingsSidebar.tsx  # AppAction label auto-syncs to action.label on mount via useEffect
+    NodeSidebar.tsx          # Vault tab: preferred provider dropdown
+  ResponseGallery.tsx / SandboxGallery.tsx / ImageLightbox.tsx
 
-hooks/useSandboxExecution.ts  # POSTs to /api/sandbox/execute, reads SSE, isolated state
+hooks/useSandboxExecution.ts
 
 lib/
   flow/
-    clientExecutor.ts    # Reactive engine ("use client") — editor path; calls executeAppAction
-    serverExecutor.ts    # Server-safe reactive engine — /api/sandbox/execute; static e2bRunner import
-    layoutEngine.ts / validators.ts / modelRegistry.ts
-  sandbox/e2bRunner.ts   # runCodeInE2B(), runBrowserActionInE2B(); RESULT markers; base64 strip; nest_asyncio
-  providers/index.ts     # APP_REGISTRY (9 providers); AppProvider type
-  codegen/templates.ts   # Polyglot codegen: liftTemplate (triple-quoted Python), genUniversalLLMHelper, genBrowserActionBlock, genHttpBlock, genApprovalPause, genAppActionBlock
-  flowCompiler.ts        # Flow → Python/TS/JS; injects universal LLM helper; detects hasBrowserAction; edges passed for upstream URL resolution
-  utils/
-    resolveTargetUrl.ts  # (new) URL resolution helper
-    export.ts / contextPacker.ts / tokenCost.ts
-  expressionEvaluator.ts / approvalGate.ts / flowPersistence.ts
+    clientExecutor.ts    # Reactive engine; strips zombie nodes; strict upstream content injection
+    serverExecutor.ts    # Server reactive engine; same zombie strip + content injection
+  sandbox/e2bRunner.ts
+  providers/index.ts     # APP_REGISTRY (9 providers); CONTENT_FIELD_KEYS; isContent flag on fields
+  codegen/templates.ts   # Polyglot codegen helpers; APP_PROVIDER_ENV_KEYS
+  flowCompiler.ts        # topoSort skips isolated nodes; upstream ctx used for content fields
+  generated/prisma/      # Regenerate with `npx prisma generate` if schema changes
 
 stores/
-  flowStore.ts / useLogStore.ts / vaultStore.ts / useCostStore.ts / registryStore.ts
+  flowStore.ts           # deleteNode purges nodeStatuses/nodeOutputs/executedNodeIds/executionResult
+  vaultStore.ts          # preferredProvider: string|null persisted; setPreferredProvider()
+  useLogStore.ts / useCostStore.ts / registryStore.ts
 ```
 
 ---
 
 ## Core Data Types
 ```ts
-FlowPacket   { type: "text"|"file"|"data", payload: any, error?, meta?, attachments?, fileContext? }
+FlowPacket   { type:"text"|"file"|"data", payload:any, error?, meta?, attachments?, fileContext? }
 NodeData     { label, instructions, provider, modelName, apiKey,
                routes, conditions, resultFormat, packet,
                connectionType, url, method, headers, authType, authValue, bodyMapping,
@@ -72,6 +65,7 @@ NodeData     { label, instructions, provider, modelName, apiKey,
                subflowId, subflowName, workflowOverride,
                gatekeeperMessage, batchLogic, schedule, cron, webhookID }
 ExecutionContext  { variables: Record<string,FlowPacket>, nodes: Record<string,FlowPacket>, __exit__? }
+ActionField  { key, label, type, placeholder?, isContent?: boolean }  // isContent = auto-filled from upstream
 ```
 
 ---
@@ -80,89 +74,75 @@ ExecutionContext  { variables: Record<string,FlowPacket>, nodes: Record<string,F
 
 ### Editor — `clientExecutor.ts`
 ```
-runClientFlow(input) → executeGraph() topological dispatch
-  appaction → executeAppAction() [server action]
-    provider==="browser" → e2bRunner (early return, no OAuth)
-    else → Prisma Integration row → provider service
+runClientFlow(input) → executeGraph(_nodes, edges, ...)
+  Zombie filter: nodes with no edges stripped when graph has edges
+  appaction → content field always overridden from upstream output if incoming edge exists
+            → executeAppAction() [server action] → Prisma Integration → provider service
 ```
 
 ### Sandbox — `serverExecutor.ts` → `/api/sandbox/execute`
 ```
 POST {nodes, edges, input, apiKeys[]} → SSE
-  executeGraphServer() — same topo dispatch, no browser deps
-  appaction: browser → e2bRunner; else → executeAppAction() OAuth path
-  SSE: {t:"log"|"status"|"output"|"result"|"cost"|"done"|"error"}
+  Same zombie filter + strict content injection as clientExecutor
+  AGENTFORGE_MODE=LIVE — full execution, real OAuth tokens
 ```
 
-### Code Execution — `/api/sandbox/execute-code`
+### Code Sandbox — `/api/sandbox/execute-code` (Mirror Mode)
 ```
-POST {code, language, envVars} → SSE
-  Parse # pip install from first 20 lines → pip install --quiet before run
-  Vault keys auto-injected from vaultStore (explicit envKeys override)
-  E2B Sandbox.create() → runCode() → stream stdout/stderr
-  TypeScript: base64-encode → write /tmp script → tsx via spawnSync
-  SSE: {t:"log"|"stdout"|"stderr"|"error"|"done"}
+POST {code, language, envVars:{AGENTFORGE_INPUT, AGENTFORGE_MODE:"PREVIEW"}} → SSE
+  Mirror Mode shim prepended to compiled code:
+    Python: requests/httpx/aiohttp — GET allowed; POST/PUT/DELETE/PATCH → prints DRAFT PAYLOAD block
+    JS/TS:  fetch/axios/got        — same GET-pass/mutating-block logic
+  No API keys injected (isolated logic checker)
+  Frontend parses DRAFT PAYLOAD blocks → Flow Result card shows
+    "🔍 PREVIEW: [Node] → Payload Generated (No data sent)"
+  Raw ctx JSON dump and "=== Final Result ===" stripped from terminal view
 ```
 
 ---
 
-## E2B Browser Agent
+## AppAction Content Field Injection
+`CONTENT_FIELD_KEYS = Set(["text","content","body","caption"])` — marked `isContent:true` in APP_REGISTRY.
 
-**Provider:** `"browser"` — no OAuth, uses `E2B_API_KEY` env.
+**Runtime (both executors):** If AppAction node has an incoming edge, the content field is ALWAYS overridden with upstream node's output — ignores whatever is in `appInputs`.
 
-| Action | Method |
-|---|---|
-| `browse_and_summarize` | requests + BeautifulSoup |
-| `scrape_page` | structured JSON (title, headings, paragraphs, links) |
-| `screenshot_page` | Playwright async + nest_asyncio + file-based PNG → base64 |
-| `run_python` / `run_javascript` | user code as-is |
+**Compiler (`flowCompiler.ts`):** `genAppActionBlock` resolves `upstreamVar` from edges; content fields in bodyFields use `ctx['upstreamVar']['payload']` (Python) or `ctx['upstreamVar']?.payload` (JS/TS). Special-cased for Instagram caption, LinkedIn text, Medium content, Notion content.
 
-**Result protocol:** every script prints `---RESULT_START---{data}---RESULT_END---` (flush=True). `runBrowserActionInE2B` regex-extracts after run; suppresses RESULT lines from user terminal. Base64: all whitespace stripped (handles E2B line-chunking). Fallback: `"Error: No result captured from sandbox."`
-
-**Image rendering:** `data:image/` prefix → `<img>` + `ImageLightbox` in ResponseGallery, SandboxGallery, ChatHub, OutputNode.
+**Sidebar:** Action dropdown `onChange` also updates `node.data.label` to `action.label`. Provider dropdown `onChange` updates label to `provider.name`. `useEffect` in `NodeSettingsSidebar` auto-syncs label on mount if mismatched.
 
 ---
 
 ## Reactive Engine
 
-**Topo dispatch:** adjacency + dependency maps; roots (in-degree 0) fire immediately; node fires when `remainingDeps === 0`; resolves when inflight set empty.
+**Topo dispatch:** adjacency + dependency maps; roots (in-degree 0) fire immediately.
+
+**Zombie filter:** `edges.length > 0` → only nodes appearing in at least one edge are processed. Prevents stale nodes from prior flows being dispatched.
 
 **Exit signal:** AI returning `"EXIT"|"STOP"` sets `context.__exit__`; pending nodes SKIPPED.
 
-**Error isolation:** failure cascades SKIPPED only to transitive descendants.
+**Error isolation:** failure cascades SKIPPED to transitive descendants only.
 
-**JIT key resolution (`resolveApiKey`):**
-1. Node-level `data.apiKey`
-2. Vault entry matching prefix (`gsk_`→Groq, `sk-`→OpenAI, `AIza`→Gemini, `sk-ant-`→Anthropic)
-3. First vault entry
+**JIT key resolution (`resolveApiKey` / `resolveApiKeyFromList`):**
+1. Vault preferred provider (`preferredProvider` in vaultStore / `PREFERRED_PROVIDER` key for server)
+2. Node-level `data.apiKey`
+3. Vault entry matching prefix (`gsk_`→Groq, `sk-`→OpenAI, `AIza`→Gemini, `sk-ant-`→Anthropic)
+4. First vault entry
 
-**SeqAttn:** strips context to only `{{ref}}`-ed keys before each AI node.
-
-**`assertTemplateDeps`:** validates all `{{nodeId}}` refs are in context; fails fast.
-
-**`.output` alias:** `{{id.output}}` maps `"output"` → `"payload"`.
-
----
-
-## Node Types (12 canonical + extras)
-`input` · `trigger` · `webhook` · `ai` · `vault` · `router` · `gatekeeper` · `approval` · `processor` · `action` · `appaction` · `output`
-
-Extras: `subflow`/`subagent` · `group` · `text`
-
-Sandbox mode: `approval`/`gatekeeper` auto-pass with WARN log.
+**`deleteNode`:** purges `nodes`, `edges`, `nodeStatuses`, `nodeOutputs`, `executedNodeIds`, `executionResult` atomically.
 
 ---
 
 ## App Integrations (9 providers)
 X · Slack · Discord · GitHub · Notion · Instagram · LinkedIn · Medium · **Browser** (E2B)
 
-`executeAppAction` returns early for `provider==="browser"` — no Prisma lookup.
+`executeAppAction` uses `prisma.integration.accessToken` — no vault lookup.
+`getIntegrationEnvVars(providers[])` → maps provider → canonical env key (e.g. `discord→DISCORD_BOT_TOKEN`) for external use.
 
 ---
 
 ## Code Export (`flowCompiler.ts` + `publish/page.tsx`)
 
-Kahn's topo-sort → snake_case identifiers → detect providers → emit per-library blocks.
+Kahn's topo-sort (isolated nodes excluded) → snake_case identifiers → per-library blocks.
 
 | Language | Libraries |
 |---|---|
@@ -170,22 +150,21 @@ Kahn's topo-sort → snake_case identifiers → detect providers → emit per-li
 | TypeScript | fetch · axios · node-fetch |
 | JavaScript | fetch · got · axios |
 
-**Universal LLM helper** (`genUniversalLLMHelper`): injected once when any LLM node present. Lazy-imports first provider whose key is in env: GROQ → OPENAI → ANTHROPIC → GEMINI. `# pip install` header auto-lists all four packages.
+Entry points throw `RuntimeError`/`Error` if `AGENTFORGE_INPUT` env var is missing (no 'Hello' fallback).
 
-**Browser action codegen** (`genBrowserActionBlock`): generates Playwright/requests code. When `appInputs['url']` is empty, resolves URL from upstream node via edges: `_get(ctx.get('upstreamVar'), 'payload')`.
-
-**Persistence** (`publish/page.tsx`): `compiledCode` persisted to `FORGE_PUBLISH_STATE_${flowId}` localStorage key. `skipNextCompile` ref prevents overwrite on mount restore.
+**Execution Plan** in terminal parsed from `# ── [type] label` comments in compiled code. Node/edge counts fall back to `steps.length` / `steps.length-1` when store is empty (localStorage-restored compiledCode).
 
 ---
 
 ## Auth & Persistence
-- Supabase OAuth (Google, GitHub, Apple) + magic link; callback `app/auth/callback/`
+- Supabase OAuth (Google, GitHub, Apple) + magic link
 - Flows/Projects/Integrations/Vault → Prisma → Postgres
 - Guest mode: localStorage; auto-migrated on login
 - Auto-save: debounced 2s
+- **Prisma schema change → must run `npx prisma generate`** to update `lib/generated/prisma/`
 
 ## Prisma Models
-`Flow` (nodes/edges JSON, isPublic, isDeployed) · `Project` · `Folder` · `Vault` (key/value encrypted) · `Integration` (provider, accessToken, refreshToken; unique userId+provider)
+`Flow` (nodes/edges JSON, isPublic, isDeployed) · `Project` · `Folder` · `Vault` · `Integration` (provider, accessToken, refreshToken; unique userId+provider)
 
 ---
 

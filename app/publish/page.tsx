@@ -61,8 +61,6 @@ export default function PublishPage() {
   const [copied, setCopied] = useState(false);
   const [compiledCode, setCompiledCode] = useState("");
   const [libDropdownOpen, setLibDropdownOpen] = useState(false);
-  // Prevents the compile effect from overwriting code restored from localStorage on mount
-  const skipNextCompile = useRef(false);
 
   // Input & env config — persisted in sessionStorage so Back navigation restores state
   const [inputValue, setInputValue] = useState("");
@@ -81,9 +79,9 @@ export default function PublishPage() {
   // Keyed by flowId so each project has independent persisted state
   const FORGE_STATE_KEY = `FORGE_PUBLISH_STATE_${activeProject?.id ?? "default"}`;
 
-  // Effect 1 — Rehydrate user config from localStorage (input, keys, attachments, compiled code).
-  // Execution results (logs, finalResult) are intentionally NOT restored so opening
-  // the page for a new flow never shows a stale screenshot from a previous run.
+  // Effect 1 — Rehydrate user config from localStorage (input, keys, attachments).
+  // compiledCode is restored only as a fallback for page-refresh when the flow store is
+  // empty (flow not yet loaded from DB). When nodes are present the compile effect overwrites it.
   useEffect(() => {
     sandboxExec.clearResult(); // nuke any sessionStorage remnant from prior session
     try {
@@ -94,11 +92,8 @@ export default function PublishPage() {
       if (Array.isArray(s.envKeys) && s.envKeys.length) setEnvKeys(s.envKeys);
       if (Array.isArray(s.attachments) && s.attachments.length) setSandboxAttachments(s.attachments);
       if (s.fileContext) setSandboxTextContext(s.fileContext);
-      // Restore compiled code — skip the compile effect so manual edits survive a refresh
-      if (s.compiledCode) {
-        setCompiledCode(s.compiledCode);
-        skipNextCompile.current = true;
-      }
+      // Only use cached code when the store has no nodes yet (e.g. hard page refresh)
+      if (s.compiledCode && nodes.length === 0) setCompiledCode(s.compiledCode);
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -109,7 +104,7 @@ export default function PublishPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Effect 2 — Persist user config + compiled code on change (execution results excluded)
+  // Effect 2 — Persist user config + compiled code on change
   useEffect(() => {
     try {
       localStorage.setItem(FORGE_STATE_KEY, JSON.stringify({
@@ -147,11 +142,6 @@ export default function PublishPage() {
     sandboxExec.clearResult();
   };
 
-  const handleRecompile = () => {
-    skipNextCompile.current = false;
-    setCompiledCode(compileFlow(nodes, edges, activeTab, activeLibrary));
-  };
-
   // Share state
   const [shareLoading, setShareLoading] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
@@ -184,6 +174,71 @@ export default function PublishPage() {
   const codeStatus = codeStatusMap[activeTab];
   const codeLogs = codeLogsMap[activeTab];
 
+  // Flatten codeLogs: subprocess stdout arrives as one multi-line string per SSE event.
+  // Split every entry by \n so each logical line is processed independently.
+  const flatLogs = React.useMemo(
+    () => codeLogs.flatMap((e) => e.split("\n")),
+    [codeLogs]
+  );
+
+  // Re-derive sandboxResult from flat lines for accurate block detection.
+  const sandboxResult = React.useMemo<Record<string, unknown> | null>(() => {
+    const blocks: string[][] = [];
+    let cur: string[] | null = null;
+    let depth = 0;
+    for (const line of flatLogs) {
+      if (!cur && line.trim() === "{") { cur = [line]; depth = 1; continue; }
+      if (cur) {
+        cur.push(line);
+        depth += (line.match(/\{/g) || []).length;
+        depth -= (line.match(/\}/g) || []).length;
+        if (depth <= 0) { blocks.push([...cur]); cur = null; depth = 0; }
+      }
+    }
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      try {
+        const p = JSON.parse(blocks[i].join("\n"));
+        if (p?.input?.type) return p;
+      } catch {}
+    }
+    return null;
+  }, [flatLogs]);
+
+  // Parse DRAFT PAYLOAD blocks from flat lines.
+  const draftPayloads = React.useMemo<{ method: string; url: string }[]>(() => {
+    const results: { method: string; url: string }[] = [];
+    let method = "", url = "";
+    for (const line of flatLogs) {
+      const t = line.trim();
+      if (t.startsWith("╯══ DRAFT PAYLOAD")) { method = ""; url = ""; }
+      else if (t.startsWith("║  Method")) method = t.replace("║  Method  :", "").trim();
+      else if (t.startsWith("║  URL")) url = t.replace("║  URL     :", "").trim();
+      else if (t.startsWith("╚═══") && method) results.push({ method, url });
+    }
+    return results;
+  }, [flatLogs]);
+
+  // Strip ctx JSON dump and "=== Final Result ===" from the display.
+  const terminalLines = React.useMemo(() => {
+    const lines: string[] = [];
+    let inBlock = false;
+    let depth = 0;
+    for (const line of flatLogs) {
+      const t = line.trim();
+      if (t.includes("=== Final Result ===")) continue;
+      if (t === "{}") continue;
+      if (!inBlock && t === "{") { inBlock = true; depth = 1; continue; }
+      if (inBlock) {
+        depth += (line.match(/\{/g) || []).length;
+        depth -= (line.match(/\}/g) || []).length;
+        if (depth <= 0) inBlock = false;
+        continue;
+      }
+      if (t) lines.push(line); // skip blank lines from subprocess output
+    }
+    return lines;
+  }, [flatLogs]);
+
   const addSandboxFiles = async (files: FileList | File[] | null) => {
     if (!files?.length) return;
     const fileArr = Array.from(files);
@@ -201,10 +256,8 @@ export default function PublishPage() {
   }, [activeTab]);
 
   useEffect(() => {
-    if (skipNextCompile.current) {
-      skipNextCompile.current = false;
-      return;
-    }
+    // Skip compile when store is empty (e.g. hard page refresh before flow loads from DB)
+    if (nodes.length === 0) return;
     setCompiledCode(compileFlow(nodes, edges, activeTab, activeLibrary));
   }, [nodes, edges, activeTab, activeLibrary]);
 
@@ -257,35 +310,151 @@ export default function PublishPage() {
     await sandboxExec.run(nodesForRun, edges as any, effectiveInput, validKeys);
   };
 
+  const NODE_ICON: Record<string, string> = {
+    input: "📥", output: "📤", ai: "🤖", appaction: "⚡",
+    action: "🌐", router: "🔀", approval: "🛡️", gatekeeper: "🔒",
+    processor: "⚙️", trigger: "⏱️", webhook: "🪝", subflow: "🔗", subagent: "🤝",
+  };
+
   const executeCode = async (lang: Tab) => {
-    setCodeLogsMap((prev) => ({ ...prev, [lang]: [] }));
+    // ── Step 1: static analysis (shown immediately, no waiting)
+    // Comments are indented inside the async function, so allow leading whitespace
+    const stepPattern = /[ \t]*(?:#|\/\/)\s+──\s+\[(\w+)\]\s+(.+)/g;
+    const steps: { type: string; label: string }[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = stepPattern.exec(compiledCode)) !== null) {
+      steps.push({ type: m[1], label: m[2].trim() });
+    }
+
+    const initLogs: string[] = [];
+    // Node/edge counts: prefer live store; fall back to step count from compiled code
+    // (store may be empty on fresh page load when compiledCode was restored from localStorage).
+    const executableNodes = nodes.filter((n) => !["group", "text"].includes(n.type ?? ""));
+    const nodeCount = executableNodes.length || steps.length;
+    const edgeCount = edges.length || Math.max(0, steps.length - 1);
+    initLogs.push(`📋 ${nodeCount} node${nodeCount !== 1 ? "s" : ""} · ${edgeCount} connection${edgeCount !== 1 ? "s" : ""} · ${lang}/${activeLibrary}`);
+
+    if (steps.length > 0) {
+      initLogs.push("⚡ Execution Plan:");
+      steps.forEach((s, i) => {
+        initLogs.push(`   ${i + 1}. ${NODE_ICON[s.type] ?? "▶"} [${s.label}]`);
+      });
+    } else {
+      initLogs.push("⚠️  No nodes detected in compiled code — add nodes to the canvas.");
+    }
+    initLogs.push("");
+
+    setCodeLogsMap((prev) => ({ ...prev, [lang]: initLogs }));
     setCodeStatusMap((prev) => ({ ...prev, [lang]: "loading" }));
     setCodeTerminalOpen(true);
-    
-    // Auto-scroll to bottom of right panel to show terminal logs
     setTimeout(() => {
-      rightPanelScrollRef.current?.scrollTo({
-        top: rightPanelScrollRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
+      rightPanelScrollRef.current?.scrollTo({ top: rightPanelScrollRef.current.scrollHeight, behavior: "smooth" });
     }, 100);
 
-    // Auto-inject all vault entries; explicit envKeys override vault values for same key
-    const vaultEntries = useVaultStore.getState().entries.filter((e) => e.key.trim() && e.value.trim());
-    const vaultMap = Object.fromEntries(vaultEntries.map((e) => [e.key, e.value]));
-    const explicitMap = Object.fromEntries(
-      envKeys.filter((k) => k.key.trim() && k.value.trim()).map((k) => [k.key, k.value])
-    );
-    const envVarsMap = { ...vaultMap, ...explicitMap };
+    // ── Step 2: E2B execution — Mirror Mode (AGENTFORGE_MODE=PREVIEW)
+    // GET requests are allowed (live token/ID validation).
+    // POST/PUT/DELETE/PATCH are intercepted: a DRAFT PAYLOAD block is printed
+    // to stdout instead of sending data. No API keys are injected.
+    const envVarsMap = { AGENTFORGE_INPUT: inputValue || "Hello", AGENTFORGE_MODE: "PREVIEW" };
+
+    const pythonShim = `\
+import os as _os_sb
+if _os_sb.environ.get('AGENTFORGE_MODE') == 'PREVIEW':
+    import json as _jsb
+    class _SBR:
+        status_code=200;ok=True;text='{}';headers={};content=b'{}'
+        def json(self):return {}
+        def raise_for_status(self):pass
+    def _draft(m,url,**kw):
+        b=kw.get('json',kw.get('data',{}));h=kw.get('headers',{})
+        print(f'\\n╯══ DRAFT PAYLOAD ═══════════════════════════════════')
+        print(f'║  Method  : {m.upper()}')
+        print(f'║  URL     : {url}')
+        print(f'║  Headers : {_jsb.dumps(dict(h),indent=2)}')
+        print(f'║  Body    : {_jsb.dumps(b,indent=2) if b else "{}"}')
+        print(f'╚═══════════════════════════════════════════════\\n')
+        return _SBR()
+    import requests as _rs
+    for _m2 in ('post','put','delete','patch'):
+        setattr(_rs,_m2,(lambda _mx:lambda url,**kw:_draft(_mx,url,**kw))(_m2))
+    try:
+        import httpx as _hx
+        for _m2 in ('post','put','delete','patch'):
+            setattr(_hx,_m2,(lambda _mx:lambda url,**kw:_draft(_mx,url,**kw))(_m2))
+    except ImportError:pass
+    try:
+        import aiohttp as _aio
+        class _AR:
+            status=200
+            async def json(self):return {}
+            async def text(self):return '{}'
+            def raise_for_status(self):pass
+            async def __aenter__(self):return self
+            async def __aexit__(self,*a):pass
+        class _AS:
+            def get(self,url,**kw):return _AR()
+            def post(self,url,**kw):_draft('POST',url,**kw);return _AR()
+            def put(self,url,**kw):_draft('PUT',url,**kw);return _AR()
+            def delete(self,url,**kw):_draft('DELETE',url,**kw);return _AR()
+            def patch(self,url,**kw):_draft('PATCH',url,**kw);return _AR()
+            async def __aenter__(self):return self
+            async def __aexit__(self,*a):pass
+        _aio.ClientSession=_AS
+    except ImportError:pass
+
+`;
+
+    const jsShim = `\
+if (process.env.AGENTFORGE_MODE === 'PREVIEW') {
+  const _draft = (method, url, headers, body) => {
+    console.log('\\n╯══ DRAFT PAYLOAD ═══════════════════════════════════');
+    console.log('║  Method  : ' + method);
+    console.log('║  URL     : ' + url);
+    console.log('║  Headers : ' + JSON.stringify(headers || {}, null, 2));
+    console.log('║  Body    : ' + JSON.stringify(body || {}, null, 2));
+    console.log('╚═══════════════════════════════════════════════\\n');
+  };
+  const _mock = () => Promise.resolve({ ok: true, status: 200, json: async () => ({}), text: async () => '{}' });
+  const _origFetch = (global as any).fetch;
+  (global as any).fetch = async (url: string, init: any = {}) => {
+    const method = (init?.method || 'GET').toUpperCase();
+    if (method === 'GET') return _origFetch ? _origFetch(url, init) : _mock();
+    let body = {};
+    try { body = JSON.parse(init?.body || '{}'); } catch {}
+    _draft(method, url, init?.headers || {}, body);
+    return _mock();
+  };
+  try {
+    const ax = require('axios');
+    const _origAdapter = ax.defaults.adapter;
+    ax.defaults.adapter = async (config: any) => {
+      const method = (config.method || 'GET').toUpperCase();
+      if (method === 'GET') return _origAdapter ? _origAdapter(config) : { data: {}, status: 200, statusText: 'OK', headers: {}, config };
+      _draft(method, config.url, config.headers, config.data || {});
+      return { data: {}, status: 200, statusText: 'OK', headers: {}, config };
+    };
+  } catch {}
+  try {
+    const got = require('got');
+    const _mockGot = async () => ({ body: {}, statusCode: 200 });
+    for (const _m of ['post','put','delete','patch']) (got as any)[_m] = _mockGot;
+  } catch {}
+}
+
+`;
+
+    const sandboxShim = lang === "python" ? pythonShim : jsShim;
+    const codeToRun = sandboxShim + compiledCode;
+
     try {
       const res = await fetch("/api/sandbox/execute-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: compiledCode, language: lang, envVars: envVarsMap }),
+        body: JSON.stringify({ code: codeToRun, language: lang, envVars: envVarsMap }),
       });
       if (!res.ok || !res.body) {
         setCodeStatusMap((prev) => ({ ...prev, [lang]: "error" }));
-        setCodeLogsMap((prev) => ({ ...prev, [lang]: [`Server error: ${res.status} ${res.statusText}`] }));
+        setCodeLogsMap((prev) => ({ ...prev, [lang]: [...prev[lang], `Server error: ${res.status}`] }));
         return;
       }
       const reader = res.body.getReader();
@@ -303,10 +472,16 @@ export default function PublishPage() {
           if (!t.startsWith("data: ")) continue;
           try {
             const ev = JSON.parse(t.slice(6));
-            if (ev.t === "log") setCodeLogsMap((prev) => ({ ...prev, [lang]: [...prev[lang], ev.text] }));
-            else if (ev.t === "stdout") setCodeLogsMap((prev) => ({ ...prev, [lang]: [...prev[lang], ev.line] }));
-            else if (ev.t === "stderr") setCodeLogsMap((prev) => ({ ...prev, [lang]: [...prev[lang], `[stderr] ${ev.line}`] }));
-            else if (ev.t === "error") setCodeLogsMap((prev) => ({ ...prev, [lang]: [...prev[lang], `❌ ${ev.message}`] }));
+            const append = (txt: string) =>
+              setCodeLogsMap((prev) => ({ ...prev, [lang]: [...prev[lang], txt] }));
+            if (ev.t === "log") append(ev.text);
+            else if (ev.t === "stdout") append(ev.line);
+            else if (ev.t === "stderr") {
+              const l: string = ev.line ?? "";
+              // Route already filters tracebacks — add belt-and-suspenders for any slip-through
+              if (!l.match(/^\s+File "|^Traceback \(most/)) append(`⚠️  ${l}`);
+            }
+            else if (ev.t === "error") append(`❌ ${ev.message}`);
             else if (ev.t === "done") didSucceed = ev.success as boolean;
           } catch { /* skip malformed */ }
         }
@@ -324,8 +499,8 @@ export default function PublishPage() {
     await executeWorkflow();
   };
 
-  const handleExecuteCode = async () => {
-    await executeCode(activeTab);
+  const handleExecuteCode = () => {
+    executeCode(activeTab);
   };
 
   const handleShare = async () => {
@@ -832,7 +1007,7 @@ export default function PublishPage() {
 
             {/* Code + Terminal wrapper */}
             <div className="p-6 flex flex-col gap-4">
-              {/* Toolbar row: Execute + Recompile + Download + Copy */}
+              {/* Toolbar row: Verify + Download + Copy */}
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button
                   onClick={handleExecuteCode}
@@ -845,15 +1020,7 @@ export default function PublishPage() {
                   )}
                 >
                   {codeStatus === "loading" ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} className="fill-current" />}
-                  Execute
-                </button>
-                <button
-                  onClick={handleRecompile}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border text-slate-400 border-slate-700 hover:text-white hover:border-slate-600 bg-slate-800/50"
-                  title="Regenerates code from the current visual flow."
-                >
-                  <RotateCcw size={11} />
-                  Recompile
+                  Verify Flow
                 </button>
                 <div className="ml-auto flex items-center gap-2">
                   <button
@@ -916,21 +1083,79 @@ export default function PublishPage() {
                 {codeTerminalOpen && (
                   <div className="flex-1 px-4 pb-4 font-mono text-[10px] leading-relaxed space-y-0.5 overflow-hidden">
                     {codeLogs.length === 0 ? (
-                      <span className="text-slate-600 italic">Awaiting code execution...</span>
-                    ) : codeLogs.map((line, i) => (
-                      <div
-                        key={i}
-                        className={cn(
-                          "whitespace-pre-wrap break-all",
-                          line.startsWith("[stderr]") ? "text-amber-400" :
-                          line.startsWith("❌") ? "text-rose-400" :
-                          line.startsWith("🐳") || line.startsWith("⚡") || line.startsWith("✅") ? "text-indigo-400" :
-                          "text-slate-300"
-                        )}
-                      >
-                        {line}
-                      </div>
-                    ))}
+                      <span className="text-slate-600 italic">Awaiting execution...</span>
+                    ) : (<>
+                      {terminalLines.map((line, i) => {
+                        const isDraft = line.startsWith("╯══ DRAFT") || line.startsWith("║") || line.startsWith("╚═══");
+                        return (
+                          <div
+                            key={i}
+                            className={cn(
+                              "whitespace-pre-wrap break-all font-mono",
+                              isDraft ? "text-amber-400/80" :
+                              line.startsWith("❌") ? "text-rose-400" :
+                              line.startsWith("⚠️") ? "text-amber-400" :
+                              line.startsWith("🐳") || line.startsWith("✅") || line.startsWith("📋") || line.startsWith("⚡") ? "text-indigo-400" :
+                              line.startsWith("   ") ? "text-slate-400" :
+                              "text-slate-300"
+                            )}
+                          >
+                            {line}
+                          </div>
+                        );
+                      })}
+                      {sandboxResult && (
+                        <div className="mt-3 border border-slate-700/60 rounded-lg overflow-hidden">
+                          <div className="bg-slate-800/60 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-700/60">
+                            Flow Result
+                          </div>
+                          <div className="divide-y divide-slate-800/60">
+                            {Object.entries(sandboxResult)
+                              .filter(([k]) => k !== "input")
+                              .map(([key, val], idx) => {
+                                const packet = val as any;
+                                const raw = packet?.payload;
+                                const nodeLabel = nodes.find(
+                                  (n) => (n.data.label || "").toLowerCase().replace(/\s+/g, "_") === key
+                                )?.data.label || key.replace(/_/g, " ");
+                                const isIntercepted = typeof raw === "object" && raw !== null && Object.keys(raw).length === 0;
+                                const matchedDraft = isIntercepted ? draftPayloads[idx] : undefined;
+                                const display = raw === null || raw === undefined ? "—"
+                                  : typeof raw === "object" ? JSON.stringify(raw) : String(raw);
+                                return (
+                                  <div key={key} className="px-3 py-2 flex flex-col gap-0.5">
+                                    <div className="flex items-center gap-3">
+                                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide min-w-[120px] truncate" title={nodeLabel}>{nodeLabel}</span>
+                                      {isIntercepted ? (
+                                        <span className="text-[10px] text-amber-400 font-mono">
+                                          🔍 PREVIEW: {nodeLabel} → Payload Generated (No data sent)
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] text-emerald-300 font-mono break-all">{display}</span>
+                                      )}
+                                    </div>
+                                    {matchedDraft && (
+                                      <div className="ml-[132px] text-[9px] font-mono text-slate-500 leading-relaxed">
+                                        <span className="text-amber-500/60">{matchedDraft.method}</span>
+                                        {" → "}
+                                        <span className="text-slate-400 break-all">{matchedDraft.url}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      )}
+                      {(codeStatus === "success" || codeStatus === "error") && (
+                        <div className={cn(
+                          "mt-3 text-[9px] font-mono border-t border-slate-700/40 pt-2",
+                          codeStatus === "error" ? "text-rose-400" : "text-emerald-400/70"
+                        )}>
+                          {codeStatus === "error" ? "✗ Execution failed" : "✓ Code executed"}
+                        </div>
+                      )}
+                    </>)}
                     <div ref={codeTerminalBottomRef} />
                   </div>
                 )}

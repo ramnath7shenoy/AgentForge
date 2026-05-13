@@ -25,6 +25,8 @@ interface VaultState {
   loadFromDb: () => Promise<void>;
   architectKey: string;
   setArchitectKey: (key: string) => void;
+  preferredProvider: string | null;
+  setPreferredProvider: (provider: string | null) => void;
 }
 
 export const useVaultStore = create<VaultState>()(
@@ -32,6 +34,7 @@ export const useVaultStore = create<VaultState>()(
     (set, get) => ({
       entries: [],
       architectKey: "",
+      preferredProvider: null,
 
       addEntry: (key, value) => {
         set((s) => ({
@@ -92,12 +95,14 @@ export const useVaultStore = create<VaultState>()(
       },
 
       setArchitectKey: (key) => set({ architectKey: key }),
+
+      setPreferredProvider: (provider) => set({ preferredProvider: provider }),
     }),
     {
       name: "vault-store",
       storage: createJSONStorage(() => localStorage),
-      // Only persist entries — architectKey is session-only
-      partialize: (state) => ({ entries: state.entries }),
+      // architectKey is session-only; everything else persists
+      partialize: (state) => ({ entries: state.entries, preferredProvider: state.preferredProvider }),
     }
   )
 );

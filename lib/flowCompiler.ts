@@ -17,6 +17,7 @@ import {
   genHelperCode,
   genUniversalLLMHelper,
 } from "./codegen/templates";
+import { CONTENT_FIELD_KEYS } from "./providers";
 
 // ─────────────────────────────────────────────────────────────────────
 // Utilities
@@ -46,21 +47,32 @@ function getSemanticNames(nodes: Node<NodeData>[]): Record<string, string> {
 
 // ─────────────────────────────────────────────────────────────────────
 // Topological sort — Kahn's algorithm
-// Disconnected nodes are appended in original order after reachable nodes.
+// Only nodes reachable from the connected graph are included.
+// Isolated nodes (no edges) are excluded when the graph has edges,
+// preventing zombie nodes from prior flows from being compiled.
 // ─────────────────────────────────────────────────────────────────────
 function topoSort(nodes: Node<NodeData>[], edges: Edge[]): Node<NodeData>[] {
   const inDeg = new Map<string, number>();
   const adj = new Map<string, string[]>();
   const byId = new Map<string, Node<NodeData>>();
 
-  nodes.forEach(n => { inDeg.set(n.id, 0); adj.set(n.id, []); byId.set(n.id, n); });
+  // When the graph has edges, only include nodes that participate in at least one edge.
+  const connectedIds = edges.length > 0
+    ? new Set(edges.flatMap(e => [e.source, e.target]))
+    : null;
+  const activeNodes = connectedIds
+    ? nodes.filter(n => connectedIds.has(n.id))
+    : nodes;
+
+  activeNodes.forEach(n => { inDeg.set(n.id, 0); adj.set(n.id, []); byId.set(n.id, n); });
   edges.forEach(e => {
+    if (!inDeg.has(e.source) || !inDeg.has(e.target)) return;
     adj.get(e.source)?.push(e.target);
     inDeg.set(e.target, (inDeg.get(e.target) ?? 0) + 1);
   });
 
   const queue: string[] = [];
-  nodes.forEach(n => { if ((inDeg.get(n.id) ?? 0) === 0) queue.push(n.id); });
+  activeNodes.forEach(n => { if ((inDeg.get(n.id) ?? 0) === 0) queue.push(n.id); });
 
   const result: Node<NodeData>[] = [];
   const seen = new Set<string>();
@@ -75,7 +87,6 @@ function topoSort(nodes: Node<NodeData>[], edges: Edge[]): Node<NodeData>[] {
       if (nd === 0) queue.push(childId);
     }
   }
-  nodes.forEach(n => { if (!seen.has(n.id)) result.push(n); });
   return result;
 }
 
@@ -300,9 +311,11 @@ function genBrowserActionBlock(
     switch (appAction) {
       case 'screenshot_page': {
         lines.push(`# Browser: take screenshot (requires: pip install playwright && playwright install chromium)`);
-        lines.push(`import base64 as _b64_${varName}`);
+        lines.push(`import base64 as _b64_${varName}, re as _re_${varName}`);
         lines.push(`from playwright.async_api import async_playwright`);
-        lines.push(`_pw_url_${varName} = ${urlExpr}`);
+        lines.push(`_pw_url_${varName} = str(${urlExpr}).strip()`);
+        lines.push(`_m_${varName} = _re_${varName}.search(r"https?://[^\\s<>]+", _pw_url_${varName})`);
+        lines.push(`_pw_url_${varName} = _m_${varName}.group(0).rstrip('.,;:)') if _m_${varName} else ('https://' + _pw_url_${varName} if _pw_url_${varName} and not _pw_url_${varName}.startswith(('http://', 'https://')) else _pw_url_${varName})`);
         lines.push(`async with async_playwright() as _pw_${varName}:`);
         lines.push(`    _browser_${varName} = await _pw_${varName}.chromium.launch(headless=True)`);
         lines.push(`    _ctx_${varName} = await _browser_${varName}.new_context(viewport={"width": 1280, "height": 800})`);
@@ -316,8 +329,11 @@ function genBrowserActionBlock(
       }
       case 'scrape_page': {
         lines.push(`# Browser: scrape page text (requires: pip install playwright && playwright install chromium)`);
+        lines.push(`import re as _re_${varName}`);
         lines.push(`from playwright.async_api import async_playwright`);
-        lines.push(`_pw_url_${varName} = ${urlExpr}`);
+        lines.push(`_pw_url_${varName} = str(${urlExpr}).strip()`);
+        lines.push(`_m_${varName} = _re_${varName}.search(r"https?://[^\\s<>]+", _pw_url_${varName})`);
+        lines.push(`_pw_url_${varName} = _m_${varName}.group(0).rstrip('.,;:)') if _m_${varName} else ('https://' + _pw_url_${varName} if _pw_url_${varName} and not _pw_url_${varName}.startswith(('http://', 'https://')) else _pw_url_${varName})`);
         lines.push(`async with async_playwright() as _pw_${varName}:`);
         lines.push(`    _browser_${varName} = await _pw_${varName}.chromium.launch(headless=True)`);
         lines.push(`    _ctx_${varName} = await _browser_${varName}.new_context()`);
@@ -330,8 +346,11 @@ function genBrowserActionBlock(
       }
       case 'browse_and_summarize': {
         lines.push(`# Browser: browse and summarize (requires: pip install playwright && playwright install chromium)`);
+        lines.push(`import re as _re_${varName}`);
         lines.push(`from playwright.async_api import async_playwright`);
-        lines.push(`_pw_url_${varName} = ${urlExpr}`);
+        lines.push(`_pw_url_${varName} = str(${urlExpr}).strip()`);
+        lines.push(`_m_${varName} = _re_${varName}.search(r"https?://[^\\s<>]+", _pw_url_${varName})`);
+        lines.push(`_pw_url_${varName} = _m_${varName}.group(0).rstrip('.,;:)') if _m_${varName} else ('https://' + _pw_url_${varName} if _pw_url_${varName} and not _pw_url_${varName}.startswith(('http://', 'https://')) else _pw_url_${varName})`);
         lines.push(`async with async_playwright() as _pw_${varName}:`);
         lines.push(`    _browser_${varName} = await _pw_${varName}.chromium.launch(headless=True)`);
         lines.push(`    _ctx_${varName} = await _browser_${varName}.new_context()`);
@@ -370,8 +389,9 @@ function genBrowserActionBlock(
     switch (appAction) {
       case 'screenshot_page': {
         lines.push(`// Browser: take screenshot (requires: npm install playwright && npx playwright install chromium)`);
-        lines.push(`const { chromium: _chromium_${varName} } = require('playwright');`);
-        lines.push(`const _url_${varName} = ${urlExpr};`);
+        lines.push(`const { chromium: _chromium_${varName} } = await import('playwright');`);
+        lines.push(`let _url_${varName} = String(${urlExpr}).trim();`);
+        lines.push(`if (_url_${varName} && !_url_${varName}.startsWith('http://') && !_url_${varName}.startsWith('https://')) _url_${varName} = 'https://' + _url_${varName};`);
         lines.push(`const _browser_${varName} = await _chromium_${varName}.launch({ headless: true });`);
         lines.push(`const _ctx_${varName} = await _browser_${varName}.newContext({ viewport: { width: 1280, height: 800 } });`);
         lines.push(`const _page_${varName} = await _ctx_${varName}.newPage();`);
@@ -385,8 +405,9 @@ function genBrowserActionBlock(
       }
       case 'scrape_page': {
         lines.push(`// Browser: scrape page text (requires: npm install playwright && npx playwright install chromium)`);
-        lines.push(`const { chromium: _chromium_${varName} } = require('playwright');`);
-        lines.push(`const _url_${varName} = ${urlExpr};`);
+        lines.push(`const { chromium: _chromium_${varName} } = await import('playwright');`);
+        lines.push(`let _url_${varName} = String(${urlExpr}).trim();`);
+        lines.push(`if (_url_${varName} && !_url_${varName}.startsWith('http://') && !_url_${varName}.startsWith('https://')) _url_${varName} = 'https://' + _url_${varName};`);
         lines.push(`const _browser_${varName} = await _chromium_${varName}.launch({ headless: true });`);
         lines.push(`const _ctx_${varName} = await _browser_${varName}.newContext();`);
         lines.push(`const _page_${varName} = await _ctx_${varName}.newPage();`);
@@ -398,8 +419,9 @@ function genBrowserActionBlock(
       }
       case 'browse_and_summarize': {
         lines.push(`// Browser: browse and summarize (requires: npm install playwright && npx playwright install chromium)`);
-        lines.push(`const { chromium: _chromium_${varName} } = require('playwright');`);
-        lines.push(`const _url_${varName} = ${urlExpr};`);
+        lines.push(`const { chromium: _chromium_${varName} } = await import('playwright');`);
+        lines.push(`let _url_${varName} = String(${urlExpr}).trim();`);
+        lines.push(`if (_url_${varName} && !_url_${varName}.startsWith('http://') && !_url_${varName}.startsWith('https://')) _url_${varName} = 'https://' + _url_${varName};`);
         lines.push(`const _browser_${varName} = await _chromium_${varName}.launch({ headless: true });`);
         lines.push(`const _ctx_${varName} = await _browser_${varName}.newContext();`);
         lines.push(`const _page_${varName} = await _ctx_${varName}.newPage();`);
@@ -471,12 +493,18 @@ function genAppActionBlock(
   const { urlTemplate, method, envKey, authPrefix = 'Bearer', urlPathFields = [], bodyFields, extraHeaders = {} } = endpoint;
   const lines: string[] = [];
 
+  // Resolve upstream variable name for content-field injection
+  const incomingEdge = edges.find(e => e.target === node.id);
+  const upstreamVar = incomingEdge ? names[incomingEdge.source] : null;
+
   // ── Special multi-step providers ──────────────────────────────────
 
   if (appProvider === 'instagram' && appAction === 'create_post') {
     if (python) {
       const imageUrl = liftTemplate(appInputs['imageUrl'] || '', names, lib);
-      const caption = liftTemplate(appInputs['caption'] || '', names, lib);
+      const caption = upstreamVar
+        ? `ctx['${upstreamVar}']['payload']`
+        : liftTemplate(appInputs['caption'] || '', names, lib);
       if (lib === 'httpx') {
         lines.push(`# Step 1: create media container`);
         lines.push(`with httpx.Client() as _${varName}_c:`);
@@ -532,7 +560,9 @@ function genAppActionBlock(
     } else {
       // JS/TS instagram
       const imageUrl = liftTemplate(appInputs['imageUrl'] || '', names, lib);
-      const caption = liftTemplate(appInputs['caption'] || '', names, lib);
+      const caption = upstreamVar
+        ? `ctx['${upstreamVar}']?.payload`
+        : liftTemplate(appInputs['caption'] || '', names, lib);
       const tok = `process.env.${envKey} ?? ''`;
       if (lib === 'axios') {
         lines.push(`// Step 1: create media container`);
@@ -565,7 +595,9 @@ function genAppActionBlock(
   }
 
   if (appProvider === 'linkedin' && appAction === 'create_post') {
-    const text = liftTemplate(appInputs['text'] || '', names, lib);
+    const text = upstreamVar
+      ? (python ? `ctx['${upstreamVar}']['payload']` : `ctx['${upstreamVar}']?.payload`)
+      : liftTemplate(appInputs['text'] || '', names, lib);
     if (python) {
       const tok = `os.environ.get('${envKey}', '')`;
       const headers = `{'Authorization': f'Bearer {${tok}}', 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0'}`;
@@ -670,7 +702,9 @@ function genAppActionBlock(
 
   if (appProvider === 'medium' && appAction === 'create_post') {
     const title = liftTemplate(appInputs['title'] || '', names, lib);
-    const content = liftTemplate(appInputs['content'] || '', names, lib);
+    const content = upstreamVar
+      ? (python ? `ctx['${upstreamVar}']['payload']` : `ctx['${upstreamVar}']?.payload`)
+      : liftTemplate(appInputs['content'] || '', names, lib);
     const contentFormat = liftTemplate(appInputs['contentFormat'] || 'markdown', names, lib);
     if (python) {
       const tok = `os.environ.get('${envKey}', '')`;
@@ -765,12 +799,24 @@ function genAppActionBlock(
   let urlStr = urlTemplate;
   for (const field of urlPathFields) {
     const placeholder = field.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase();
-    const raw = appInputs[field] || '';
-    const lifted = liftTemplate(raw, names, lib);
+    const raw = (appInputs[field] || '').trim();
     if (python) {
-      const inner = lifted.startsWith('f"') ? lifted.slice(2, -1) : lifted.slice(1, -1);
-      urlStr = urlStr.replace(`{${placeholder}}`, inner ? `{${inner}}` : placeholder);
+      if (raw.includes('{{')) {
+        // Template ref: lift and extract just the inner f-string body (strip f""" / """ wrappers)
+        const lifted = liftTemplate(raw, names, lib);
+        let inner: string;
+        if (lifted.startsWith('f"""')) inner = lifted.slice(4, -3);
+        else if (lifted.startsWith('f"')) inner = lifted.slice(2, -1);
+        else if (lifted.startsWith('"""')) inner = lifted.slice(3, -3);
+        else inner = lifted.slice(1, -1);
+        urlStr = urlStr.replace(`{${placeholder}}`, inner || placeholder);
+      } else {
+        // Literal value: embed directly so no f-string expression wrapper is needed
+        urlStr = urlStr.replace(`{${placeholder}}`, raw || placeholder);
+      }
     } else {
+      // JS/TS: wrap non-literal values in ${...}; literals evaluate fine in template literals too
+      const lifted = liftTemplate(raw, names, lib);
       const inner = lifted.startsWith('`') ? lifted.slice(1, -1) : lifted.slice(1, -1);
       urlStr = urlStr.replace(`{${placeholder}}`, inner ? `\${${inner}}` : placeholder);
     }
@@ -793,7 +839,9 @@ function genAppActionBlock(
       if (appProvider === 'notion' && appAction === 'create_page') {
         const dbId = liftTemplate(appInputs['databaseId'] || '', names, lib);
         const title = liftTemplate(appInputs['title'] || '', names, lib);
-        const content = liftTemplate(appInputs['content'] || '', names, lib);
+        const content = upstreamVar
+          ? `ctx['${upstreamVar}']['payload']`
+          : liftTemplate(appInputs['content'] || '', names, lib);
         lines.push(`${varName}_body = {`);
         lines.push(`    'parent': {'database_id': ${dbId}},`);
         lines.push(`    'properties': {'title': {'title': [{'text': {'content': ${title}}}]}},`);
@@ -802,7 +850,10 @@ function genAppActionBlock(
       } else {
         lines.push(`${varName}_body = {`);
         for (const f of bodyFields) {
-          lines.push(`    '${f}': ${liftTemplate(appInputs[f] || '', names, lib)},`);
+          const val = (upstreamVar && CONTENT_FIELD_KEYS.has(f))
+            ? `ctx['${upstreamVar}']['payload']`
+            : liftTemplate(appInputs[f] || '', names, lib);
+          lines.push(`    '${f}': ${val},`);
         }
         lines.push(`}`);
       }
@@ -850,7 +901,9 @@ function genAppActionBlock(
       if (appProvider === 'notion' && appAction === 'create_page') {
         const dbId = liftTemplate(appInputs['databaseId'] || '', names, lib);
         const title = liftTemplate(appInputs['title'] || '', names, lib);
-        const content = liftTemplate(appInputs['content'] || '', names, lib);
+        const content = upstreamVar
+          ? `ctx['${upstreamVar}']?.payload`
+          : liftTemplate(appInputs['content'] || '', names, lib);
         lines.push(`const ${varName}_body = {`);
         lines.push(`  parent: { database_id: ${dbId} },`);
         lines.push(`  properties: { title: { title: [{ text: { content: ${title} } }] } },`);
@@ -859,7 +912,10 @@ function genAppActionBlock(
       } else {
         lines.push(`const ${varName}_body = {`);
         for (const f of bodyFields) {
-          lines.push(`  ${f}: ${liftTemplate(appInputs[f] || '', names, lib)},`);
+          const val = (upstreamVar && CONTENT_FIELD_KEYS.has(f))
+            ? `ctx['${upstreamVar}']?.payload`
+            : liftTemplate(appInputs[f] || '', names, lib);
+          lines.push(`  ${f}: ${val},`);
         }
         lines.push(`};`);
       }
@@ -975,8 +1031,8 @@ function compileTypeScriptOrJS(
 
   for (const node of nodes) {
     const varName = names[node.id];
-    const label = node.data.label || node.type || varName;
-    code += `  // ── [${node.type}] ${label}\n`;
+    const resolvedLabel = node.type || varName;
+    code += `  // ── [${node.type}] ${resolvedLabel}\n`;
 
     switch (node.type) {
       case 'input':
@@ -1009,7 +1065,7 @@ function compileTypeScriptOrJS(
         const bodyExpr = bodyRaw ? liftTemplate(bodyRaw, names, lib) : null;
 
         if (!url) {
-          code += `  // WARNING: No endpoint URL configured for "${label}"\n`;
+          code += `  // WARNING: No endpoint URL configured for "${resolvedLabel}"\n`;
           code += `  ctx['${varName}'] = { type: 'data', payload: null };\n`;
         } else {
           code += genHttpBlock(lib, { method, url, extraHeaders, authType, authValue, body: bodyExpr, varName, ind: '  ' });
@@ -1110,7 +1166,7 @@ function compileTypeScriptOrJS(
   if (hasSchedule && triggerNode) {
     code += buildCronBlock(triggerNode, 'js');
   } else {
-    code += `// ── Run\nrunAgent('Hello')\n  .then(ctx => console.log(JSON.stringify(ctx, null, 2)))\n  .catch(console.error);\n`;
+    code += `// ── Run\nif (!process.env.AGENTFORGE_INPUT) throw new Error('AGENTFORGE_INPUT is required');\nrunAgent(process.env.AGENTFORGE_INPUT)\n  .then(ctx => console.log(JSON.stringify(ctx, null, 2)))\n  .catch(console.error);\n`;
   }
 
   return code;
@@ -1167,8 +1223,8 @@ function compilePython(
   code += defLine + '\n';
   code += `${ind}ctx = {'input': {'type': 'text', 'payload': initial_input}}\n\n`;
 
-  // For aiohttp, open a shared session around all HTTP calls
-  const aiohttpSession = isAsync && nodes.some(
+  // Only aiohttp needs a shared session wrapper; browser-action flows use requests/httpx directly
+  const aiohttpSession = lib === 'aiohttp' && nodes.some(
     n => (n.type === 'action' && n.data.url?.trim()) || n.type === 'app_action' || n.type === 'appaction'
   );
   if (aiohttpSession) code += `${ind}async with aiohttp.ClientSession() as _session:\n`;
@@ -1176,8 +1232,8 @@ function compilePython(
 
   for (const node of nodes) {
     const varName = names[node.id];
-    const label = node.data.label || node.type || varName;
-    code += `${nodeInd}# ── [${node.type}] ${label}\n`;
+    const resolvedLabel = node.type || varName;
+    code += `${nodeInd}# ── [${node.type}] ${resolvedLabel}\n`;
 
     switch (node.type) {
       case 'input':
@@ -1210,7 +1266,7 @@ function compilePython(
         const bodyExpr = bodyRaw ? liftTemplate(bodyRaw, names, lib) : null;
 
         if (!url) {
-          code += `${nodeInd}# WARNING: No endpoint URL configured for "${label}"\n`;
+          code += `${nodeInd}# WARNING: No endpoint URL configured for "${resolvedLabel}"\n`;
           code += `${nodeInd}ctx['${varName}'] = {'type': 'data', 'payload': None}\n`;
         } else {
           code += genHttpBlock(lib, { method, url, extraHeaders, authType, authValue, body: bodyExpr, varName, ind: nodeInd });
@@ -1313,21 +1369,30 @@ function compilePython(
   if (hasSchedule && triggerNode) {
     code += buildCronBlock(triggerNode, 'python', isAsync);
   } else if (isAsync) {
-    code += `    import asyncio\n`;
-    code += `    try:\n`;
-    code += `        # Standard standalone execution\n`;
-    code += `        result = asyncio.run(run_agent("Hello"))\n`;
-    code += `        print(json.dumps(result, indent=2, default=str))\n`;
-    code += `    except RuntimeError:\n`;
-    code += `        # Fallback for environments with an existing event loop (E2B/Jupyter)\n`;
-    code += `        loop = asyncio.get_event_loop()\n`;
-    code += `        if loop.is_running():\n`;
-    code += `            loop.create_task(run_agent("Hello"))\n`;
-    code += `        else:\n`;
-    code += `            result = loop.run_until_complete(run_agent("Hello"))\n`;
-    code += `            print(json.dumps(result, indent=2, default=str))\n`;
+    // Run async agent in a dedicated thread with its own event loop.
+    // This works both locally and inside E2B / Jupyter kernels that already
+    // have a running event loop (where asyncio.run() would raise RuntimeError).
+    code += `    _initial = os.environ.get('AGENTFORGE_INPUT')\n`;
+    code += `    if not _initial:\n        raise RuntimeError('AGENTFORGE_INPUT is required')\n`;
+    code += `    import threading as _threading\n`;
+    code += `    _result_box: dict = {}\n`;
+    code += `    def _run_agent_thread():\n`;
+    code += `        import asyncio as _asyncio\n`;
+    code += `        _loop = _asyncio.new_event_loop()\n`;
+    code += `        _asyncio.set_event_loop(_loop)\n`;
+    code += `        try:\n`;
+    code += `            _result_box['v'] = _loop.run_until_complete(run_agent(_initial))\n`;
+    code += `        finally:\n`;
+    code += `            _loop.close()\n`;
+    code += `    _t = _threading.Thread(target=_run_agent_thread, daemon=True)\n`;
+    code += `    _t.start()\n`;
+    code += `    _t.join(timeout=55)\n`;
+    code += `    result = _result_box.get('v', {})\n`;
+    code += `    print(json.dumps(result, indent=2, default=str))\n`;
   } else {
-    code += `    result = run_agent("Hello")\n`;
+    code += `    _initial = os.environ.get('AGENTFORGE_INPUT')\n`;
+    code += `    if not _initial:\n        raise RuntimeError('AGENTFORGE_INPUT is required')\n`;
+    code += `    result = run_agent(_initial)\n`;
     code += `    print(json.dumps(result, indent=2, default=str))\n`;
   }
 

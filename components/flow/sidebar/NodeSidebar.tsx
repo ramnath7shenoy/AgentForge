@@ -136,7 +136,7 @@ const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas, isOwner = true
   }, [isOwner, activeTab]);
 
   // Vault state
-  const { entries, addEntry, removeEntry } = useVaultStore();
+  const { entries, addEntry, removeEntry, preferredProvider, setPreferredProvider } = useVaultStore();
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
 
@@ -616,6 +616,25 @@ const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas, isOwner = true
                 <p className="text-[10px] mt-1 italic">Add keys above to reference them in nodes</p>
               </div>
             )}
+          </div>
+
+          {/* Preferred LLM Provider */}
+          <div className="py-3 border-t border-border flex flex-col gap-2">
+            <label className="text-[10px] font-bold uppercase text-slate-500 tracking-widest">Preferred AI Provider</label>
+            <p className="text-[9px] text-muted-foreground italic">
+              AI Brain nodes use this provider first. Falls back to priority scan if key is missing.
+            </p>
+            <select
+              value={preferredProvider || "auto"}
+              onChange={(e) => setPreferredProvider(e.target.value === "auto" ? null : e.target.value)}
+              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-cyan-500/20 outline-none text-foreground"
+            >
+              <option value="auto">Auto (priority scan)</option>
+              <option value="groq">Groq</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="gemini">Gemini</option>
+            </select>
           </div>
         </div>
       )}

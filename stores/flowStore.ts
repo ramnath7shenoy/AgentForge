@@ -338,10 +338,20 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
   },
 
   deleteNode: (nodeId: string) => {
-    const { nodes, edges } = get();
+    const { nodes, edges, nodeStatuses, nodeOutputs, executedNodeIds, executionResult } = get();
+    const nextNodeStatuses = { ...nodeStatuses };
+    delete nextNodeStatuses[nodeId];
+    const nextNodeOutputs = { ...nodeOutputs };
+    delete nextNodeOutputs[nodeId];
+    const nextExecutionResult = executionResult ? { ...executionResult } : {};
+    delete nextExecutionResult[nodeId];
     set({
       nodes: nodes.filter(n => n.id !== nodeId),
-      edges: edges.filter(e => e.source !== nodeId && e.target !== nodeId)
+      edges: edges.filter(e => e.source !== nodeId && e.target !== nodeId),
+      nodeStatuses: nextNodeStatuses,
+      nodeOutputs: nextNodeOutputs,
+      executedNodeIds: executedNodeIds.filter(id => id !== nodeId),
+      executionResult: nextExecutionResult,
     });
   },
 
