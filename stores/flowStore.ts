@@ -1,16 +1,25 @@
 "use client";
 
 import { create } from "zustand";
+import { liveblocks } from "@liveblocks/zustand";
+import type { WithLiveblocks } from "@liveblocks/zustand";
+import { liveblocksClient } from "@/lib/liveblocks/client";
+import type { CollaborationCursor, CollaborationUser } from "@/liveblocks.config";
+import type { Json } from "@liveblocks/client";
 import type { ChatMessage } from "@/lib/flow/clientExecutor";
 import type { NodeExecutionStatus } from "@/types/flowStoreTypes";
-import { 
-  Node, 
-  Edge, 
-  applyNodeChanges, 
-  applyEdgeChanges, 
-  NodeChange, 
-  EdgeChange 
+import {
+  Node,
+  Edge,
+  applyNodeChanges,
+  applyEdgeChanges,
+  NodeChange,
+  EdgeChange
 } from "reactflow";
+
+function cloneForRealtime<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value));
+}
 
 import {
   ExecutionContext,
@@ -57,6 +66,13 @@ export interface ExtendedFlowState extends FlowState {
   triggerNode: (nodeId: string) => Promise<void>;
   isDryRun: boolean;
   setIsDryRun: (value: boolean) => void;
+  // Collaboration
+  collaborationCursor: CollaborationCursor;
+  collaborationUser: CollaborationUser | null;
+  hoveredNodeId: string | null;
+  setCollaborationCursor: (cursor: CollaborationCursor) => void;
+  setCollaborationUser: (user: CollaborationUser | null) => void;
+  setHoveredNodeId: (id: string | null) => void;
 }
 
 import {
@@ -83,7 +99,26 @@ export function isAwaitingApproval() { return isApprovalPending(); }
 
 export const AUTOSAVE_KEY = "agentforge_flow_autosave";
 
-export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
+type FlowPresence = {
+  collaborationCursor: CollaborationCursor;
+  collaborationUser: CollaborationUser | null;
+  hoveredNodeId: string | null;
+  selectedNodeId: string | null;
+};
+
+type FlowStorage = {
+  nodes: Json;
+  edges: Json;
+};
+
+type FlowUserMeta = {
+  id: string;
+  info: { name?: string; color?: string; email?: string | null; isGuest?: boolean };
+};
+
+export const useFlowStore = create<WithLiveblocks<ExtendedFlowState, FlowPresence, FlowStorage, FlowUserMeta>>()(
+  liveblocks(
+  (set, get) => ({
   webhookPayloadWarning: null as { nodeId: string; label: string } | null,
   setWebhookPayloadWarning: (v: { nodeId: string; label: string } | null) =>
     set({ webhookPayloadWarning: v } as any),
@@ -238,12 +273,20 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
     });
   },
 
+  // Collaboration state
+  collaborationCursor: null,
+  collaborationUser: null,
+  hoveredNodeId: null,
+  setCollaborationCursor: (cursor) => set({ collaborationCursor: cursor }),
+  setCollaborationUser: (user) => set({ collaborationUser: user }),
+  setHoveredNodeId: (id) => set({ hoveredNodeId: id }),
+
   // --- STANDARD ACTIONS ---
   // chatHistory is intentionally NOT cleared here so conversation persists
   // across node reloads and AI-Build regenerations within the same session.
   // Use clearChatHistory() or clearCanvas() for an explicit conversation reset.
-  setNodes: (nodes) => set({ nodes }),
-  setEdges: (edges) => set({ edges }),
+  setNodes: (nodes) => set({ nodes: cloneForRealtime(nodes) }),
+  setEdges: (edges) => set({ edges: cloneForRealtime(edges) }),
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
   setRunning: (running) => set({ running }),
   setActiveProject: (project) => {
@@ -1144,4 +1187,18 @@ export const useFlowStore = create<ExtendedFlowState>((set, get) => ({
       }
     }
   },
-}));
+  }),
+  {
+    client: liveblocksClient,
+    presenceMapping: {
+      collaborationCursor: true,
+      collaborationUser: true,
+      hoveredNodeId: true,
+      selectedNodeId: true,
+    },
+    storageMapping: {
+      nodes: true,
+      edges: true,
+    },
+  }
+));

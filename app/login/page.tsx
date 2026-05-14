@@ -84,7 +84,7 @@ function LoginContent() {
               },
             },
           }}
-          providers={['google', 'github', 'apple']}
+          providers={['google', 'github']}
           redirectTo={`${typeof window !== "undefined" ? window.location.origin : ""}/auth/callback`}
         />
       </div>

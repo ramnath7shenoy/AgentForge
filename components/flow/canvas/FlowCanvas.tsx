@@ -9,6 +9,7 @@ import ReactFlow, {
   Background,
   BackgroundVariant,
   useReactFlow,
+  useViewport,
   applyNodeChanges,
   applyEdgeChanges,
   addEdge,
@@ -44,12 +45,17 @@ import AppActionNode from "../nodes/AppActionNode";
 // Module-level map stores each node's position at drag-start for position-change detection.
 const preDragPositions = new Map<string, { x: number; y: number }>();
 
+function getOtherUser(other: any) {
+  return other?.info || other?.presence?.collaborationUser || { name: "Guest", color: "#64748b" };
+}
+
 interface FlowCanvasProps {
   setSelectedNodeId: (id: string | null) => void;
   editable?: boolean;
+  collaborationEnabled?: boolean;
 }
 
-export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowCanvasProps) {
+export default function FlowCanvas({ setSelectedNodeId, editable = true, collaborationEnabled = false }: FlowCanvasProps) {
   const nodesFromStore = useFlowStore((state) => state.nodes);
   const nodes = useMemo(() => nodesFromStore || [], [nodesFromStore]);
   const edgesFromStore = useFlowStore((state) => state.edges);
@@ -58,7 +64,11 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
   const { setNodes, setEdges, addNode, activeEdgeId, showMinimap, tutorialStep, setTutorialStep, takeSnapshot, discardLastSnapshot, onNodeDragStop: storeDragStop, applyAutoLayout, layoutDirection } = useFlowStore();
   const nodeStatuses = useFlowStore((state) => state.nodeStatuses);
   const lastAction = useFlowStore((state) => state.lastAction);
+  const others = useFlowStore((state) => (state as any).liveblocks?.others ?? []);
+  const setCollaborationCursor = useFlowStore((state) => state.setCollaborationCursor);
+  const setHoveredNodeId = useFlowStore((state) => state.setHoveredNodeId);
   const { project, fitView } = useReactFlow();
+  const viewport = useViewport();
 
   // Auto-fit view when subagents are wrapped/unwrapped
   useEffect(() => {
@@ -201,12 +211,28 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
     }
   }, [project, nodes, setNodes, tutorialStep, setTutorialStep]);
 
+  const handlePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!collaborationEnabled) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const position = project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+    setCollaborationCursor({ x: position.x, y: position.y });
+  }, [collaborationEnabled, project, setCollaborationCursor]);
+
+  const handlePointerLeave = useCallback(() => {
+    if (!collaborationEnabled) return;
+    setCollaborationCursor(null);
+    setHoveredNodeId(null);
+  }, [collaborationEnabled, setCollaborationCursor, setHoveredNodeId]);
+
   return (
-    <div 
+    <div
       className={cn(
         "w-full h-full transition-colors duration-300",
         "bg-background"
-      )} 
+      )}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={handlePointerLeave}
+      style={{ position: "relative" }}
       onDragOver={editable ? (e) => e.preventDefault() : undefined} 
       onDrop={editable ? onDrop : undefined}
     >
@@ -240,6 +266,8 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
         onNodeDragStart={editable ? onNodeDragStart : undefined}
         onNodeDragStop={editable ? onNodeDragStop : undefined}
         onNodeClick={(_, n) => setSelectedNodeId(n.id)}
+        onNodeMouseEnter={collaborationEnabled ? (_, n) => setHoveredNodeId(n.id) : undefined}
+        onNodeMouseLeave={collaborationEnabled ? () => setHoveredNodeId(null) : undefined}
         onPaneClick={() => fitView({ duration: 800, padding: 0.15 })}
         nodesDraggable={editable}
         nodesConnectable={editable}
@@ -304,6 +332,39 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true }: FlowC
           />
         )}
       </ReactFlow>
+
+      {collaborationEnabled && (
+        <div className="pointer-events-none absolute inset-0 z-[1000] overflow-hidden">
+          {others.map((other: any) => {
+            const cursor = other?.presence?.collaborationCursor;
+            if (!cursor) return null;
+            const user = getOtherUser(other);
+            const hoveredNodeId = other?.presence?.hoveredNodeId;
+            const hoveredNode = hoveredNodeId ? nodes.find((n) => n.id === hoveredNodeId) : null;
+            const hoveredLabel = hoveredNode?.data?.label || hoveredNode?.type;
+            const cursorX = cursor.x * viewport.zoom + viewport.x;
+            const cursorY = cursor.y * viewport.zoom + viewport.y;
+            return (
+              <div
+                key={other.connectionId ?? user.name}
+                className="absolute left-0 top-0 flex items-start gap-1"
+                style={{ transform: `translate3d(${cursorX}px, ${cursorY}px, 0)` }}
+              >
+                <div
+                  className="h-3 w-3 rotate-45 border border-white shadow-sm"
+                  style={{ backgroundColor: user.color }}
+                />
+                <span
+                  className="rounded-md px-1.5 py-0.5 text-[10px] font-bold text-white shadow-lg"
+                  style={{ backgroundColor: user.color }}
+                >
+                  {hoveredLabel ? `${user.name} on ${hoveredLabel}` : user.name}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

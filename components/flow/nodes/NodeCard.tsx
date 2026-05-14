@@ -24,6 +24,11 @@ export const NodeCard: React.FC<{
   const theme = useFlowStore((state) => state.theme);
   const nodeStatus = useFlowStore((state) => state.nodeStatuses[nodeId]);
   const triggerNode = useFlowStore((state) => state.triggerNode);
+  const others = useFlowStore((state) => (state as any).liveblocks?.others ?? []);
+
+  const hoveringUsers = others
+    .filter((other: any) => other?.presence?.hoveredNodeId === nodeId)
+    .map((other: any) => other?.info || other?.presence?.collaborationUser || { name: "Guest", color: "#64748b" });
   const isActive = highlightedNodeId === nodeId;
   const isSkipped = nodeStatus === "skipped";
   const isRunning = nodeStatus === "running";
@@ -78,6 +83,20 @@ export const NodeCard: React.FC<{
       onBlur={handleBlur}
       className={cn("bg-transparent !border-0 transition-opacity duration-300", isSkipped && "opacity-40")}
     >
+      {hoveringUsers.length > 0 && (
+        <div className="pointer-events-none absolute -top-7 right-2 z-[100] flex items-center gap-1">
+          {hoveringUsers.slice(0, 3).map((user: any, i: number) => (
+            <span
+              key={`${user.name}-${i}`}
+              className="rounded-full border border-white/20 px-2 py-1 text-[10px] font-bold text-white shadow-lg"
+              style={{ backgroundColor: user.color }}
+            >
+              {user.name} hovering
+            </span>
+          ))}
+        </div>
+      )}
+
       <div
         className={cn(
           "relative min-w-[180px] rounded-xl border px-5 py-4 shadow-2xl transition-all duration-300",

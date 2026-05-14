@@ -23,9 +23,12 @@ import NodeSettingsSidebar from "@/components/flow/sidebar/NodeSettingsSidebar";
 import ResponseGallery from "@/components/flow/ResponseGallery";
 import ApprovalBanner from "@/components/flow/ApprovalBanner";
 import Navbar from "@/components/ui/Navbar";
+import FlowCollaboration from "@/components/flow/collaboration/FlowCollaboration";
+import CollaborationStatus from "@/components/flow/collaboration/CollaborationStatus";
 
 import { useFlowStore } from "@/stores/flowStore";
 import { saveSharedFlow } from "@/app/actions/flow";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { ReactFlowProvider } from "reactflow";
 
@@ -56,6 +59,12 @@ function SharedEditor({ flow, editable }: SharedViewContentProps) {
   const [showTerminal, setShowTerminal] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error" | "">("");
   const [hasHydrated, setHasHydrated] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data: { user } }) => setCurrentUser(user ?? null));
+  }, []);
 
   // Initial Hydration from the server-passed flow
   useEffect(() => {
@@ -148,6 +157,7 @@ function SharedEditor({ flow, editable }: SharedViewContentProps) {
         </div>
 
         <div className="flex items-center gap-3">
+          <CollaborationStatus />
           <button
             onClick={() => simulateFlow(startNodeId)}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
@@ -194,7 +204,16 @@ function SharedEditor({ flow, editable }: SharedViewContentProps) {
 
         {/* CANVAS */}
         <main className="flex-1 relative bg-slate-50 dark:bg-[#0b0e14]">
-          <FlowCanvas setSelectedNodeId={setSelectedNodeId} editable={editable} />
+          <FlowCollaboration
+            flowId={flow.id}
+            enabled={hasHydrated && !!flow.id}
+            displayName={currentUser?.user_metadata?.full_name ?? currentUser?.email ?? null}
+          />
+          <FlowCanvas
+            setSelectedNodeId={setSelectedNodeId}
+            editable={editable}
+            collaborationEnabled={hasHydrated && !!flow.id}
+          />
 
           {/* APPROVAL BANNER */}
           <ApprovalBanner />

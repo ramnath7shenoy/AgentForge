@@ -45,6 +45,8 @@ import ResponseGallery from "@/components/flow/ResponseGallery";
 import ApprovalBanner from "@/components/flow/ApprovalBanner";
 import ChatHub from "@/components/flow/chat/ChatHub";
 import ModelFallbackToast from "@/components/ui/ModelFallbackToast";
+import FlowCollaboration from "@/components/flow/collaboration/FlowCollaboration";
+import CollaborationStatus from "@/components/flow/collaboration/CollaborationStatus";
 
 import { useFlowStore, isAwaitingApproval } from "@/stores/flowStore";
 import { useVaultStore } from "@/stores/vaultStore";
@@ -325,7 +327,10 @@ function EditorContent() {
           if (result.success) {
             setSaveStatus("saved");
             setSaveError(null);
-            if (result.flow && !currentFlowId) setCurrentFlowId(result.flow.id);
+            if (result.flow && !currentFlowId) {
+              setCurrentFlowId(result.flow.id);
+              router.replace(`/editor?id=${result.flow.id}`, { scroll: false });
+            }
           } else {
             console.error("FRONTEND_SAVE_ERROR:", result.error);
             setSaveStatus("error");
@@ -485,7 +490,10 @@ function EditorContent() {
         const result = await saveFlow(userId, template.name, JSON.stringify(template.nodes), JSON.stringify(template.edges), currentFlowId, isPublic, publicEditable, activeProject?.id);
         if (result.success) {
           setSaveStatus("saved");
-          if (result.flow && !currentFlowId) setCurrentFlowId(result.flow.id);
+          if (result.flow && !currentFlowId) {
+            setCurrentFlowId(result.flow.id);
+            router.replace(`/editor?id=${result.flow.id}`, { scroll: false });
+          }
         } else setSaveStatus("error");
       } else {
         localStorage.setItem(LS_GUEST_FLOW_KEY, JSON.stringify({ nodes: template.nodes, edges: template.edges }));
@@ -1046,6 +1054,9 @@ function EditorContent() {
             )}
           </div>
 
+          {/* COLLABORATION STATUS */}
+          <CollaborationStatus />
+
           <div className="h-6 w-[1px] bg-slate-200 dark:bg-slate-800 mx-1" />
 
           {/* 6. ACCOUNT UI DROPDOWN */}
@@ -1147,7 +1158,15 @@ function EditorContent() {
 
         {/* CANVAS */}
         <main className="flex-1 relative bg-background">
-          <FlowCanvas setSelectedNodeId={setSelectedNodeId} />
+          <FlowCollaboration
+            flowId={currentFlowId}
+            enabled={hasHydrated && !!currentFlowId && !!userId}
+            displayName={user?.user_metadata?.full_name ?? user?.email ?? null}
+          />
+          <FlowCanvas
+            setSelectedNodeId={setSelectedNodeId}
+            collaborationEnabled={hasHydrated && !!currentFlowId && !!userId}
+          />
 
           {/* SHIMMER OVERLAY (Generating AI) */}
           <AnimatePresence>
