@@ -35,6 +35,7 @@ export default async function StorePage() {
     isMultimodal: detectMultimodal(f.nodes),
     nodes: Array.isArray(f.nodes) ? f.nodes : [],
     edges: Array.isArray(f.edges) ? f.edges : [],
+    viewCount: f.viewCount ?? 0,
   }));
 
   return (

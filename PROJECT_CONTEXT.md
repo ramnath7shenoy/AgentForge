@@ -1,7 +1,7 @@
 # PROJECT_CONTEXT.md
 
 ## Stack
-Next.js 15 App Router · React 19 · Tailwind 4 · shadcn/ui · Framer Motion 12 · ReactFlow 11 · Zustand 5 · Supabase + Prisma 7 · TypeScript 5 strict · E2B `@e2b/code-interpreter` v2
+Next.js 15 App Router · React 19 · Tailwind 4 · shadcn/ui · Framer Motion 12 · ReactFlow 11 · Zustand 5 · Supabase + Prisma 7 · TypeScript 5 strict · E2B `@e2b/code-interpreter` v2 · Liveblocks v3 (`@liveblocks/client`, `@liveblocks/node`, `@liveblocks/zustand`)
 
 AI providers: Gemini · Groq · OpenAI · Anthropic (auto-detected via vault key prefix)
 
@@ -24,12 +24,20 @@ app/
   publish/page.tsx       # Publish & Export: Mirror Mode sandbox, polyglot codegen, flowId-keyed localStorage
   sandbox/[id]/
     page.tsx / SandboxClient.tsx   # Server-rendered sandbox with API key config
-  dashboard/page.tsx · integrations/page.tsx · store/page.tsx
+  dashboard/page.tsx · integrations/page.tsx
+  store/
+    page.tsx          # Server component: fetches deployed flows, passes to StoreClient
+    StoreClient.tsx   # Category filter, search, Recent/Popular sort toggle
+    AgentGrid.tsx     # AgentCard grid; guest clone → localStorage["agentforge_guest_flow"] → /editor
+    WorkflowLightbox.tsx · CodeModal.tsx · ManagePanel.tsx
 
 components/flow/
   nodes/                 # One file per node type + NodeCard.tsx
   canvas/                # FlowCanvas, ReadOnlyCanvas
   chat/ChatHub.tsx
+  collaboration/
+    FlowCollaboration.tsx    # Manages enterRoom/leaveRoom lifecycle (pure side effect, returns null)
+    CollaborationStatus.tsx  # "Live"/"Syncing…" badge + avatar row for other users
   sidebar/
     NodeSettingsSidebar.tsx  # AppAction label auto-syncs to action.label on mount via useEffect
     NodeSidebar.tsx          # Vault tab: preferred provider dropdown
@@ -45,6 +53,9 @@ lib/
   providers/index.ts     # APP_REGISTRY (9 providers); CONTENT_FIELD_KEYS; isContent flag on fields
   codegen/templates.ts   # Polyglot codegen helpers; APP_PROVIDER_ENV_KEYS
   flowCompiler.ts        # topoSort skips isolated nodes; upstream ctx used for content fields
+  liveblocks/
+    client.ts            # createClient({ authEndpoint: "/api/liveblocks-auth" })
+    rooms.ts             # getFlowRoomId(flowId) → "flow:<uuid>"; getFlowIdFromRoom(roomId)
   generated/prisma/      # Regenerate with `npx prisma generate` if schema changes
 
 stores/
@@ -157,14 +168,56 @@ Entry points throw `RuntimeError`/`Error` if `AGENTFORGE_INPUT` env var is missi
 ---
 
 ## Auth & Persistence
-- Supabase OAuth (Google, GitHub, Apple) + magic link
+- Supabase OAuth (Google, GitHub) + magic link  ← Apple removed
 - Flows/Projects/Integrations/Vault → Prisma → Postgres
 - Guest mode: localStorage; auto-migrated on login
 - Auto-save: debounced 2s
 - **Prisma schema change → must run `npx prisma generate`** to update `lib/generated/prisma/`
 
+---
+
+## Real-Time Collaboration (Liveblocks)
+
+**Config:** `liveblocks.config.ts` — global `Presence` (cursor x/y, hoveredNodeId, user metadata), `Storage` (nodes/edges LiveList), `UserMeta` types.
+
+**Auth:** `app/api/liveblocks-auth/route.ts` — POST, checks Supabase session + Prisma flow ownership.
+- Owner → `FULL_ACCESS`
+- Public + editable → `FULL_ACCESS`
+- Public read-only → `READ_ACCESS`
+- Private (non-owner) → 403
+
+**Room ID:** `"flow:<uuid>"` — keyed per flow. `getFlowRoomId` / `getFlowIdFromRoom` in `lib/liveblocks/rooms.ts`.
+
+**Store:** `flowStore.ts` wrapped with `liveblocks()` middleware. `presenceMapping` syncs cursor + hoveredNodeId. `storageMapping` syncs nodes/edges.
+`cloneForRealtime<T>()` = `JSON.parse(JSON.stringify(value))` — strips non-serializable ReactFlow internal fields before pushing to Liveblocks storage.
+
+**Components:**
+- `FlowCollaboration` — mounts in editor and `/view/[id]`; calls `enterRoom`/`leaveRoom`. Pure side effect.
+- `CollaborationStatus` — toolbar badge: emerald "Live" pulse or amber "Syncing…"; avatar row for other users (up to 4 + "+N more"); dropdown lists users and their hovered node.
+- `FlowCanvas` — `collaborationEnabled` prop gates cursor overlay and pointer tracking. Remote cursors rendered with viewport transform: `cursorX = cursor.x * zoom + panX`.
+- `NodeCard` — shows colored "X hovering" badge above node when remote users have `hoveredNodeId === nodeId`.
+
+---
+
+## Agent Store
+
+Universal access — identical content for guests and logged-in users.
+
+**What guests can do:** Browse, Sandbox (`/sandbox/[id]`), view Workflow modal, view Code modal, Clone.
+**What requires login:** Deploy to Store only.
+
+**Guest clone flow:** `AgentGrid.tsx` detects `!currentUserId` → writes `{ nodes, edges }` to `localStorage["agentforge_guest_flow"]` → `router.push("/editor")`. Editor hydrates from that key on load.
+
+**View count:** Incremented on Sandbox / Workflow / Code button clicks via `incrementViewCount(flowId)` server action (fire-and-forget, silently ignores errors). Displayed as `<Eye> 1.2k` badge on card. Popular sort orders by `viewCount DESC`.
+
+**CodeModal disclaimer:** Amber bar between toolbar and code block warns users to manually review community-submitted code before local use.
+
+**Categories:** All · Vision (multimodal providers) · Text · Logic (router/decision nodes) · Productivity (trigger/action/webhook nodes). Sort: Recent (default, `updated_at DESC`) or Popular (`viewCount DESC`).
+
 ## Prisma Models
-`Flow` (nodes/edges JSON, isPublic, isDeployed) · `Project` · `Folder` · `Vault` · `Integration` (provider, accessToken, refreshToken; unique userId+provider)
+`Flow` (nodes/edges JSON, isPublic, isDeployed, isDeployed, viewCount, creatorName, description, thumbnail) · `Project` · `Folder` · `Vault` · `Integration` (provider, accessToken, refreshToken; unique userId+provider)
+
+`viewCount Int? @default(0) @map("view_count")` — incremented (atomic `{ increment: 1 }`) on Sandbox/Workflow/Code interactions in the store. DB column: `view_count`. **Requires SQL migration when first added:** `ALTER TABLE public.flows ADD COLUMN IF NOT EXISTS view_count INTEGER DEFAULT 0;`
 
 ---
 

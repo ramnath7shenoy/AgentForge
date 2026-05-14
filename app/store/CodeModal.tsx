@@ -217,6 +217,11 @@ export default function CodeModal({ open, onClose, flowName, nodes, edges }: Cod
           </div>
         </div>
 
+        {/* Disclaimer */}
+        <div className="shrink-0 px-5 py-2.5 bg-amber-500/5 border-b border-amber-500/15 text-[10px] text-amber-400/80 leading-relaxed">
+          <strong className="text-amber-500 uppercase tracking-tight">Note:</strong> This is community-submitted code. Manually review before local use — verify dependencies, API calls, and logic before running in your environment.
+        </div>
+
         {/* Code area */}
         <div className="flex-1 overflow-auto p-5 bg-[#090909]">
           <CodeBlock code={activeCode} lang={activeLang} />

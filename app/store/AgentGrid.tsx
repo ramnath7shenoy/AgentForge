@@ -12,8 +12,9 @@ import {
   ShoppingBag,
   Code2,
   Workflow,
+  Eye,
 } from "lucide-react";
-import { cloneFlow } from "@/app/actions/flow";
+import { cloneFlow, incrementViewCount } from "@/app/actions/flow";
 import { cn } from "@/lib/utils";
 import AgentVisual from "@/components/store/AgentVisual";
 import WorkflowLightbox from "./WorkflowLightbox";
@@ -31,6 +32,13 @@ export interface StoreFlow {
   isMultimodal: boolean;
   nodes: any[];
   edges: any[];
+  viewCount?: number | null;
+}
+
+function formatViews(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
 }
 
 function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: string | null }) {
@@ -48,6 +56,17 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
     e.preventDefault();
     e.stopPropagation();
     if (cloning || cloned) return;
+
+    if (!currentUserId) {
+      // Guest: save to localStorage and open editor directly
+      try {
+        localStorage.setItem("agentforge_guest_flow", JSON.stringify({ nodes: flow.nodes, edges: flow.edges }));
+      } catch { /* quota exceeded — proceed anyway */ }
+      setCloned(true);
+      setTimeout(() => router.push("/editor"), 700);
+      return;
+    }
+
     setCloning(true);
     setCloneError(null);
     try {
@@ -106,7 +125,7 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
             {flow.name || "Untitled Agent"}
           </h3>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-mono text-[9px] font-bold text-muted-foreground bg-muted border border-border px-1.5 py-0.5 rounded" title="Deployed by">
               by {creatorHandle}
             </span>
@@ -115,6 +134,12 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
                 month: "short", day: "numeric", year: "numeric",
               })}
             </span>
+            {(flow.viewCount ?? 0) > 0 && (
+              <span className="flex items-center gap-0.5 text-[9px] text-muted-foreground ml-auto">
+                <Eye size={9} />
+                {formatViews(flow.viewCount!)}
+              </span>
+            )}
           </div>
 
           {flow.description && (
@@ -128,7 +153,7 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
             {/* Row 1 */}
             <Link
               href={`/sandbox/${flow.id}`}
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); incrementViewCount(flow.id); }}
               className="flex items-center justify-center gap-1.5 py-2 rounded-xl border border-border text-[10px] font-bold text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-all"
             >
               <ExternalLink size={9} />
@@ -153,7 +178,7 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
 
             {/* Row 2 */}
             <button
-              onClick={(e) => { e.stopPropagation(); setWorkflowOpen(true); }}
+              onClick={(e) => { e.stopPropagation(); setWorkflowOpen(true); incrementViewCount(flow.id); }}
               className="flex items-center justify-center gap-1.5 py-2 rounded-xl border border-border text-[10px] font-bold text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-all"
             >
               <Workflow size={9} />
@@ -161,7 +186,7 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
             </button>
 
             <button
-              onClick={(e) => { e.stopPropagation(); setCodeOpen(true); }}
+              onClick={(e) => { e.stopPropagation(); setCodeOpen(true); incrementViewCount(flow.id); }}
               className="flex items-center justify-center gap-1.5 py-2 rounded-xl border border-sky-500/20 bg-sky-500/5 text-[10px] font-bold text-sky-600 dark:text-sky-400 hover:bg-sky-500/10 transition-all"
             >
               <Code2 size={9} />

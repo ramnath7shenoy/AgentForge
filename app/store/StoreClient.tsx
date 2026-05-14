@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from "react";
 import Link from "next/link";
-import { Search, Zap, ArrowRight, X } from "lucide-react";
+import { Search, Zap, ArrowRight, X, TrendingUp, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import AgentGrid, { type StoreFlow } from "./AgentGrid";
 
@@ -22,9 +22,12 @@ interface StoreClientProps {
   currentUserId: string | null;
 }
 
+type SortOrder = "recent" | "popular";
+
 export default function StoreClient({ flows, currentUserId }: StoreClientProps) {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<Category>("All");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("recent");
 
   const filtered = useMemo(() => {
     let result = flows;
@@ -38,8 +41,11 @@ export default function StoreClient({ flows, currentUserId }: StoreClientProps) 
         (f.description ?? "").toLowerCase().includes(q)
       );
     }
+    if (sortOrder === "popular") {
+      result = [...result].sort((a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0));
+    }
     return result;
-  }, [flows, activeCategory, search]);
+  }, [flows, activeCategory, search, sortOrder]);
 
   const categoryCounts = useMemo(() => {
     const counts: Record<Category, number> = { All: flows.length, Vision: 0, Text: 0, Logic: 0, Productivity: 0 };
@@ -140,6 +146,31 @@ export default function StoreClient({ flows, currentUserId }: StoreClientProps) 
               </span>
             </button>
           ))}
+
+          <div className="ml-auto flex items-center shrink-0 bg-muted/50 border border-border rounded-full p-0.5 gap-0.5">
+            <button
+              onClick={() => setSortOrder("recent")}
+              className={cn(
+                "flex items-center gap-1 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest transition-all",
+                sortOrder === "recent"
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Clock size={8} /> Recent
+            </button>
+            <button
+              onClick={() => setSortOrder("popular")}
+              className={cn(
+                "flex items-center gap-1 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest transition-all",
+                sortOrder === "popular"
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <TrendingUp size={8} /> Popular
+            </button>
+          </div>
         </div>
       </div>
 

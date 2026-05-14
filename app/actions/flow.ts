@@ -278,13 +278,24 @@ export async function getDeployedFlows() {
   try {
     const flows = await prisma.flow.findMany({
       where: { isDeployed: true, isPublic: true },
-      select: { id: true, name: true, description: true, thumbnail: true, userId: true, creatorName: true, updated_at: true, nodes: true, edges: true },
+      select: { id: true, name: true, description: true, thumbnail: true, userId: true, creatorName: true, updated_at: true, nodes: true, edges: true, viewCount: true },
       orderBy: { updated_at: 'desc' },
     });
     return { success: true, flows };
   } catch (error: any) {
     console.error('Failed to fetch deployed flows:', error);
     return { success: false, flows: [], error: error.message };
+  }
+}
+
+export async function incrementViewCount(flowId: string) {
+  try {
+    await prisma.flow.update({
+      where: { id: flowId },
+      data: { viewCount: { increment: 1 } },
+    });
+  } catch {
+    // Non-critical — silently ignore failures
   }
 }
 

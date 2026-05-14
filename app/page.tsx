@@ -67,12 +67,20 @@ export default async function HomePage() {
         </FloatingIn>
 
         <FloatingIn delay={0.4}>
-          <Link
-            href="/editor"
-            className="px-6 py-3 border border-black rounded font-semibold hover:bg-black hover:text-white transition"
-          >
-            Launch Editor
-          </Link>
+          <div className="flex items-center gap-3 flex-wrap justify-center">
+            <Link
+              href="/editor"
+              className="px-6 py-3 border border-black rounded font-semibold hover:bg-black hover:text-white transition"
+            >
+              Launch Editor
+            </Link>
+            <Link
+              href="/store"
+              className="px-6 py-3 border border-black rounded font-semibold hover:bg-black hover:text-white transition"
+            >
+              Browse AgentStore
+            </Link>
+          </div>
         </FloatingIn>
 
         <div className="max-w-xl w-full mt-10">
