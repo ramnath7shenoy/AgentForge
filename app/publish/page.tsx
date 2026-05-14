@@ -79,11 +79,29 @@ export default function PublishPage() {
   // Keyed by flowId so each project has independent persisted state
   const FORGE_STATE_KEY = `FORGE_PUBLISH_STATE_${activeProject?.id ?? "default"}`;
 
-  // Effect 1 — Rehydrate user config from localStorage (input, keys, attachments).
-  // compiledCode is restored only as a fallback for page-refresh when the flow store is
-  // empty (flow not yet loaded from DB). When nodes are present the compile effect overwrites it.
+  // Effect 1 — Rehydrate state on mount.
+  // If the Liveblocks leaveRoom reset nodes/edges to [], restore from the sessionStorage
+  // snapshot saved by FlowCollaboration before calling leaveRoom.
+  // compiledCode is only restored as a last-resort fallback for hard page refreshes where
+  // no snapshot exists; the compile effect always overwrites it once nodes are available.
   useEffect(() => {
-    sandboxExec.clearResult(); // nuke any sessionStorage remnant from prior session
+    sandboxExec.clearResult();
+
+    // Restore nodes/edges if leaveRoom wiped them
+    if (nodes.length === 0) {
+      try {
+        const snap = sessionStorage.getItem("agentforge_flow_snapshot");
+        if (snap) {
+          const { nodes: n, edges: e } = JSON.parse(snap);
+          if (Array.isArray(n) && n.length > 0) {
+            useFlowStore.getState().setNodes(n);
+            useFlowStore.getState().setEdges(e || []);
+          }
+        }
+      } catch {}
+    }
+
+    // Restore user config + compiledCode (fallback for hard page refresh only)
     try {
       const raw = localStorage.getItem(FORGE_STATE_KEY);
       if (!raw) return;
@@ -92,8 +110,13 @@ export default function PublishPage() {
       if (Array.isArray(s.envKeys) && s.envKeys.length) setEnvKeys(s.envKeys);
       if (Array.isArray(s.attachments) && s.attachments.length) setSandboxAttachments(s.attachments);
       if (s.fileContext) setSandboxTextContext(s.fileContext);
-      // Only use cached code when the store has no nodes yet (e.g. hard page refresh)
-      if (s.compiledCode && nodes.length === 0) setCompiledCode(s.compiledCode);
+      // Only use cached compiledCode on hard page refresh (no sessionStorage snapshot = no live nodes)
+      if (s.compiledCode && nodes.length === 0) {
+        try {
+          const hasSnapshot = !!sessionStorage.getItem("agentforge_flow_snapshot");
+          if (!hasSnapshot) setCompiledCode(s.compiledCode);
+        } catch { setCompiledCode(s.compiledCode); }
+      }
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -256,7 +279,6 @@ export default function PublishPage() {
   }, [activeTab]);
 
   useEffect(() => {
-    // Skip compile when store is empty (e.g. hard page refresh before flow loads from DB)
     if (nodes.length === 0) return;
     setCompiledCode(compileFlow(nodes, edges, activeTab, activeLibrary));
   }, [nodes, edges, activeTab, activeLibrary]);
@@ -327,8 +349,7 @@ export default function PublishPage() {
     }
 
     const initLogs: string[] = [];
-    // Node/edge counts: prefer live store; fall back to step count from compiled code
-    // (store may be empty on fresh page load when compiledCode was restored from localStorage).
+    // Node/edge counts: prefer live store; fall back to step count parsed from compiled code.
     const executableNodes = nodes.filter((n) => !["group", "text"].includes(n.type ?? ""));
     const nodeCount = executableNodes.length || steps.length;
     const edgeCount = edges.length || Math.max(0, steps.length - 1);
@@ -680,7 +701,6 @@ if (process.env.AGENTFORGE_MODE === 'PREVIEW') {
                   Environment Config
                 </button>
                 <div className="ml-auto flex items-center gap-2">
-                  <span className="text-[9px] text-slate-600 font-normal italic">Vault keys auto-injected</span>
                   <button
                     onClick={handleSyncFromVault}
                     className={cn(

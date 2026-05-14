@@ -13,11 +13,16 @@ function LoginContent() {
   const message = searchParams.get("message");
 
   const isCollaborate = message === "collaborate";
+  const isLinkExpired = message === "link-expired";
+  const isAuthError = message === "auth-code-error";
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event) => {
-        if (event === "SIGNED_IN") {
+        if (event === "PASSWORD_RECOVERY") {
+          // Hash-fragment recovery flow (old Supabase format)
+          router.push("/update-password");
+        } else if (event === "SIGNED_IN") {
           router.push("/editor");
         }
       }
@@ -41,6 +46,14 @@ function LoginContent() {
             </p>
           </div>
         </div>
+
+        {(isLinkExpired || isAuthError) && (
+          <div className="mb-4 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-400 font-medium">
+            {isLinkExpired
+              ? "That reset link has expired or already been used. Please request a new one below."
+              : "Something went wrong with the sign-in link. Please try again."}
+          </div>
+        )}
 
         <Auth
           supabaseClient={supabase}

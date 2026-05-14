@@ -1166,7 +1166,10 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
               const newProvider = e.target.value;
               const providerMeta = APP_REGISTRY.find((a) => a.id === newProvider);
               const newLabel = providerMeta ? providerMeta.name : selectedNode.data.label;
-              updateNodeData(selectedNode.id, { appProvider: newProvider, appAction: "", appInputs: {}, label: newLabel });
+              const preserved = Object.fromEntries(
+                Object.entries(appInputs).filter(([k]) => !CONTENT_FIELD_KEYS.has(k))
+              );
+              updateNodeData(selectedNode.id, { appProvider: newProvider, appAction: "", appInputs: preserved, label: newLabel });
             }}
           >
             <option value="">Choose an app...</option>
@@ -1366,9 +1369,19 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
               "flex items-center justify-between mb-8 border-b pb-4",
               "border-border"
             )}>
-              <div className="flex flex-col">
+              <div className="flex flex-col gap-1.5 w-full">
                 <span className="text-[10px] uppercase tracking-widest text-indigo-500 font-bold">Tool Configuration</span>
                 <h2 className="text-lg font-bold capitalize">{selectedNode.type} Node</h2>
+                <input
+                  type="text"
+                  value={selectedNode.data.label || ""}
+                  onChange={(e) => updateNodeData(selectedNode.id, { label: e.target.value })}
+                  placeholder="Node label (optional)"
+                  className={cn(
+                    "mt-1 rounded-lg px-2.5 py-1.5 text-xs outline-none transition-all border focus:ring-2 w-full",
+                    "bg-background border-border text-foreground focus:ring-indigo-500/20 placeholder:text-muted-foreground"
+                  )}
+                />
               </div>
             </div>
 

@@ -69,12 +69,6 @@ export default async function HomePage() {
         <FloatingIn delay={0.4}>
           <div className="flex items-center gap-3 flex-wrap justify-center">
             <Link
-              href="/editor"
-              className="px-6 py-3 border border-black rounded font-semibold hover:bg-black hover:text-white transition"
-            >
-              Launch Editor
-            </Link>
-            <Link
               href="/store"
               className="px-6 py-3 border border-black rounded font-semibold hover:bg-black hover:text-white transition"
             >

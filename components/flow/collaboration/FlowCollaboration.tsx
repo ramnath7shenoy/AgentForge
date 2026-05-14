@@ -51,7 +51,21 @@ export default function FlowCollaboration({ flowId, enabled, displayName }: Prop
     enterRoom(getFlowRoomId(flowId));
     return () => {
       setCollaborationCursor(null);
-      if (leaveRoom) leaveRoom();
+      if (leaveRoom) {
+        // Snapshot nodes/edges before leaveRoom — the Liveblocks middleware resets
+        // storageMapping fields (nodes, edges) to [] on disconnect, so we persist
+        // a copy to sessionStorage for the publish page to restore from.
+        const state = useFlowStore.getState() as any;
+        if (state.nodes?.length > 0) {
+          try {
+            sessionStorage.setItem("agentforge_flow_snapshot", JSON.stringify({
+              nodes: state.nodes,
+              edges: state.edges || [],
+            }));
+          } catch {}
+        }
+        leaveRoom();
+      }
     };
   }, [enabled, enterRoom, flowId, leaveRoom, setCollaborationCursor]);
 

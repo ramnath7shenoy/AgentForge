@@ -1,312 +1,345 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useLayoutEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useFlowStore } from "@/stores/flowStore";
-import { Terminal, X, SkipForward, Zap, Target, Brain } from "lucide-react";
+import {
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Layers,
+  Cpu,
+  SlidersHorizontal,
+  Sparkles,
+  Play,
+  History,
+  Rocket,
+  Share2,
+  BookOpen,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const missions = [
+interface Section {
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  bullets: string[];
+  accent: string;
+  /** data-tutorial selectors to highlight */
+  highlights: string[];
+}
+
+const sections: Section[] = [
   {
-    step: 1,
-    title: "Mission Briefing",
-    brief: "Welcome, Architect. Let's deploy your first autonomous agent.",
-    task: "Start the walkthrough",
-    spotlight: null
+    icon: <BookOpen size={20} />,
+    title: "Welcome to AgentForge Editor",
+    subtitle: "A quick tour of every tool on this page. Use the arrows or dots to flip through.",
+    bullets: [
+      "Build AI agent pipelines visually by connecting nodes on the canvas.",
+      "Each node is a step in your workflow — trigger, think, act, output.",
+      "Your flow auto-saves to the cloud whenever you make changes.",
+    ],
+    accent: "indigo",
+    highlights: [],
   },
   {
-    step: 2,
-    title: "Deploy the Trigger",
-    brief: "Every agent needs a trigger. Locate the 'Smart Trigger' in the sidebar and drag it onto the canvas.",
-    task: "Drag 'Smart Trigger' onto the canvas",
-    spotlight: "sidebar"
+    icon: <Layers size={20} />,
+    title: "Left Sidebar — Node Palette",
+    subtitle: "Your building blocks. Drag any node onto the canvas to add it.",
+    bullets: [
+      "Triggers: Start your flow (schedule, webhook, manual). Every flow needs one.",
+      "Intelligence: Agent Brain — the LLM step. Set a model, temperature, and system prompt.",
+      "Actions: App integrations (Slack, GitHub, email, etc.). Reads and writes data.",
+      "Output: Ends the flow and surfaces the final result.",
+      "Switch to the Vault tab to store API keys used by action nodes.",
+    ],
+    accent: "violet",
+    highlights: ["node-palette"],
   },
   {
-    step: 3,
-    title: "Configure Trigger",
-    brief: "Good drop, Architect. Now configure the trigger's execution schedule in the sidebar.",
-    task: "Select an Execution Schedule from the dropdown",
-    spotlight: "settings"
+    icon: <Cpu size={20} />,
+    title: "Canvas — The Workflow",
+    subtitle: "Drag, drop, and wire your nodes together here.",
+    bullets: [
+      "Drag nodes from the left sidebar onto the canvas to place them.",
+      "Connect nodes by dragging from an output handle (right of a node) to an input handle (left of another node).",
+      "Click a node to select it — its settings appear in the right panel.",
+      "Delete a node by selecting it and pressing Backspace, or use the trash icon on hover.",
+      "Ctrl+Z undoes the last action.",
+    ],
+    accent: "blue",
+    highlights: [],
   },
   {
-    step: 4,
-    title: "Deploy the Brain",
-    brief: "Your trigger is ready. Now drag an 'Agent Brain' from the Intelligence category onto the canvas.",
-    task: "Drag 'Agent Brain' onto the canvas",
-    spotlight: "sidebar"
+    icon: <SlidersHorizontal size={20} />,
+    title: "Right Sidebar — Node Settings",
+    subtitle: "Configure the selected node. Click the arrow on the right edge to open it.",
+    bullets: [
+      "Click any node on the canvas to open its settings here.",
+      "Agent Brain: set the model, system prompt, temperature, and max tokens.",
+      "Action nodes: choose the provider (e.g. Slack), pick an action, fill in inputs like channel IDs.",
+      "Every node has an optional label field — rename it to keep your canvas readable.",
+    ],
+    accent: "cyan",
+    highlights: ["right-sidebar"],
   },
   {
-    step: 5,
-    title: "Establish Uplink",
-    brief: "Now, establish the logical flow by dragging a connection from the Amber Trigger to the Purple Brain.",
-    task: "Connect the Amber Trigger to the Purple Brain",
-    spotlight: "canvas"
+    icon: <Sparkles size={20} />,
+    title: "AI Build + Templates",
+    subtitle: "Start faster — skip the blank canvas.",
+    bullets: [
+      "AI Build (✦): describe what you want in plain English and the AI generates a complete workflow.",
+      "Templates: load a pre-built flow such as 'Omnichannel Content Generator' as a starting point.",
+      "You can freely modify any generated or template flow after it's loaded.",
+    ],
+    accent: "violet",
+    highlights: ["ai-build", "templates"],
   },
   {
-    step: 6,
-    title: "Test your Logic",
-    brief: "Let's verify the agent's behavior. Click 'Run Flow' in the header to execute the sequence.",
-    task: "Click the 'Run Flow' button and check the Response Gallery",
-    spotlight: "header"
+    icon: <Play size={20} />,
+    title: "Run Flow",
+    subtitle: "Execute your agent and review its output.",
+    bullets: [
+      "Click 'Run Flow' to execute your workflow with live API calls.",
+      "Use the dropdown arrow (▾) to switch to 'Dry Run' — simulates without making real requests.",
+      "Output appears in the Response Gallery panel below the canvas after the run completes.",
+    ],
+    accent: "emerald",
+    highlights: ["run-flow"],
   },
   {
-    step: 7,
-    title: "Deploy as Plugin",
-    brief: "Your agent is functional. Deploy it to the network as a universal plugin.",
-    task: "Click 'Publish & Export' after the output appears",
-    spotlight: "header"
-  }
+    icon: <History size={20} />,
+    title: "Utility Toolbar",
+    subtitle: "Undo, version control, export — the small icons in the pill.",
+    bullets: [
+      "Undo (↺): step back through edits. Keyboard shortcut: Ctrl+Z.",
+      "Minimap: toggle a bird's-eye view of your canvas in the corner.",
+      "Snapshots (clock): save a named version of your flow and restore any past snapshot.",
+      "Export (↓): download your canvas as PNG, JPEG, or PDF.",
+      "Theme toggle (sun/moon): switch between light and dark mode.",
+    ],
+    accent: "amber",
+    highlights: ["utility-pill"],
+  },
+  {
+    icon: <Rocket size={20} />,
+    title: "Publish",
+    subtitle: "Export your agent as runnable code.",
+    bullets: [
+      "Opens the Code Sandbox — view generated Python/JS code for your flow.",
+      "Attach files, set environment variables, and run the agent with a real text input.",
+      "Use this to verify your agent works end-to-end before sharing it.",
+    ],
+    accent: "teal",
+    highlights: ["publish"],
+  },
+  {
+    icon: <Share2 size={20} />,
+    title: "Share",
+    subtitle: "Share your flow or collaborate with others.",
+    bullets: [
+      "Generate a public link to your flow with one click.",
+      "Toggle between View Only and Can Edit permissions before sharing.",
+      "Public flows can be cloned by others from the Agent Store.",
+      "Sign in to enable real-time collaboration with teammates.",
+    ],
+    accent: "fuchsia",
+    highlights: ["share"],
+  },
 ];
 
-export default function MissionBriefing() {
-  const { tutorialStep, setTutorialStep, completeTutorial, setSelectedNodeId, nodes, setNodes, edges, setEdges } = useFlowStore();
-  const [typedText, setTypedText] = useState("");
-  const [windowSize, setWindowSize] = useState({ width: 0, height: 0 });
+const accentMap: Record<string, {
+  bg: string; border: string; text: string; dot: string; btn: string; ring: string;
+}> = {
+  indigo:  { bg: "bg-indigo-500/10",  border: "border-indigo-500/30",  text: "text-indigo-400",  dot: "bg-indigo-500",  btn: "bg-indigo-600 hover:bg-indigo-500",  ring: "rgba(99,102,241,0.9)" },
+  violet:  { bg: "bg-violet-500/10",  border: "border-violet-500/30",  text: "text-violet-400",  dot: "bg-violet-500",  btn: "bg-violet-600 hover:bg-violet-500",  ring: "rgba(139,92,246,0.9)" },
+  blue:    { bg: "bg-blue-500/10",    border: "border-blue-500/30",    text: "text-blue-400",    dot: "bg-blue-500",    btn: "bg-blue-600 hover:bg-blue-500",    ring: "rgba(59,130,246,0.9)" },
+  cyan:    { bg: "bg-cyan-500/10",    border: "border-cyan-500/30",    text: "text-cyan-400",    dot: "bg-cyan-500",    btn: "bg-cyan-600 hover:bg-cyan-500",    ring: "rgba(6,182,212,0.9)" },
+  emerald: { bg: "bg-emerald-500/10", border: "border-emerald-500/30", text: "text-emerald-400", dot: "bg-emerald-500", btn: "bg-emerald-600 hover:bg-emerald-500", ring: "rgba(16,185,129,0.9)" },
+  amber:   { bg: "bg-amber-500/10",   border: "border-amber-500/30",   text: "text-amber-400",   dot: "bg-amber-500",   btn: "bg-amber-600 hover:bg-amber-500",   ring: "rgba(245,158,11,0.9)" },
+  teal:    { bg: "bg-teal-500/10",    border: "border-teal-500/30",    text: "text-teal-400",    dot: "bg-teal-500",    btn: "bg-teal-600 hover:bg-teal-500",    ring: "rgba(20,184,166,0.9)" },
+  fuchsia: { bg: "bg-fuchsia-500/10", border: "border-fuchsia-500/30", text: "text-fuchsia-400", dot: "bg-fuchsia-500", btn: "bg-fuchsia-600 hover:bg-fuchsia-500", ring: "rgba(217,70,239,0.9)" },
+};
 
-  const currentMission = missions.find(m => m.step === tutorialStep);
+interface HighlightRect {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
 
-  useEffect(() => {
-    // Clear selections at the start of every mission step
-    if (tutorialStep > 0) {
-      setSelectedNodeId(null);
-      
-      // Manually deselect all nodes and edges in the store
-      setNodes(nodes.map(n => ({ ...n, selected: false })));
-      setEdges(edges.map(e => ({ ...e, selected: false })));
-    }
-    
-    // Auto-select trigger node after drop (transition to step 3 - Configure)
-    if (tutorialStep === 3) {
-      const triggerNode = nodes.find(n => n.type === 'trigger');
-      if (triggerNode) {
-        setSelectedNodeId(triggerNode.id);
-        setNodes(nodes.map(n => ({ 
-          ...n, 
-          selected: n.id === triggerNode.id 
-        })));
+function useHighlightRects(selectors: string[]): HighlightRect[] {
+  const [rects, setRects] = useState<HighlightRect[]>([]);
+
+  const measure = useCallback(() => {
+    const result: HighlightRect[] = [];
+    for (const id of selectors) {
+      const el = document.querySelector(`[data-tutorial="${id}"]`);
+      if (el) {
+        const r = el.getBoundingClientRect();
+        result.push({ top: r.top, left: r.left, width: r.width, height: r.height });
       }
     }
-  }, [tutorialStep, setSelectedNodeId]);
+    setRects(result);
+  }, [selectors]);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setWindowSize({ width: window.innerWidth, height: window.innerHeight });
-      const handleResize = () => setWindowSize({ width: window.innerWidth, height: window.innerHeight });
-      window.addEventListener("resize", handleResize);
-      return () => window.removeEventListener("resize", handleResize);
-    }
-  }, []);
+  useLayoutEffect(() => {
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [measure]);
 
-  useEffect(() => {
-    if (!currentMission) return;
-    
-    setTypedText("");
-    let i = 0;
-    const interval = setInterval(() => {
-      setTypedText(currentMission.brief.slice(0, i + 1));
-      i++;
-      if (i >= currentMission.brief.length) clearInterval(interval);
-    }, 30);
+  return rects;
+}
 
-    return () => clearInterval(interval);
-  }, [tutorialStep, currentMission]);
-
-  if (!currentMission || tutorialStep === 0) return null;
-
-  // Display mission number (steps 2-7 map to missions 01-06)
-  const missionNumber = tutorialStep <= 1 ? tutorialStep : tutorialStep - 1;
+function HighlightRings({ selectors, color }: { selectors: string[]; color: string }) {
+  const rects = useHighlightRects(selectors);
+  if (rects.length === 0) return null;
+  const pad = 5;
 
   return (
-    <AnimatePresence>
-      <div className="fixed inset-0 z-[999] pointer-events-none">
-        {/* Spotlight Overlay */}
-        <div className="absolute inset-0 overflow-hidden">
-            <svg className="w-full h-full">
-                <defs>
-                    <mask id="spotlight-mask">
-                        <rect width="100%" height="100%" fill="white" />
-                        {currentMission.spotlight === "sidebar" && (
-                            <rect x="0" y="0" width="256" height="100%" fill="black" />
-                        )}
-                        {currentMission.spotlight === "settings" && (
-                            <rect x={windowSize.width - 320} y="0" width="320" height="100%" fill="black" />
-                        )}
-                        {currentMission.spotlight === "header" && (
-                            <rect x={windowSize.width - 400} y="0" width="400" height="80" fill="black" />
-                        )}
-                        {currentMission.spotlight === "canvas" && (
-                            <rect x="256" y="80" width={windowSize.width - 576} height={windowSize.height - 80} fill="black" />
-                        )}
-                    </mask>
-                </defs>
-                <rect 
-                    width="100%" 
-                    height="100%" 
-                    fill="black" 
-                    fillOpacity="0.35" 
-                    mask="url(#spotlight-mask)" 
-                    style={{ filter: 'blur(2px)' }}
-                    className="transition-all duration-500"
-                />
-            </svg>
-        </div>
+    <>
+      {rects.map((r, i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.95 }}
+          transition={{ duration: 0.2 }}
+          style={{
+            position: "fixed",
+            top: r.top - pad,
+            left: r.left - pad,
+            width: r.width + pad * 2,
+            height: r.height + pad * 2,
+            borderRadius: 12,
+            border: `2px solid ${color}`,
+            boxShadow: `0 0 0 4px ${color.replace("0.9", "0.15")}, 0 0 16px ${color.replace("0.9", "0.4")}`,
+            pointerEvents: "none",
+            zIndex: 998,
+          }}
+        />
+      ))}
+    </>
+  );
+}
 
-        {/* GHOST DRAG HINT for Step 2 (Trigger) */}
-        {tutorialStep === 2 && (
-            <motion.div
-                initial={{ x: 128, y: 300, opacity: 0, scale: 0.8 }}
-                animate={{ 
-                    x: [128, 600, 600], 
-                    y: [300, 400, 400], 
-                    opacity: [0, 1, 1, 0],
-                    scale: [0.8, 1, 1, 0.8] 
-                }}
-                transition={{ 
-                    duration: 3, 
-                    repeat: Infinity, 
-                    times: [0, 0.4, 0.8, 1],
-                    ease: "easeInOut"
-                }}
-                className="absolute z-[1000] pointer-events-none"
-            >
-                <div 
-                    id="ghost-node-trigger-1"
-                    className="flex flex-col items-center justify-center gap-2 p-3 bg-amber-500/20 border-2 border-amber-500 border-dashed rounded-xl backdrop-blur-sm w-32 shadow-2xl shadow-amber-500/40"
-                >
-                    <div className="p-2 bg-slate-900 rounded-lg border border-amber-500/30">
-                        <Zap size={20} className="text-amber-400 fill-current" />
-                    </div>
-                    <span className="text-[10px] font-bold text-amber-400 uppercase tracking-tighter">
-                        Smart Trigger
-                    </span>
-                </div>
-                {/* Simulated Mouse Cursor */}
-                <motion.div 
-                    animate={{ x: [0, 10, 0], y: [0, 10, 0] }}
-                    transition={{ duration: 1, repeat: Infinity }}
-                    className="absolute -bottom-4 -right-4 text-white drop-shadow-lg"
-                >
-                    <Target size={24} className="text-white fill-white/20" />
-                </motion.div>
-            </motion.div>
-        )}
+export default function MissionBriefing() {
+  const { tutorialStep, completeTutorial } = useFlowStore();
+  const [page, setPage] = useState(0);
 
-        {/* GHOST DRAG HINT for Step 4 (Agent Brain) */}
-        {tutorialStep === 4 && (
-            <motion.div
-                initial={{ x: 128, y: 200, opacity: 0, scale: 0.8 }}
-                animate={{ 
-                    x: [128, 700, 700], 
-                    y: [200, 300, 300], 
-                    opacity: [0, 1, 1, 0],
-                    scale: [0.8, 1, 1, 0.8] 
-                }}
-                transition={{ 
-                    duration: 3, 
-                    repeat: Infinity, 
-                    times: [0, 0.4, 0.8, 1],
-                    ease: "easeInOut"
-                }}
-                className="absolute z-[1000] pointer-events-none"
-            >
-                <div 
-                    id="ghost-node-brain-1"
-                    className="flex flex-col items-center justify-center gap-2 p-3 bg-blue-500/20 border-2 border-blue-500 border-dashed rounded-xl backdrop-blur-sm w-32 shadow-2xl shadow-blue-500/40"
-                >
-                    <div className="p-2 bg-slate-900 rounded-lg border border-blue-500/30">
-                        <Brain size={20} className="text-blue-400 fill-current" />
-                    </div>
-                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-tighter">
-                        Agent Brain
-                    </span>
-                </div>
-                <motion.div 
-                    animate={{ x: [0, 10, 0], y: [0, 10, 0] }}
-                    transition={{ duration: 1, repeat: Infinity }}
-                    className="absolute -bottom-4 -right-4 text-white drop-shadow-lg"
-                >
-                    <Target size={24} className="text-white fill-white/20" />
-                </motion.div>
-            </motion.div>
-        )}
+  // Reset to first page when tutorial reopens
+  useEffect(() => {
+    if (tutorialStep > 0) setPage(0);
+  }, [tutorialStep]);
 
-        {/* Mission Card */}
-        <div className={cn(
-            "absolute transition-all duration-500 pointer-events-auto",
-            tutorialStep === 1 
-                ? "inset-0 flex items-center justify-center p-6" 
-                : "bottom-10 left-1/2 -translate-x-1/2 w-full max-w-2xl px-6"
-        )}>
-          <motion.div 
-            initial={{ y: 20, scale: 0.95, opacity: 0 }}
-            animate={{ y: 0, scale: 1, opacity: 1 }}
-            className="w-full bg-[#0b0e14]/90 border border-indigo-500/30 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-xl"
+  if (tutorialStep === 0) return null;
+
+  const section = sections[page];
+  const accent = accentMap[section.accent];
+  const isFirst = page === 0;
+  const isLast = page === sections.length - 1;
+
+  return (
+    <>
+      {/* Highlight rings rendered outside the card, over the whole page */}
+      <AnimatePresence mode="wait">
+        <HighlightRings
+          key={page}
+          selectors={section.highlights}
+          color={accent.ring}
+        />
+      </AnimatePresence>
+
+      {/* Guide card */}
+      <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[999] w-full max-w-2xl px-4 pointer-events-none">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={page}
+            initial={{ opacity: 0, y: 10, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.97 }}
+            transition={{ duration: 0.18 }}
+            className="pointer-events-auto w-full bg-[#0b0e14]/95 border border-white/10 rounded-2xl shadow-2xl backdrop-blur-xl overflow-hidden"
           >
-            {/* Terminal Header */}
-            <div className="flex items-center justify-between px-6 py-3 border-b border-indigo-500/20 bg-[#111620]">
-                <div className="flex items-center gap-2">
-                    <Terminal size={14} className="text-indigo-400" />
-                    <span className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest">
-                        System Interface / Mission {String(missionNumber).padStart(2, '0')}
-                    </span>
+            {/* Top bar */}
+            <div className={cn("flex items-center justify-between px-5 py-3 border-b border-white/5", accent.bg)}>
+              <div className="flex items-center gap-2.5">
+                <span className={cn("flex-shrink-0", accent.text)}>{section.icon}</span>
+                <div>
+                  <p className="text-xs font-black text-white leading-tight">{section.title}</p>
+                  <p className="text-[10px] text-slate-400 leading-tight mt-0.5">{section.subtitle}</p>
                 </div>
-                <button 
-                  onClick={completeTutorial}
-                  className="text-slate-500 hover:text-white transition-colors"
-                >
-                  <X size={14} />
-                </button>
+              </div>
+              <button
+                onClick={completeTutorial}
+                className="text-slate-500 hover:text-white transition-colors flex-shrink-0 ml-4"
+                title="Close guide"
+              >
+                <X size={14} />
+              </button>
             </div>
 
-            {/* Content Body */}
-            <div className="p-8">
-              <div className="min-h-[60px] mb-8">
-                <p className="text-xl md:text-2xl font-mono text-white leading-relaxed">
-                  {typedText}
-                  <span className="inline-block w-2 bg-indigo-500 animate-pulse ml-1">&nbsp;</span>
-                </p>
+            {/* Bullets */}
+            <div className="px-5 py-4 flex flex-col gap-2">
+              {section.bullets.map((b, i) => (
+                <div key={i} className="flex items-start gap-2.5">
+                  <span className={cn("w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0", accent.dot)} />
+                  <p className="text-[12px] text-slate-300 leading-relaxed">{b}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between px-5 py-3 border-t border-white/5">
+              {/* Progress dots */}
+              <div className="flex items-center gap-1.5">
+                {sections.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setPage(i)}
+                    className={cn(
+                      "rounded-full transition-all",
+                      i === page
+                        ? cn("w-4 h-1.5", accent.dot)
+                        : "w-1.5 h-1.5 bg-slate-700 hover:bg-slate-500"
+                    )}
+                  />
+                ))}
               </div>
 
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-8">
-                {tutorialStep === 1 ? (
-                   <div className="flex flex-col sm:flex-row items-center gap-4">
-                        <button
-                        onClick={() => setTutorialStep(2)}
-                        className="w-full sm:w-auto px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold font-mono text-sm tracking-wide transition-all shadow-lg shadow-indigo-500/20"
-                        >
-                        [START_INTERACTIVE_WALKTHROUGH]
-                        </button>
-                        <button
-                        onClick={completeTutorial}
-                        className="w-full sm:w-auto px-8 py-3 bg-transparent hover:bg-white/5 border border-slate-700 text-slate-400 hover:text-white rounded-xl font-bold font-mono text-sm tracking-wide transition-all"
-                        >
-                        [SKIP_TUTORIAL]
-                        </button>
-                    </div>
+              {/* Navigation */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-600 font-medium mr-1">
+                  {page + 1} / {sections.length}
+                </span>
+                <button
+                  onClick={() => setPage((p) => p - 1)}
+                  disabled={isFirst}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                >
+                  <ChevronLeft size={12} /> Prev
+                </button>
+                {isLast ? (
+                  <button
+                    onClick={completeTutorial}
+                    className={cn("flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold text-white transition-all", accent.btn)}
+                  >
+                    Done
+                  </button>
                 ) : (
-                    <>
-                        <div className="flex items-center gap-4 text-emerald-400">
-                            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                            <span className="text-[10px] font-bold uppercase tracking-widest font-mono">
-                                TASK: {currentMission.task}
-                            </span>
-                        </div>
-                        
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => setTutorialStep(tutorialStep + 1)}
-                                className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-lg text-[10px] font-mono transition-all border border-slate-800"
-                            >
-                                <SkipForward size={12} /> [SKIP_STEP]
-                            </button>
-                        </div>
-                    </>
+                  <button
+                    onClick={() => setPage((p) => p + 1)}
+                    className={cn("flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold text-white transition-all", accent.btn)}
+                  >
+                    Next <ChevronRight size={12} />
+                  </button>
                 )}
               </div>
             </div>
           </motion.div>
-        </div>
+        </AnimatePresence>
       </div>
-    </AnimatePresence>
+    </>
   );
 }

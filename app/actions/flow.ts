@@ -120,6 +120,25 @@ export async function getUserFlows(projectId?: string) {
 }
 
 /**
+ * Update only the group label on a flow.
+ */
+export async function updateFlowGroup(flowId: string, groupName: string | null) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: 'Not authenticated' };
+    await prisma.flow.update({
+      where: { id: flowId, userId: user.id },
+      data: { groupName: groupName || null },
+    });
+    return { success: true };
+  } catch (error: any) {
+    console.error('Failed to update flow group:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
  * Create a new folder for the user.
  */
 export async function createFolder(name: string) {

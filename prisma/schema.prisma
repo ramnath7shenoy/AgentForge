@@ -37,6 +37,7 @@ model Flow {
   thumbnail      String?
   creatorName    String?   @map("creator_name")
   viewCount      Int?      @default(0) @map("view_count")
+  groupName      String?   @map("group_name")
   folderId       String?   @map("folder_id") @db.Uuid
   folder         Folder?   @relation(fields: [folderId], references: [id])
   project        Project?  @relation(fields: [projectId], references: [id], onUpdate: NoAction)

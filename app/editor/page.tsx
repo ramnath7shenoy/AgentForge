@@ -50,7 +50,7 @@ import CollaborationStatus from "@/components/flow/collaboration/CollaborationSt
 
 import { useFlowStore, isAwaitingApproval } from "@/stores/flowStore";
 import { useVaultStore } from "@/stores/vaultStore";
-import { saveFlow, getLatestFlow, publishFlow } from "@/app/actions/flow";
+import { saveFlow, getFlow, getLatestFlow, publishFlow } from "@/app/actions/flow";
 import { generateWorkflow } from "@/app/actions/ai-architect";
 import type { ArchitectProvider } from "@/app/actions/ai-architect";
 import AIArchitectModal from "@/components/flow/AIArchitectModal";
@@ -60,7 +60,7 @@ import { cn } from "@/lib/utils";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ReactFlowProvider } from "reactflow";
 import { createClient } from "@/lib/supabase/client";
-import { getProjects, saveAsTemplate, getCustomTemplates, deleteCustomTemplate } from "@/app/actions/project";
+import { saveAsTemplate, getCustomTemplates, deleteCustomTemplate } from "@/app/actions/project";
 
 const LS_GUEST_FLOW_KEY = "agentforge_guest_flow";
 
@@ -72,18 +72,21 @@ function ActionButton({
   className = "",
   children,
   title,
+  ...rest
 }: {
   onClick?: () => void;
   disabled?: boolean;
   className?: string;
   children: React.ReactNode;
   title?: string;
+  [key: string]: unknown;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={title}
+      {...rest}
       className={cn(
         "inline-flex items-center justify-center gap-1.5",
         "h-8 min-w-0 px-2.5 rounded-md",
@@ -125,9 +128,6 @@ function EditorContent() {
     undo,
     past,
     activeProject,
-    setActiveProject,
-    projects,
-    setProjects,
     autoSave,
     restoreAutoSave,
     webhookPayloadWarning,
@@ -174,6 +174,7 @@ function EditorContent() {
   // Agent Configuration States
   const [showAIModal, setShowAIModal] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [showTutorialHint, setShowTutorialHint] = useState(false);
 
   // Get auth user on mount
   useEffect(() => {
@@ -224,7 +225,7 @@ function EditorContent() {
         return;
       }
 
-      const result = await getLatestFlow();
+      const result = flowIdParam ? await getFlow(flowIdParam) : await getLatestFlow();
 
       if (result.success && result.flow) {
         // Hydrate from DB
@@ -260,27 +261,6 @@ function EditorContent() {
     fetchInitialFlow();
   }, [setNodes, setEdges, projectIdParam, flowIdParam]);
 
-  // Fetch projects list
-  useEffect(() => {
-    if (userId) {
-      getProjects().then((res) => {
-        if (res.projects) {
-          setProjects(res.projects);
-        }
-      });
-    }
-  }, [userId, setProjects]);
-
-  // Project ID syncing matching user requested snippet
-  useEffect(() => {
-    if (projectIdParam && projects.length > 0) {
-      const matchedProject = projects.find(p => p.id === projectIdParam);
-      if (matchedProject) {
-        setActiveProject(matchedProject);
-        console.log("Auto-selected project:", matchedProject.name);
-      }
-    }
-  }, [projectIdParam, projects, setActiveProject]);
 
   // Auto-save canvas state to localStorage every 5 seconds once hydrated
   useEffect(() => {
@@ -323,7 +303,7 @@ function EditorContent() {
           console.log("Attempting to save flow for project:", activeProject?.id);
           const serializedNodes = JSON.stringify(nodes);
           const serializedEdges = JSON.stringify(edges);
-          const result = await saveFlow(userId, "My Flow", serializedNodes, serializedEdges, currentFlowId, isPublic, publicEditable, activeProject?.id);
+          const result = await saveFlow(userId, flowName, serializedNodes, serializedEdges, currentFlowId, isPublic, publicEditable, activeProject?.id);
           if (result.success) {
             setSaveStatus("saved");
             setSaveError(null);
@@ -348,7 +328,7 @@ function EditorContent() {
     }, 2000);
 
     return () => clearTimeout(timeoutId);
-  }, [nodes, edges, mounted, hasHydrated, userId, currentFlowId, isPublic, publicEditable]);
+  }, [nodes, edges, flowName, mounted, hasHydrated, userId, currentFlowId, isPublic, publicEditable]);
 
   useEffect(() => {
     setMounted(true);
@@ -361,13 +341,12 @@ function EditorContent() {
 
     const hasSeenTutorial = localStorage.getItem('agentforge_onboarding_complete');
     if (!hasSeenTutorial && tutorialStep === 0) {
-      setTutorialStep(1);
+      setShowTutorialHint(true);
+      const t = setTimeout(() => setShowTutorialHint(false), 6000);
+      return () => clearTimeout(t);
     }
   }, [theme, setTutorialStep, tutorialStep]);
 
-  useEffect(() => {
-    if (tutorialStep === 6 && finalResult) setTutorialStep(7);
-  }, [finalResult, tutorialStep, setTutorialStep]);
 
   // Terminal surfaces only when an output node fires (finalResult is set),
   // not while the walker is merely running. This decouples the terminal
@@ -461,7 +440,7 @@ function EditorContent() {
       clearCanvas();
       if (userId && currentFlowId) {
         setSaveStatus("saving");
-        const result = await saveFlow(userId, "My Flow", "[]", "[]", currentFlowId, isPublic, publicEditable, activeProject?.id);
+        const result = await saveFlow(userId, flowName, "[]", "[]", currentFlowId, isPublic, publicEditable, activeProject?.id);
         if (result.success) setSaveStatus("saved");
         else setSaveStatus("error");
       } else if (!userId) {
@@ -607,12 +586,12 @@ function EditorContent() {
         <div className="flex items-center gap-2">
 
           {/* Logo */}
-          <div className="flex items-center gap-2 pr-3">
+          <button onClick={() => router.push("/")} className="flex items-center gap-2 pr-3">
             <div className="w-6 h-6 bg-gradient-to-br from-indigo-600 to-violet-700 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
               <Zap size={12} className="text-white fill-current" />
             </div>
             <span className="font-bold tracking-tighter text-indigo-500 text-sm">AGENTFORGE</span>
-          </div>
+          </button>
         </div>
 
         {/* ── RIGHT SECTION ── */}
@@ -651,7 +630,7 @@ function EditorContent() {
           </div>
 
           {/* ── GLASSMORPHISM PILL ── */}
-          <div className="flex items-center gap-0.5 backdrop-blur-md bg-slate-900/30 border border-white/10 rounded-full px-2 py-1">
+          <div data-tutorial="utility-pill" className="flex items-center gap-0.5 backdrop-blur-md bg-slate-900/30 border border-white/10 rounded-full px-2 py-1">
 
             {/* Undo */}
             <button
@@ -795,6 +774,7 @@ function EditorContent() {
 
           {/* Templates button */}
           <button
+            data-tutorial="templates"
             onClick={() => setShowTemplateModal(true)}
             className="flex items-center gap-1.5 h-8 min-w-0 px-2.5 rounded-md bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 text-[13px] font-semibold transition-all border border-white/10 flex-shrink-0"
             title="Load a Template"
@@ -805,6 +785,7 @@ function EditorContent() {
 
           {/* AI Build (Magic Wand) — breathing glow */}
           <motion.div
+            data-tutorial="ai-build"
             animate={{
               boxShadow: [
                 "0 0 5px rgba(139, 92, 246, 0.2)",
@@ -831,7 +812,7 @@ function EditorContent() {
           </motion.div>
 
           {/* Run Flow — split button (Run Live / Dry Run) */}
-          <div ref={runMenuRef} className="relative flex items-stretch h-8 min-w-0 flex-shrink-0">
+          <div data-tutorial="run-flow" ref={runMenuRef} className="relative flex items-stretch h-8 min-w-0 flex-shrink-0">
             {/* Main action */}
             <button
               onClick={() => runClientFlow("Initial Input")}
@@ -842,8 +823,6 @@ function EditorContent() {
                   ? "opacity-75 cursor-wait bg-indigo-500 text-white"
                   : isDryRun
                   ? "bg-gradient-to-br from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white shadow-lg shadow-amber-500/20"
-                  : tutorialStep === 6
-                  ? "bg-gradient-to-br from-indigo-600 to-violet-700 text-white ring-4 ring-indigo-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(99,102,241,0.5)] z-10"
                   : "bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white shadow-lg shadow-indigo-500/20"
               )}
             >
@@ -917,23 +896,20 @@ function EditorContent() {
 
           {/* Publish */}
           <ActionButton
+            data-tutorial="publish"
             onClick={() => {
               completeTutorial();
               router.push('/publish');
             }}
             title="Publish"
-            className={cn(
-              (tutorialStep === 7 && finalResult)
-                ? "bg-gradient-to-br from-emerald-500 to-teal-600 text-white ring-4 ring-emerald-500/40 animate-[pulse_1.5s_ease-in-out_infinite] shadow-[0_0_20px_rgba(16,185,129,0.5)] z-10"
-                : "bg-gradient-to-br from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-lg shadow-emerald-500/20"
-            )}
+            className="bg-gradient-to-br from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-lg shadow-emerald-500/20"
           >
             <Rocket size={14} />
             Publish
           </ActionButton>
 
           {/* 5. SHARE MENU */}
-          <div className="relative" ref={shareMenuRef}>
+          <div data-tutorial="share" className="relative" ref={shareMenuRef}>
             <ActionButton
               onClick={() => setShowShareMenu(!showShareMenu)}
               title="Share or Collaborate"
@@ -1150,7 +1126,7 @@ function EditorContent() {
               className="overflow-hidden border-r border-border bg-card flex-shrink-0"
             >
               <div className="w-64 h-full">
-                <NodeSidebar onClearCanvas={handleClearCanvas} />
+                <NodeSidebar onClearCanvas={handleClearCanvas} flowName={flowName} onFlowNameChange={setFlowName} />
               </div>
             </motion.aside>
           )}
@@ -1237,16 +1213,37 @@ function EditorContent() {
           )}
 
           {/* HELP FAB */}
-          <button
-            onClick={() => {
-              localStorage.removeItem('agentforge_onboarding_complete');
-              setTutorialStep(1);
-            }}
-            className="fixed bottom-6 right-6 z-[50] bg-slate-800/50 backdrop-blur-md p-3 rounded-full border border-slate-700 text-slate-400 hover:text-indigo-400 transition-all shadow-2xl group active:scale-95"
-            title="Restart Mission"
-          >
-            <HelpCircle size={20} className="group-hover:rotate-12 transition-transform" />
-          </button>
+          <div className="fixed bottom-6 right-6 z-[50] flex flex-col items-end gap-2">
+            <AnimatePresence>
+              {showTutorialHint && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                  className="flex items-center gap-2 px-3 py-2 bg-slate-800/95 border border-indigo-500/30 rounded-xl shadow-xl backdrop-blur-md text-xs text-slate-300 whitespace-nowrap"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse flex-shrink-0" />
+                  Interactive tutorial available — click <HelpCircle size={12} className="inline mx-0.5 text-indigo-400" />
+                </motion.div>
+              )}
+            </AnimatePresence>
+            <button
+              onClick={() => {
+                setShowTutorialHint(false);
+                localStorage.removeItem('agentforge_onboarding_complete');
+                setTutorialStep(1);
+              }}
+              className={cn(
+                "bg-slate-800/50 backdrop-blur-md p-3 rounded-full border transition-all shadow-2xl group active:scale-95",
+                showTutorialHint
+                  ? "border-indigo-500/50 text-indigo-400 ring-2 ring-indigo-500/20"
+                  : "border-slate-700 text-slate-400 hover:text-indigo-400"
+              )}
+              title="Open Tutorial"
+            >
+              <HelpCircle size={20} className="group-hover:rotate-12 transition-transform" />
+            </button>
+          </div>
 
           {/* CHAT HUB */}
           <ChatHub />
@@ -1257,6 +1254,7 @@ function EditorContent() {
 
         {/* RIGHT SIDEBAR TOGGLE */}
         <button
+          data-tutorial="right-sidebar"
           onClick={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
           className={cn(
             "absolute top-1/2 -translate-y-1/2 z-50 p-2 rounded-full border transition-all shadow-lg backdrop-blur-sm",
