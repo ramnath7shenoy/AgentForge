@@ -1,4 +1,4 @@
-export type AppProvider = "x" | "slack" | "discord" | "github" | "notion" | "instagram" | "linkedin" | "medium" | "browser";
+export type AppProvider = "x" | "slack" | "discord" | "github" | "notion" | "instagram" | "linkedin" | "medium" | "browser" | "reddit" | "mail";
 
 export interface ActionField {
   key: string;
@@ -245,6 +245,80 @@ export const APP_REGISTRY: AppDefinition[] = [
           { key: "title", label: "Title", type: "text", placeholder: "Post title", required: true },
           { key: "content", label: "Content", type: "textarea", placeholder: "Post content (HTML or Markdown)…", required: true, isContent: true },
           { key: "contentFormat", label: "Format", type: "select", placeholder: "markdown", options: [{ label: "Markdown", value: "markdown" }, { label: "HTML", value: "html" }] },
+        ],
+      },
+    ],
+  },
+  {
+    id: "reddit",
+    name: "Reddit",
+    icon: "🟠",
+    color: "#ff4500",
+    tokenLabel: "Client ID",
+    tokenPlaceholder: "your_client_id",
+    docsUrl: "https://www.reddit.com/prefs/apps",
+    connectFields: [
+      { key: "clientId", label: "Client ID", placeholder: "your_client_id", secret: false },
+      { key: "clientSecret", label: "Client Secret", placeholder: "your_client_secret", secret: true },
+      { key: "username", label: "Reddit Username", placeholder: "u/your_username", secret: false },
+      { key: "password", label: "Reddit Password", placeholder: "••••••••", secret: true },
+    ],
+    actions: [
+      {
+        id: "submit_post",
+        label: "Submit Post",
+        description: "Submit a text post to a subreddit",
+        fields: [
+          { key: "subreddit", label: "Subreddit", type: "text", placeholder: "r/technology", required: true },
+          { key: "title", label: "Title", type: "text", placeholder: "Post title", required: true },
+          { key: "text", label: "Body", type: "textarea", placeholder: "Post body…", isContent: true },
+        ],
+      },
+      {
+        id: "add_comment",
+        label: "Add Comment",
+        description: "Reply to a post or comment",
+        fields: [
+          { key: "thingId", label: "Post/Comment ID", type: "text", placeholder: "t3_abc123", required: true },
+          { key: "text", label: "Comment", type: "textarea", placeholder: "Your comment…", required: true, isContent: true },
+        ],
+      },
+    ],
+  },
+  {
+    id: "mail",
+    name: "Email (SMTP)",
+    icon: "✉️",
+    color: "#6366f1",
+    tokenLabel: "SMTP Password",
+    tokenPlaceholder: "••••••••",
+    docsUrl: "https://support.google.com/mail/answer/185833",
+    connectFields: [
+      { key: "host", label: "SMTP Host", placeholder: "smtp.gmail.com", secret: false },
+      { key: "port", label: "SMTP Port", placeholder: "587", secret: false },
+      { key: "user", label: "Email Address", placeholder: "you@example.com", secret: false },
+      { key: "pass", label: "Password / App Password", placeholder: "••••••••", secret: true },
+    ],
+    actions: [
+      {
+        id: "send_email",
+        label: "Send Email",
+        description: "Send an email to one or more recipients",
+        fields: [
+          { key: "to", label: "To", type: "text", placeholder: "recipient@example.com", required: true },
+          { key: "subject", label: "Subject", type: "text", placeholder: "Email subject", required: true },
+          { key: "body", label: "Body", type: "textarea", placeholder: "Email body…", required: true, isContent: true },
+        ],
+      },
+      {
+        id: "send_reply",
+        label: "Send Reply",
+        description: "Reply to an existing email thread (requires Message-ID)",
+        fields: [
+          { key: "to", label: "To", type: "text", placeholder: "recipient@example.com", required: true },
+          { key: "subject", label: "Subject", type: "text", placeholder: "Re: original subject", required: true },
+          { key: "inReplyTo", label: "In-Reply-To Message-ID", type: "text", placeholder: "<messageid@mail.example.com>", required: true },
+          { key: "body", label: "Body", type: "textarea", placeholder: "Reply body…", required: true, isContent: true },
         ],
       },
     ],

@@ -261,7 +261,6 @@ function EditorContent() {
     fetchInitialFlow();
   }, [setNodes, setEdges, projectIdParam, flowIdParam]);
 
-
   // Auto-save canvas state to localStorage every 5 seconds once hydrated
   useEffect(() => {
     if (!hasHydrated) return;

@@ -31,14 +31,16 @@ app/
     page.tsx / SandboxClient.tsx   # Server-rendered sandbox with API key config
   dashboard/page.tsx · integrations/page.tsx
   store/
-    page.tsx          # Server component: fetches deployed flows, passes to StoreClient
-    StoreClient.tsx   # Category filter, search, Recent/Popular sort toggle
-    AgentGrid.tsx     # AgentCard grid; guest clone → localStorage["agentforge_guest_flow"] → /editor
+    page.tsx          # Server: deployed flows + starredIds + wishlistedIds + isVerified per creator
+    StoreClient.tsx   # Category filter, Collections, Saved filter, search, Recent/Popular sort
+    AgentGrid.tsx     # AgentCard: star + bookmark buttons; ManagePanel for owners; guest clone flow
     WorkflowLightbox.tsx · CodeModal.tsx · ManagePanel.tsx
+    [id]/DetailClient.tsx   # Star, Bookmark, Follow, Tip; changelog banner; comments
+    creator/[userId]/page.tsx · CreatorFollowButton.tsx
 
 components/flow/
   nodes/                 # One file per node type + NodeCard.tsx
-  canvas/                # FlowCanvas, ReadOnlyCanvas
+  canvas/                # FlowCanvas, ReadOnlyCanvas (nodeTypes includes ALL custom types incl. appaction + group)
   chat/ChatHub.tsx
   collaboration/
     FlowCollaboration.tsx    # Manages enterRoom/leaveRoom lifecycle; enterRoom wrapped in try/catch (silent skip if LIVEBLOCKS_SECRET_KEY missing)
@@ -109,13 +111,17 @@ POST {nodes, edges, input, apiKeys[]} → SSE
 
 ### Code Sandbox — `/api/sandbox/execute-code` (Mirror Mode)
 ```
-POST {code, language, envVars:{AGENTFORGE_INPUT, AGENTFORGE_MODE:"PREVIEW"}} → SSE
-  Mirror Mode shim prepended to compiled code:
-    Python: requests/httpx/aiohttp — GET allowed; POST/PUT/DELETE/PATCH → prints DRAFT PAYLOAD block
-    JS/TS:  fetch/axios/got        — same GET-pass/mutating-block logic
-  No API keys injected (isolated logic checker)
+POST {code, language, envVars:{AGENTFORGE_INPUT, AGENTFORGE_MODE:"PREVIEW", ...vaultKeys}} → SSE
+  No HTTP shim — PREVIEW guard is baked into generated code at compile time:
+    genHttpBlock (templates.ts): wraps every HTTP call in if AGENTFORGE_MODE==PREVIEW → print DRAFT PAYLOAD
+    appaction nodes (flowCompiler.ts): wrapped in PREVIEW guard at both JS and Python call sites
+    schedule/trigger nodes: PREVIEW → run agent once immediately; else → start cron loop
+  All 9 combos supported: Python×(requests/httpx/aiohttp) · JS×(fetch/axios/got) · TS×(fetch/axios/node-fetch)
+  package.json for JS sandbox has NO "type":"module" so require() is available
   Frontend parses DRAFT PAYLOAD blocks → Flow Result card shows
-    "🔍 PREVIEW: [Node] → Payload Generated (No data sent)"
+    "🔍 PREVIEW: [AppDisplayName] → Payload Generated (No data sent)"
+    APP_DISPLAY_NAMES map in flowCompiler.ts: x→Twitter/X, linkedin→LinkedIn, medium→Medium etc.
+  Terminal has Copy button (top-right of Code Output panel)
   Raw ctx JSON dump and "=== Final Result ===" stripped from terminal view
 ```
 
@@ -126,7 +132,7 @@ POST {code, language, envVars:{AGENTFORGE_INPUT, AGENTFORGE_MODE:"PREVIEW"}} →
 
 **Runtime (both executors):** If AppAction node has an incoming edge, the content field is ALWAYS overridden with upstream node's output — ignores whatever is in `appInputs`.
 
-**Compiler (`flowCompiler.ts`):** `genAppActionBlock` resolves `upstreamVar` from edges; content fields in bodyFields use `ctx['upstreamVar']['payload']` (Python) or `ctx['upstreamVar']?.payload` (JS/TS). Special-cased for Instagram caption, LinkedIn text, Medium content, Notion content.
+**Compiler (`flowCompiler.ts`):** `genAppActionBlock` resolves `upstreamVar` from edges; content fields in bodyFields use `ctx['upstreamVar']['payload']` (Python) or `ctx['upstreamVar']?.payload` (JS/TS). Special-cased for Instagram caption, LinkedIn text, Medium content, Notion content. `got` calls use no TypeScript generics (`<any>`/`<unknown>`) or `as const` so generated `.js` files are valid.
 
 **Sidebar:** Action dropdown `onChange` also updates `node.data.label` to `action.label`. Provider dropdown `onChange` updates label to `provider.name`. `useEffect` in `NodeSettingsSidebar` auto-syncs label on mount if mismatched.
 
@@ -181,6 +187,7 @@ Entry points throw `RuntimeError`/`Error` if `AGENTFORGE_INPUT` env var is missi
 - Flows/Projects/Integrations/Vault → Prisma → Postgres
 - Guest mode: localStorage; auto-migrated on login
 - Auto-save: debounced 2s
+- `getLatestFlow()` filters `isDeployed: { not: true }` — excludes Store snapshots so `/editor` never loads a deployed agent as the default working flow
 - **Prisma schema change → must run `npx prisma generate`** to update `lib/generated/prisma/`
 
 ### Password Reset Flow
@@ -249,20 +256,61 @@ Two paths depending on Supabase email template format:
 Universal access — identical content for guests and logged-in users.
 
 **What guests can do:** Browse, Sandbox (`/sandbox/[id]`), view Workflow modal, view Code modal, Clone.
-**What requires login:** Deploy to Store only.
+**What requires login:** Star, Wishlist, Follow, Deploy to Store.
 
 **Guest clone flow:** `AgentGrid.tsx` detects `!currentUserId` → writes `{ nodes, edges }` to `localStorage["agentforge_guest_flow"]` → `router.push("/editor")`. Editor hydrates from that key on load.
 
-**View count:** Incremented on Sandbox / Workflow / Code button clicks via `incrementViewCount(flowId)` server action (fire-and-forget, silently ignores errors). Displayed as `<Eye> 1.2k` badge on card. Popular sort orders by `viewCount DESC`.
+**View count:** Incremented on Sandbox / Workflow / Code button clicks via `incrementViewCount(flowId)` server action (fire-and-forget). Displayed as `<Eye> 1.2k` badge. Popular sort orders by `viewCount DESC`.
+
+**Sandbox run count:** `sandboxRunCount` column on `Flow`; incremented via `incrementSandboxRunCount(flowId)` called in `app/sandbox/[id]/page.tsx` on deployed flows (non-blocking). Shown as `<FlaskConical> X tested` in detail page stats.
+
+**Stars:** `FlowStar` model — `@@unique([flowId, userId])`. `toggleStar` server action.
+
+**Wishlist/Bookmark:** `FlowWishlist` model — `@@unique([flowId, userId])`. `toggleWishlist` / `getUserWishlist` actions. Bookmark icon (violet when saved) on cards and detail page. "Saved" filter button in store filter bar (logged-in only).
+
+**Follow:** `FlowFollow` model — `followerId`/`followingId` as plain UUID strings (no FK to auth.users). `toggleFollow` / `getFollowStatus` / `getFollowerCount` actions. UserPlus/UserCheck button on detail page; `CreatorFollowButton` client component on creator profile page.
+
+**Verified badge:** Computed server-side — no stored field. Threshold: creator has **3+ deployed agents AND 50+ total stars** across all their flows. Shown as `✓` chip next to creator name on cards, detail page, and creator profile.
+
+**Changelog / What's New:** `changelog String?` on `Flow`. Owner can edit via ManagePanel → EditModal. Shown as emerald `<Sparkles>` banner on detail page when non-empty.
+
+**Collections:** Client-side tag-filter sections in `StoreClient.tsx` — "Best for Marketing", "Starter Packs", "Data & Analytics", "Dev Tools". Each maps to a tag array; renders a collapsible grid section between "New This Week" and the filter bar.
+
+**Version snapshots:** `FlowVersion` model (nodes/edges JSON + optional note). Auto-snapshot created on each `deployToStore` call; trimmed to 20 per flow.
+
+**Support Creator:** Placeholder "tip" modal (rose Heart button on detail page) — explains coming soon, suggests starring.
+
+**Thumbnail upload:** Owner can upload a custom image in ManagePanel EditModal. Client-side compressed to max 640×360 JPEG (0.82 quality) via canvas before save. Stored as base64 data URL in `Flow.thumbnail`. Cards show thumbnail when set, fall back to `AgentVisual` SVG otherwise.
 
 **CodeModal disclaimer:** Amber bar between toolbar and code block warns users to manually review community-submitted code before local use.
 
 **Categories:** All · Vision (multimodal providers) · Text · Logic (router/decision nodes) · Productivity (trigger/action/webhook nodes). Sort: Recent (default, `updated_at DESC`) or Popular (`viewCount DESC`).
 
-## Prisma Models
-`Flow` (nodes/edges JSON, isPublic, isDeployed, viewCount, creatorName, description, thumbnail, **groupName String? @map("group_name")**) · `Project` · `Folder` · `Vault` · `Integration` (provider, accessToken, refreshToken; unique userId+provider)
+### Store directory
+```
+app/store/
+  page.tsx              # Server: fetches flows + starredIds + wishlistedIds; computes isVerified per creator
+  StoreClient.tsx       # Filter bar, Collections section, Saved filter, search, sort
+  AgentGrid.tsx         # AgentCard with star + bookmark buttons; ManagePanel for owners
+  ManagePanel.tsx       # Gear menu: Edit (name/desc/tags/thumbnail/changelog/featured) + Unpublish
+  WorkflowLightbox.tsx  # ReadOnlyCanvas modal
+  CodeModal.tsx
+  [id]/
+    page.tsx            # Server: full detail + related + follow/wishlist/verified data
+    DetailClient.tsx    # Star, Bookmark, Follow, Tip buttons; changelog banner; comments
+  creator/[userId]/
+    page.tsx            # Creator profile; own profile shows analytics dashboard
+    CreatorFollowButton.tsx  # Client component: optimistic follow toggle
+```
 
-`viewCount Int? @default(0) @map("view_count")` — incremented (atomic `{ increment: 1 }`) on Sandbox/Workflow/Code interactions in the store. DB column: `view_count`. **Requires SQL migration when first added:** `ALTER TABLE public.flows ADD COLUMN IF NOT EXISTS view_count INTEGER DEFAULT 0;`
+## Prisma Models
+`Flow` (nodes/edges JSON, isPublic, isDeployed, viewCount, **sandboxRunCount Int? @default(0)**, **changelog String?**, creatorName, description, thumbnail, groupName) · `Project` · `Folder` · `Vault` · `Integration`
+
+`FlowStar` (`flowId`, `userId`, `@@unique([flowId, userId])`) · `FlowWishlist` (`flowId`, `userId`, `@@unique([flowId, userId])`) · `FlowFollow` (`followerId`, `followingId`, `@@unique([followerId, followingId])`) · `FlowVersion` (`flowId`, nodes JSON, edges JSON, note?, `@@index([flowId])`)
+
+`viewCount` — incremented on Sandbox/Workflow/Code interactions. `sandboxRunCount` — incremented when `/sandbox/[id]` page loads for a deployed flow. Both use atomic `{ increment: 1 }`.
+
+**Schema changes require:** `npx prisma db push` then `npx prisma generate`, then restart dev server.
 
 ---
 

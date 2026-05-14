@@ -17,6 +17,8 @@ import ProcessorNode from "@/components/flow/nodes/ProcessorNode";
 import WebhookNode from "@/components/flow/nodes/WebhookNode";
 import SubflowNode from "@/components/flow/nodes/SubflowNode";
 import ApprovalNode from "@/components/flow/nodes/ApprovalNode";
+import AppActionNode from "@/components/flow/nodes/AppActionNode";
+import GroupNode from "@/components/flow/nodes/GroupNode";
 import { ReactFlowProvider } from "reactflow";
 import { saveSharedFlow } from "@/app/actions/flow";
 
@@ -48,6 +50,8 @@ function Canvas({ nodes: initialNodes, edges: initialEdges, editable = false, fl
     processor: ProcessorNode,
     subflow: SubflowNode,
     approval: ApprovalNode,
+    appaction: AppActionNode,
+    group: GroupNode,
   }), []);
 
   // Debounced auto-save for editable shared views

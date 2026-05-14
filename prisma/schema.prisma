@@ -22,27 +22,36 @@ model Project {
 }
 
 model Flow {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name           String?   @default("Untitled Agent")
-  nodes          Json?     @default("[]")
-  edges          Json?     @default("[]")
-  userId         String?   @map("user_id") @db.Uuid
-  created_at     DateTime? @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  projectId      String?   @map("project_id") @db.Uuid
-  isPublic       Boolean?  @default(false) @map("is_public")
-  publicEditable Boolean?  @default(false) @map("public_editable")
-  isDeployed     Boolean?  @default(false) @map("is_deployed")
-  description    String?
-  thumbnail      String?
-  creatorName    String?   @map("creator_name")
-  viewCount      Int?      @default(0) @map("view_count")
-  groupName      String?   @map("group_name")
-  folderId       String?   @map("folder_id") @db.Uuid
-  folder         Folder?   @relation(fields: [folderId], references: [id])
-  project        Project?  @relation(fields: [projectId], references: [id], onUpdate: NoAction)
-  user           users?    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  comments       FlowComment[]
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String?   @default("Untitled Agent")
+  nodes           Json?     @default("[]")
+  edges           Json?     @default("[]")
+  userId          String?   @map("user_id") @db.Uuid
+  created_at      DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  projectId       String?   @map("project_id") @db.Uuid
+  isPublic        Boolean?  @default(false) @map("is_public")
+  publicEditable  Boolean?  @default(false) @map("public_editable")
+  isDeployed      Boolean?  @default(false) @map("is_deployed")
+  description     String?
+  thumbnail       String?
+  creatorName     String?   @map("creator_name")
+  viewCount       Int?      @default(0) @map("view_count")
+  groupName       String?   @map("group_name")
+  folderId        String?   @map("folder_id") @db.Uuid
+  tags            String[]  @default([])
+  isFeatured      Boolean?  @default(false) @map("is_featured")
+  cloneCount      Int?      @default(0) @map("clone_count")
+  sandboxRunCount Int?      @default(0) @map("sandbox_run_count")
+  changelog       String?
+  folder          Folder?   @relation(fields: [folderId], references: [id])
+  project         Project?  @relation(fields: [projectId], references: [id], onUpdate: NoAction)
+  user            users?    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  comments        FlowComment[]
+  stars           FlowStar[]
+  reports         FlowReport[]
+  versions        FlowVersion[]
+  wishlists       FlowWishlist[]
 
   @@index([projectId], map: "idx_flows_project_id")
   @@map("flows")
@@ -60,6 +69,70 @@ model FlowComment {
 
   @@index([flowId], map: "idx_flow_comments_flow_id")
   @@map("flow_comments")
+  @@schema("public")
+}
+
+model FlowStar {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  flowId    String   @map("flow_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  flow      Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@unique([flowId, userId])
+  @@index([flowId])
+  @@map("flow_stars")
+  @@schema("public")
+}
+
+model FlowReport {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  flowId    String   @map("flow_id") @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  reason    String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  flow      Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@map("flow_reports")
+  @@schema("public")
+}
+
+model FlowVersion {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  flowId    String   @map("flow_id") @db.Uuid
+  nodes     Json     @default("[]")
+  edges     Json     @default("[]")
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  flow      Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@index([flowId], map: "idx_flow_versions_flow_id")
+  @@map("flow_versions")
+  @@schema("public")
+}
+
+model FlowFollow {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  followerId  String   @map("follower_id") @db.Uuid
+  followingId String   @map("following_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([followerId, followingId])
+  @@index([followingId])
+  @@map("flow_follows")
+  @@schema("public")
+}
+
+model FlowWishlist {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  flowId    String   @map("flow_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  flow      Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@unique([flowId, userId])
+  @@index([userId])
+  @@map("flow_wishlists")
   @@schema("public")
 }
 

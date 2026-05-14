@@ -48,7 +48,7 @@ const sections: Section[] = [
     subtitle: "Your building blocks. Drag any node onto the canvas to add it.",
     bullets: [
       "Triggers: Start your flow (schedule, webhook, manual). Every flow needs one.",
-      "Intelligence: Agent Brain — the LLM step. Set a model, temperature, and system prompt.",
+      "Intelligence: Agent Brain — the LLM step. Write a system prompt to define its behaviour.",
       "Actions: App integrations (Slack, GitHub, email, etc.). Reads and writes data.",
       "Output: Ends the flow and surfaces the final result.",
       "Switch to the Vault tab to store API keys used by action nodes.",
@@ -76,7 +76,7 @@ const sections: Section[] = [
     subtitle: "Configure the selected node. Click the arrow on the right edge to open it.",
     bullets: [
       "Click any node on the canvas to open its settings here.",
-      "Agent Brain: set the model, system prompt, temperature, and max tokens.",
+      "Agent Brain: write a system prompt to define what the LLM does in this step.",
       "Action nodes: choose the provider (e.g. Slack), pick an action, fill in inputs like channel IDs.",
       "Every node has an optional label field — rename it to keep your canvas readable.",
     ],

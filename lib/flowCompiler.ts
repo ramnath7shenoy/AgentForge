@@ -20,6 +20,32 @@ import {
 import { CONTENT_FIELD_KEYS } from "./providers";
 
 // ─────────────────────────────────────────────────────────────────────
+// App provider display name map (used in PREVIEW console output)
+// ─────────────────────────────────────────────────────────────────────
+const APP_DISPLAY_NAMES: Record<string, string> = {
+  discord: 'Discord',
+  slack: 'Slack',
+  github: 'GitHub',
+  notion: 'Notion',
+  twitter: 'Twitter/X',
+  x: 'Twitter/X',
+  instagram: 'Instagram',
+  linkedin: 'LinkedIn',
+  medium: 'Medium',
+  sendgrid: 'SendGrid',
+  mailchimp: 'Mailchimp',
+  stripe: 'Stripe',
+  twilio: 'Twilio',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  groq: 'Groq',
+  pinecone: 'Pinecone',
+  airtable: 'Airtable',
+  google: 'Google',
+  shopify: 'Shopify',
+};
+
+// ─────────────────────────────────────────────────────────────────────
 // Utilities
 // ─────────────────────────────────────────────────────────────────────
 function toSnakeCase(str: string): string {
@@ -573,10 +599,10 @@ function genAppActionBlock(
         lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_publishR.data };`);
       } else if (lib === 'got') {
         lines.push(`// Step 1: create media container`);
-        lines.push(`const ${varName}_containerR = await got.post<any>(\`https://graph.instagram.com/me/media?image_url=\${encodeURIComponent(${imageUrl})}&caption=\${encodeURIComponent(${caption})}&access_token=\${${tok}}\`, { responseType: 'json' as const });`);
-        lines.push(`const ${varName}_containerId = (${varName}_containerR.body as any)?.id ?? '';`);
+        lines.push(`const ${varName}_containerR = await got.post(\`https://graph.instagram.com/me/media?image_url=\${encodeURIComponent(${imageUrl})}&caption=\${encodeURIComponent(${caption})}&access_token=\${${tok}}\`, { responseType: 'json' });`);
+        lines.push(`const ${varName}_containerId = ${varName}_containerR.body?.id ?? '';`);
         lines.push(`// Step 2: publish container`);
-        lines.push(`const ${varName}_publishR = await got.post<any>(\`https://graph.instagram.com/me/media_publish?creation_id=\${${varName}_containerId}&access_token=\${${tok}}\`, { responseType: 'json' as const });`);
+        lines.push(`const ${varName}_publishR = await got.post(\`https://graph.instagram.com/me/media_publish?creation_id=\${${varName}_containerId}&access_token=\${${tok}}\`, { responseType: 'json' });`);
         lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_publishR.body };`);
       } else {
         // fetch / node-fetch
@@ -677,11 +703,11 @@ function genAppActionBlock(
         lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_r.data };`);
       } else if (lib === 'got') {
         lines.push(`// Step 1: get LinkedIn member ID`);
-        lines.push(`const ${varName}_meR = await got.get<any>('https://api.linkedin.com/v2/me', { headers: ${varName}_liHeaders, responseType: 'json' as const });`);
-        lines.push(`const ${varName}_meId = (${varName}_meR.body as any)?.id ?? '';`);
+        lines.push(`const ${varName}_meR = await got.get('https://api.linkedin.com/v2/me', { headers: ${varName}_liHeaders, responseType: 'json' });`);
+        lines.push(`const ${varName}_meId = ${varName}_meR.body?.id ?? '';`);
         lines.push(`// Step 2: create post`);
         lines.push(`const ${varName}_liBody = { author: \`urn:li:person:\${${varName}_meId}\`, lifecycleState: 'PUBLISHED', specificContent: { 'com.linkedin.ugc.ShareContent': { shareCommentary: { text: ${text} }, shareMediaCategory: 'NONE' } }, visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' } };`);
-        lines.push(`const ${varName}_r = await got.post<any>('https://api.linkedin.com/v2/ugcPosts', { json: ${varName}_liBody, headers: ${varName}_liHeaders, responseType: 'json' as const });`);
+        lines.push(`const ${varName}_r = await got.post('https://api.linkedin.com/v2/ugcPosts', { json: ${varName}_liBody, headers: ${varName}_liHeaders, responseType: 'json' });`);
         lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_r.body };`);
       } else {
         // fetch / node-fetch
@@ -770,11 +796,11 @@ function genAppActionBlock(
         lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_r.data };`);
       } else if (lib === 'got') {
         lines.push(`// Step 1: get Medium user ID`);
-        lines.push(`const ${varName}_meR = await got.get<any>('https://api.medium.com/v1/me', { headers: ${varName}_medHeaders, responseType: 'json' as const });`);
-        lines.push(`const ${varName}_userId = (${varName}_meR.body as any)?.data?.id ?? '';`);
+        lines.push(`const ${varName}_meR = await got.get('https://api.medium.com/v1/me', { headers: ${varName}_medHeaders, responseType: 'json' });`);
+        lines.push(`const ${varName}_userId = ${varName}_meR.body?.data?.id ?? '';`);
         lines.push(`// Step 2: create post`);
         lines.push(`const ${varName}_medBody = { title: ${title}, contentFormat: ${contentFormat}, content: ${content}, publishStatus: 'draft' };`);
-        lines.push(`const ${varName}_r = await got.post<any>(\`https://api.medium.com/v1/users/\${${varName}_userId}/posts\`, { json: ${varName}_medBody, headers: ${varName}_medHeaders, responseType: 'json' as const });`);
+        lines.push(`const ${varName}_r = await got.post(\`https://api.medium.com/v1/users/\${${varName}_userId}/posts\`, { json: ${varName}_medBody, headers: ${varName}_medHeaders, responseType: 'json' });`);
         lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_r.body };`);
       } else {
         // fetch / node-fetch
@@ -930,9 +956,9 @@ function genAppActionBlock(
       lines.push(`});`);
       lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_r.data };`);
     } else if (lib === 'got') {
-      lines.push(`const ${varName}_r = await got.${M.toLowerCase()}<unknown>(${urlExpr}, {`);
+      lines.push(`const ${varName}_r = await got.${M.toLowerCase()}(${urlExpr}, {`);
       lines.push(`  headers: ${varName}_headers,`);
-      lines.push(`  responseType: 'json' as const,`);
+      lines.push(`  responseType: 'json',`);
       if (bodyFields.length) lines.push(`  json: ${varName}_body,`);
       lines.push(`});`);
       lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_r.body };`);
@@ -1075,7 +1101,18 @@ function compileTypeScriptOrJS(
 
       case 'appaction':
       case 'app_action': {
-        code += genAppActionBlock(node, varName, names, lib, '  ', isTS, edges);
+        const _provId = (node.data.appProvider || 'app').toLowerCase();
+        const _prov = APP_DISPLAY_NAMES[_provId] ?? _provId;
+        const _act = (node.data.appAction || 'action').replace(/_/g, ' ');
+        const _appReal = genAppActionBlock(node, varName, names, lib, '    ', isTS, edges);
+        code += `  if (process.env.AGENTFORGE_MODE === 'PREVIEW') {\n`;
+        code += `    console.log('\\n╯══ DRAFT PAYLOAD ═══════════════════════════════════');\n`;
+        code += `    console.log('║  App     : ${_prov} → ${_act}');\n`;
+        code += `    console.log('╚═══════════════════════════════════════════════\\n');\n`;
+        code += `    ctx['${varName}'] = { type: 'data', payload: {} };\n`;
+        code += `  } else {\n`;
+        code += _appReal;
+        code += `  }\n`;
         break;
       }
 
@@ -1164,7 +1201,15 @@ function compileTypeScriptOrJS(
   code += `  return ctx;\n}\n\n`;
 
   if (hasSchedule && triggerNode) {
-    code += buildCronBlock(triggerNode, 'js');
+    code += `// ── Run\n`;
+    code += `if (process.env.AGENTFORGE_MODE === 'PREVIEW') {\n`;
+    code += `  // Preview: run once immediately instead of scheduling\n`;
+    code += `  runAgent('Scheduled Run')\n`;
+    code += `    .then(ctx => console.log(JSON.stringify(ctx, null, 2)))\n`;
+    code += `    .catch(console.error);\n`;
+    code += `} else {\n`;
+    code += buildCronBlock(triggerNode, 'js').split('\n').map(l => l.trim() ? '  ' + l : l).join('\n');
+    code += `}\n`;
   } else {
     code += `// ── Run\nif (!process.env.AGENTFORGE_INPUT) throw new Error('AGENTFORGE_INPUT is required');\nrunAgent(process.env.AGENTFORGE_INPUT)\n  .then(ctx => console.log(JSON.stringify(ctx, null, 2)))\n  .catch(console.error);\n`;
   }
@@ -1276,7 +1321,17 @@ function compilePython(
 
       case 'appaction':
       case 'app_action': {
-        code += genAppActionBlock(node, varName, names, lib, nodeInd, false, edges);
+        const _provId2 = (node.data.appProvider || 'app').toLowerCase();
+        const _prov2 = APP_DISPLAY_NAMES[_provId2] ?? _provId2;
+        const _act2 = (node.data.appAction || 'action').replace(/_/g, ' ');
+        const _appReal2 = genAppActionBlock(node, varName, names, lib, nodeInd + '    ', false, edges);
+        code += `${nodeInd}if os.environ.get('AGENTFORGE_MODE') == 'PREVIEW':\n`;
+        code += `${nodeInd}    print('\\n╯══ DRAFT PAYLOAD ═══════════════════════════════════')\n`;
+        code += `${nodeInd}    print('║  App     : ${_prov2} → ${_act2}')\n`;
+        code += `${nodeInd}    print('╚═══════════════════════════════════════════════\\n')\n`;
+        code += `${nodeInd}    ctx['${varName}'] = {'type': 'data', 'payload': {}}\n`;
+        code += `${nodeInd}else:\n`;
+        code += _appReal2;
         break;
       }
 
@@ -1367,7 +1422,33 @@ function compilePython(
 
   code += `if __name__ == "__main__":\n`;
   if (hasSchedule && triggerNode) {
-    code += buildCronBlock(triggerNode, 'python', isAsync);
+    // In PREVIEW mode: run once immediately. In production: start the cron loop.
+    if (isAsync) {
+      code += `    if os.environ.get('AGENTFORGE_MODE') == 'PREVIEW':\n`;
+      code += `        import threading as _threading\n`;
+      code += `        _result_box: dict = {}\n`;
+      code += `        def _run_sched_thread():\n`;
+      code += `            import asyncio as _asyncio\n`;
+      code += `            _loop = _asyncio.new_event_loop()\n`;
+      code += `            _asyncio.set_event_loop(_loop)\n`;
+      code += `            try:\n`;
+      code += `                _result_box['v'] = _loop.run_until_complete(run_agent('Scheduled Run'))\n`;
+      code += `            finally:\n`;
+      code += `                _loop.close()\n`;
+      code += `        _t = _threading.Thread(target=_run_sched_thread, daemon=True)\n`;
+      code += `        _t.start()\n`;
+      code += `        _t.join(timeout=55)\n`;
+      code += `        print(json.dumps(_result_box.get('v', {}), indent=2, default=str))\n`;
+      code += `    else:\n`;
+      // indent buildCronBlock output (already 4-space) by 4 more for the else block
+      code += buildCronBlock(triggerNode, 'python', isAsync).split('\n').map(l => l.trim() ? '    ' + l : l).join('\n');
+    } else {
+      code += `    if os.environ.get('AGENTFORGE_MODE') == 'PREVIEW':\n`;
+      code += `        result = run_agent('Scheduled Run')\n`;
+      code += `        print(json.dumps(result, indent=2, default=str))\n`;
+      code += `    else:\n`;
+      code += buildCronBlock(triggerNode, 'python', isAsync).split('\n').map(l => l.trim() ? '    ' + l : l).join('\n');
+    }
   } else if (isAsync) {
     // Run async agent in a dedicated thread with its own event loop.
     // This works both locally and inside E2B / Jupyter kernels that already

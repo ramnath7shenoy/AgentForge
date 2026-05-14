@@ -28,21 +28,29 @@ export async function saveFlow(
     const flowName = name || "Untitled Agent";
     const activeProjectId = (projectId === "default-id" || !projectId) ? null : projectId;
 
+    // Check if this flow is already deployed — deployed snapshots are frozen
+    const resolvedId = flowId || crypto.randomUUID();
+    const existing = flowId
+      ? await prisma.flow.findUnique({ where: { id: flowId }, select: { isDeployed: true } })
+      : null;
+    const isAlreadyDeployed = existing?.isDeployed ?? false;
+
     // WHITE-LIST PAYLOAD: Only send columns verified to exist
-    const dataToSave = {
-      name: flowName,
-      nodes: parsedNodes,
-      edges: parsedEdges,
-      userId: user.id,
-      projectId: activeProjectId,
-    };
+    // Never overwrite nodes/edges of a deployed flow via auto-save — use deployToStore to update the snapshot
+    const dataToSave = isAlreadyDeployed
+      ? { name: flowName, userId: user.id, projectId: activeProjectId }
+      : { name: flowName, nodes: parsedNodes, edges: parsedEdges, userId: user.id, projectId: activeProjectId };
 
     const flow = await prisma.flow.upsert({
-      where: { id: flowId || crypto.randomUUID() },
+      where: { id: resolvedId },
       update: dataToSave,
       create: {
-        id: flowId || crypto.randomUUID(),
-        ...dataToSave
+        id: resolvedId,
+        name: flowName,
+        nodes: parsedNodes,
+        edges: parsedEdges,
+        userId: user.id,
+        projectId: activeProjectId,
       }
     });
 
@@ -85,7 +93,7 @@ export async function getLatestFlow() {
     }
 
     const flow = await prisma.flow.findFirst({
-      where: { userId: user.id },
+      where: { userId: user.id, isDeployed: { not: true } },
       orderBy: { updated_at: 'desc' }
     })
     return { success: true, flow, userId: user?.id ?? null }
@@ -299,9 +307,11 @@ export async function getDeployedFlows() {
       where: { isDeployed: true, isPublic: true },
       select: {
         id: true, name: true, description: true, thumbnail: true,
-        userId: true, creatorName: true, updated_at: true,
-        nodes: true, edges: true, viewCount: true,
-        _count: { select: { comments: true } },
+        userId: true, creatorName: true, updated_at: true, created_at: true,
+        nodes: true, edges: true, viewCount: true, cloneCount: true,
+        sandboxRunCount: true, changelog: true,
+        tags: true, isFeatured: true,
+        _count: { select: { comments: true, stars: true } },
       },
       orderBy: { updated_at: 'desc' },
     });
@@ -377,6 +387,114 @@ export async function deleteFlowComment(commentId: string) {
   }
 }
 
+export async function toggleStar(flowId: string) {
+  "use server";
+  const supabase = await import("@/lib/supabase/server").then(m => m.createClient());
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Unauthorized", starred: false };
+  try {
+    const existing = await prisma.flowStar.findUnique({
+      where: { flowId_userId: { flowId, userId: user.id } },
+    });
+    if (existing) {
+      await prisma.flowStar.delete({ where: { id: existing.id } });
+      return { success: true, starred: false };
+    } else {
+      await prisma.flowStar.create({ data: { flowId, userId: user.id } });
+      return { success: true, starred: true };
+    }
+  } catch (error: any) {
+    return { success: false, error: error.message, starred: false };
+  }
+}
+
+export async function getUserStarredFlows(userId: string): Promise<string[]> {
+  try {
+    const stars = await prisma.flowStar.findMany({
+      where: { userId },
+      select: { flowId: true },
+    });
+    return stars.map(s => s.flowId);
+  } catch {
+    return [];
+  }
+}
+
+export async function reportFlow(flowId: string, reason: string) {
+  "use server";
+  const supabase = await import("@/lib/supabase/server").then(m => m.createClient());
+  const { data: { user } } = await supabase.auth.getUser();
+  try {
+    await prisma.flowReport.create({
+      data: { flowId, userId: user?.id ?? null, reason: reason.slice(0, 500) },
+    });
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getStoreFlowDetail(flowId: string) {
+  try {
+    const flow = await prisma.flow.findUnique({
+      where: { id: flowId, isDeployed: true, isPublic: true },
+      select: {
+        id: true, name: true, description: true, thumbnail: true,
+        userId: true, creatorName: true, updated_at: true, created_at: true,
+        nodes: true, edges: true, viewCount: true, cloneCount: true,
+        sandboxRunCount: true, changelog: true,
+        tags: true, isFeatured: true,
+        _count: { select: { comments: true, stars: true } },
+      },
+    });
+    if (!flow) return { success: false, flow: null };
+    return { success: true, flow };
+  } catch (error: any) {
+    return { success: false, flow: null, error: error.message };
+  }
+}
+
+export async function getCreatorFlows(userId: string) {
+  try {
+    const flows = await prisma.flow.findMany({
+      where: { userId, isDeployed: true, isPublic: true },
+      select: {
+        id: true, name: true, description: true, thumbnail: true,
+        userId: true, creatorName: true, updated_at: true, created_at: true,
+        nodes: true, edges: true, viewCount: true, cloneCount: true,
+        sandboxRunCount: true, changelog: true,
+        tags: true, isFeatured: true,
+        _count: { select: { comments: true, stars: true } },
+      },
+      orderBy: { viewCount: 'desc' },
+    });
+    return { success: true, flows };
+  } catch (error: any) {
+    return { success: false, flows: [], error: error.message };
+  }
+}
+
+export async function getRelatedFlows(excludeId: string, limit = 3) {
+  try {
+    const flows = await prisma.flow.findMany({
+      where: { isDeployed: true, isPublic: true, id: { not: excludeId } },
+      select: {
+        id: true, name: true, description: true, thumbnail: true,
+        userId: true, creatorName: true, updated_at: true, created_at: true,
+        nodes: true, edges: true, viewCount: true, cloneCount: true,
+        sandboxRunCount: true, changelog: true,
+        tags: true, isFeatured: true,
+        _count: { select: { comments: true, stars: true } },
+      },
+      orderBy: { viewCount: 'desc' },
+      take: limit,
+    });
+    return { success: true, flows };
+  } catch {
+    return { success: false, flows: [] };
+  }
+}
+
 export async function incrementViewCount(flowId: string) {
   try {
     await prisma.flow.update({
@@ -428,6 +546,18 @@ export async function deployToStore(
       } as any,
     });
 
+    // Snapshot a version on each deploy (keep last 20)
+    await prisma.flowVersion.create({
+      data: { flowId: flow.id, nodes: nodes as any, edges: edges as any, note: "Deployed" },
+    }).catch(() => {});
+    // Trim to 20 versions
+    const allV = await prisma.flowVersion.findMany({
+      where: { flowId: flow.id }, orderBy: { createdAt: 'desc' }, select: { id: true },
+    }).catch(() => []);
+    if (allV.length > 20) {
+      await prisma.flowVersion.deleteMany({ where: { id: { in: allV.slice(20).map((v: any) => v.id) } } }).catch(() => {});
+    }
+
     return { success: true, flowId: flow.id };
   } catch (error: any) {
     console.error('Failed to deploy to store:', error);
@@ -461,7 +591,7 @@ export async function unpublishFlow(flowId: string) {
  */
 export async function updateDeployedFlowMeta(
   flowId: string,
-  meta: { name: string; description?: string }
+  meta: { name: string; description?: string; tags?: string[]; isFeatured?: boolean; changelog?: string; thumbnail?: string | null }
 ) {
   try {
     const supabase = await createClient();
@@ -474,7 +604,14 @@ export async function updateDeployedFlowMeta(
 
     await prisma.flow.update({
       where: { id: flowId },
-      data: { name: meta.name, ...(meta.description !== undefined ? { description: meta.description } : {}) } as any,
+      data: {
+        name: meta.name,
+        ...(meta.description !== undefined ? { description: meta.description } : {}),
+        ...(meta.tags !== undefined ? { tags: meta.tags } : {}),
+        ...(meta.isFeatured !== undefined ? { isFeatured: meta.isFeatured } : {}),
+        ...(meta.changelog !== undefined ? { changelog: meta.changelog.slice(0, 2000) } : {}),
+        ...(meta.thumbnail !== undefined ? { thumbnail: meta.thumbnail ?? null } : {}),
+      } as any,
     });
     return { success: true };
   } catch (error: any) {
@@ -509,6 +646,8 @@ export async function cloneFlow(flowId: string) {
         userId: user.id,
       },
     });
+
+    await prisma.flow.update({ where: { id: flowId }, data: { cloneCount: { increment: 1 } } }).catch(() => {});
 
     return { success: true, flow: cloned };
   } catch (error: any) {
@@ -545,5 +684,187 @@ export async function deleteFlow(flowId: string) {
   } catch (error) {
     console.error('Failed to delete flow:', error);
     return { success: false, error: 'Failed to delete flow' };
+  }
+}
+
+export async function incrementSandboxRunCount(flowId: string) {
+  try {
+    await prisma.flow.update({
+      where: { id: flowId },
+      data: { sandboxRunCount: { increment: 1 } },
+    });
+  } catch {
+    // Non-critical
+  }
+}
+
+export async function toggleFollow(targetUserId: string) {
+  "use server";
+  const supabase = await import("@/lib/supabase/server").then(m => m.createClient());
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Unauthorized", following: false };
+  if (user.id === targetUserId) return { success: false, error: "Cannot follow yourself", following: false };
+
+  try {
+    const existing = await prisma.flowFollow.findUnique({
+      where: { followerId_followingId: { followerId: user.id, followingId: targetUserId } },
+    });
+    if (existing) {
+      await prisma.flowFollow.delete({ where: { id: existing.id } });
+      return { success: true, following: false };
+    } else {
+      await prisma.flowFollow.create({ data: { followerId: user.id, followingId: targetUserId } });
+      return { success: true, following: true };
+    }
+  } catch (error: any) {
+    return { success: false, error: error.message, following: false };
+  }
+}
+
+export async function getFollowStatus(targetUserId: string): Promise<boolean> {
+  const supabase = await import("@/lib/supabase/server").then(m => m.createClient());
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+  try {
+    const existing = await prisma.flowFollow.findUnique({
+      where: { followerId_followingId: { followerId: user.id, followingId: targetUserId } },
+    });
+    return !!existing;
+  } catch {
+    return false;
+  }
+}
+
+export async function getFollowerCount(targetUserId: string): Promise<number> {
+  try {
+    return await prisma.flowFollow.count({ where: { followingId: targetUserId } });
+  } catch {
+    return 0;
+  }
+}
+
+export async function createFlowVersion(flowId: string, nodes: object, edges: object, note?: string) {
+  "use server";
+  const supabase = await import("@/lib/supabase/server").then(m => m.createClient());
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Unauthorized" };
+
+  try {
+    const flow = await prisma.flow.findUnique({ where: { id: flowId }, select: { userId: true } });
+    if (!flow || flow.userId !== user.id) return { success: false, error: "Unauthorized" };
+
+    const version = await prisma.flowVersion.create({
+      data: { flowId, nodes, edges, note: note?.slice(0, 500) ?? null },
+    });
+
+    // Keep at most 20 versions per flow
+    const allVersions = await prisma.flowVersion.findMany({
+      where: { flowId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (allVersions.length > 20) {
+      const toDelete = allVersions.slice(20).map(v => v.id);
+      await prisma.flowVersion.deleteMany({ where: { id: { in: toDelete } } });
+    }
+
+    return { success: true, version };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getFlowVersions(flowId: string) {
+  "use server";
+  const supabase = await import("@/lib/supabase/server").then(m => m.createClient());
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, versions: [] };
+
+  try {
+    const flow = await prisma.flow.findUnique({ where: { id: flowId }, select: { userId: true } });
+    if (!flow || flow.userId !== user.id) return { success: false, versions: [] };
+
+    const versions = await prisma.flowVersion.findMany({
+      where: { flowId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, note: true, createdAt: true },
+      take: 20,
+    });
+    return { success: true, versions };
+  } catch (error: any) {
+    return { success: false, versions: [], error: error.message };
+  }
+}
+
+export async function rollbackToVersion(versionId: string) {
+  "use server";
+  const supabase = await import("@/lib/supabase/server").then(m => m.createClient());
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Unauthorized" };
+
+  try {
+    const version = await prisma.flowVersion.findUnique({
+      where: { id: versionId },
+      include: { flow: { select: { userId: true } } },
+    });
+    if (!version) return { success: false, error: "Version not found" };
+    if (version.flow.userId !== user.id) return { success: false, error: "Unauthorized" };
+
+    await prisma.flow.update({
+      where: { id: version.flowId },
+      data: { nodes: version.nodes as any, edges: version.edges as any },
+    });
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+export async function toggleWishlist(flowId: string) {
+  "use server";
+  const supabase = await import("@/lib/supabase/server").then(m => m.createClient());
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Unauthorized", wishlisted: false };
+  try {
+    const existing = await prisma.flowWishlist.findUnique({
+      where: { flowId_userId: { flowId, userId: user.id } },
+    });
+    if (existing) {
+      await prisma.flowWishlist.delete({ where: { id: existing.id } });
+      return { success: true, wishlisted: false };
+    } else {
+      await prisma.flowWishlist.create({ data: { flowId, userId: user.id } });
+      return { success: true, wishlisted: true };
+    }
+  } catch (error: any) {
+    return { success: false, error: error.message, wishlisted: false };
+  }
+}
+
+export async function getUserWishlist(userId: string) {
+  try {
+    const items = await prisma.flowWishlist.findMany({
+      where: { userId },
+      select: { flowId: true },
+    });
+    return items.map(i => i.flowId);
+  } catch {
+    return [];
+  }
+}
+
+export async function updateDeployedFlowChangelog(flowId: string, changelog: string) {
+  "use server";
+  const supabase = await import("@/lib/supabase/server").then(m => m.createClient());
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Unauthorized" };
+
+  try {
+    const flow = await prisma.flow.findUnique({ where: { id: flowId }, select: { userId: true } });
+    if (!flow || flow.userId !== user.id) return { success: false, error: "Unauthorized" };
+    await prisma.flow.update({ where: { id: flowId }, data: { changelog: changelog.slice(0, 2000) } as any });
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
   }
 }

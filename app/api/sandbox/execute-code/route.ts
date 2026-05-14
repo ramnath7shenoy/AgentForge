@@ -38,7 +38,7 @@ function cleanStdout(raw: string): string | null {
 
 function parsePipPackages(code: string): string[] {
   const packages: string[] = [];
-  for (const line of code.split("\n").slice(0, 20)) {
+  for (const line of code.split("\n")) {
     const m = line.match(/^#\s*pip\s+install\s+(.+)/i);
     if (m) packages.push(...m[1].trim().split(/\s+/).filter(Boolean));
   }
@@ -47,7 +47,7 @@ function parsePipPackages(code: string): string[] {
 
 function parseNpmPackages(code: string): string[] {
   const packages: string[] = [];
-  for (const line of code.split("\n").slice(0, 20)) {
+  for (const line of code.split("\n")) {
     const m = line.match(/^\/\/\s*npm\s+install\s+(.+)/i);
     if (m) packages.push(...m[1].trim().split(/\s+/).filter(Boolean));
   }
@@ -58,9 +58,12 @@ function parseNpmPackages(code: string): string[] {
 // Runs the user's code as a clean child process so Jupyter kernel thread monitors
 // never intercept exceptions. Filters the subprocess stderr down to a single
 // human-readable ❌ line emitted to stdout.
-function buildPythonWrapper(code: string, runId: string): string {
+function buildPythonWrapper(code: string, runId: string, envVars: Record<string, string>): string {
   const b64 = Buffer.from(code).toString("base64");
-  // Noise prefixes used inside Python to filter subprocess stderr
+  // Build a Python dict literal for the extra env vars — passed explicitly to subprocess
+  const envPyPairs = Object.entries(envVars)
+    .map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`)
+    .join(", ");
   const noisePrefixes = [
     "Traceback (", "Exception in thread", "During handling",
     '  File "', "   ", "~~~", "^^^",
@@ -68,6 +71,8 @@ function buildPythonWrapper(code: string, runId: string): string {
   const noisePy = JSON.stringify(noisePrefixes);
   return [
     `import subprocess, sys, os, base64 as _b64`,
+    `_extra = {${envPyPairs}}`,
+    `_env = {**os.environ, **_extra}`,
     `_path = "/tmp/af_${runId}.py"`,
     `with open(_path, 'w', encoding='utf-8') as _f:`,
     `    _f.write(_b64.b64decode("${b64}").decode('utf-8'))`,
@@ -75,7 +80,7 @@ function buildPythonWrapper(code: string, runId: string): string {
     `    _r = subprocess.run(`,
     `        [sys.executable, _path],`,
     `        capture_output=True, text=True, timeout=50,`,
-    `        env=os.environ.copy()`,
+    `        env=_env`,
     `    )`,
     `    if _r.stdout:`,
     `        print(_r.stdout, end="", flush=True)`,
@@ -94,12 +99,11 @@ function buildPythonWrapper(code: string, runId: string): string {
 }
 
 // Build the TypeScript/JavaScript subprocess wrapper.
-function buildJsWrapper(code: string, language: "typescript" | "javascript", npmPkgs: string[], runId: string): string {
+function buildJsWrapper(code: string, language: "typescript" | "javascript", npmPkgs: string[], runId: string, envVars: Record<string, string>): string {
   const b64 = Buffer.from(code).toString("base64");
   const ext = language === "typescript" ? "ts" : "js";
   const dir = `/tmp/af_${runId}`;
   const pkgJson = JSON.stringify({
-    type: "module",
     ...(npmPkgs.length ? { dependencies: Object.fromEntries(npmPkgs.map((p) => [p, "latest"])) } : {}),
   });
   const npmInstall = npmPkgs.length
@@ -110,10 +114,12 @@ function buildJsWrapper(code: string, language: "typescript" | "javascript", npm
         `else console.log('✅ npm packages ready');`,
       ].join("\n")
     : "";
+  const envJs = JSON.stringify(envVars);
 
   return `
 const { spawnSync } = require('child_process');
 const fs = require('fs');
+const _extraEnv = ${envJs};
 const dir = '${dir}';
 fs.mkdirSync(dir, { recursive: true });
 fs.writeFileSync(dir + '/package.json', ${JSON.stringify(pkgJson)});
@@ -122,7 +128,7 @@ spawnSync('npm', ['install', '-g', 'tsx', '--prefer-offline', '--quiet'], { stdi
 ${npmInstall}
 const proc = spawnSync('tsx', [dir + '/index.${ext}'], {
   encoding: 'utf-8', timeout: 25000,
-  env: { ...process.env },
+  env: { ...process.env, ..._extraEnv },
   cwd: dir,
   maxBuffer: 10 * 1024 * 1024,
 });
@@ -166,7 +172,8 @@ export async function POST(req: NextRequest) {
 
       let sandbox: Sandbox | null = null;
       try {
-        enqueue({ t: "log", text: "🐳 Starting E2B sandbox..." });
+        const userKeys = Object.keys(envVars).filter(k => !k.startsWith("AGENTFORGE_"));
+        enqueue({ t: "log", text: `🐳 Starting E2B sandbox${userKeys.length ? ` · injecting ${userKeys.length} key(s): ${userKeys.join(", ")}` : " · ⚠️  no API keys found — add them in the env panel"}...` });
         sandbox = await Sandbox.create({ apiKey: e2bApiKey, envs: envVars });
 
         // ── Python: pip install + optional Playwright
@@ -210,11 +217,11 @@ export async function POST(req: NextRequest) {
         let execLang: "python" | "javascript";
 
         if (language === "python") {
-          execCode = buildPythonWrapper(code, runId);
+          execCode = buildPythonWrapper(code, runId, envVars);
           execLang = "python";
         } else {
           const npmPkgs = parseNpmPackages(code);
-          execCode = buildJsWrapper(code, language, npmPkgs, runId);
+          execCode = buildJsWrapper(code, language, npmPkgs, runId, envVars);
           execLang = "javascript";
         }
 
@@ -224,14 +231,20 @@ export async function POST(req: NextRequest) {
         const execution = await sandbox.runCode(execCode, {
           language: execLang,
           onStdout: (msg: OutputMessage) => {
-            const line = cleanStdout(msg.line);
-            if (!line) return;
-            if (line.startsWith("❌")) hadError = true;
-            enqueue({ t: "stdout", line });
+            // The subprocess wrapper emits its full captured stdout in a single event.
+            // Split on newlines so every logical line is processed independently.
+            for (const raw of msg.line.split("\n")) {
+              const line = cleanStdout(raw);
+              if (!line) continue;
+              if (line.startsWith("❌")) hadError = true;
+              enqueue({ t: "stdout", line });
+            }
           },
           onStderr: (msg: OutputMessage) => {
-            const line = cleanStderr(msg.line);
-            if (line) enqueue({ t: "stderr", line });
+            for (const raw of msg.line.split("\n")) {
+              const line = cleanStderr(raw);
+              if (line) enqueue({ t: "stderr", line });
+            }
           },
         });
 

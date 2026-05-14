@@ -131,11 +131,11 @@ export default function CollaborationStatus({ currentUserId, displayName }: Prop
         </span>
       ) : null}
 
-      {/* Avatar row — click to open panel */}
-      <button
+      {/* Avatar row — only show when more than 1 person in room */}
+      {others.length > 0 && <button
         onClick={() => setShowPanel((p) => !p)}
         className="relative flex items-center -space-x-1.5"
-        title={others.length > 0 ? `${others.length} collaborator${others.length !== 1 ? "s" : ""} · click to chat` : "Open collaboration panel"}
+        title={`${others.length} collaborator${others.length !== 1 ? "s" : ""} · click to chat`}
       >
         {/* Self avatar */}
         {self && (
@@ -171,7 +171,7 @@ export default function CollaborationStatus({ currentUserId, displayName }: Prop
             {unread > 9 ? "9+" : unread}
           </span>
         )}
-      </button>
+      </button>}
 
       {/* Dropdown panel: online list + chat */}
       {showPanel && (

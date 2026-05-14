@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getFlow } from "@/app/actions/flow";
+import { getFlow, incrementSandboxRunCount } from "@/app/actions/flow";
 import { createClient } from "@/lib/supabase/server";
 import SandboxClient from "./SandboxClient";
 
@@ -22,6 +22,11 @@ export default async function SandboxPage({ params }: SandboxPageProps) {
 
   if (!flow.isPublic && !isOwner) {
     notFound();
+  }
+
+  // Increment sandbox run count for deployed flows (non-blocking)
+  if (flow.isDeployed) {
+    incrementSandboxRunCount(flow.id).catch(() => {});
   }
 
   return (

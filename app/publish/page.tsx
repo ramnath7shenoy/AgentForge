@@ -51,6 +51,27 @@ import type { SandboxApiKey } from "@/lib/flow/serverExecutor";
 
 type Tab = "python" | "javascript" | "typescript";
 
+function CopyLogsButton({ logs }: { logs: string[] }) {
+  const [copied, setCopied] = React.useState(false);
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(logs.join("\n")).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      title="Copy output"
+      className="flex items-center gap-1 px-2 py-1 rounded text-[8px] text-slate-500 hover:text-slate-300 hover:bg-slate-800/60 transition-colors ml-2 flex-shrink-0"
+    >
+      {copied ? <CheckCircle size={9} className="text-emerald-400" /> : <Copy size={9} />}
+      <span>{copied ? "Copied" : "Copy"}</span>
+    </button>
+  );
+}
+
 export default function PublishPage() {
   const router = useRouter();
   const { nodes, edges, activeProject, theme } = useFlowStore();
@@ -97,6 +118,7 @@ export default function PublishPage() {
             useFlowStore.getState().setNodes(n);
             useFlowStore.getState().setEdges(e || []);
           }
+          sessionStorage.removeItem("agentforge_flow_snapshot");
         }
       } catch {}
     }
@@ -318,7 +340,22 @@ export default function PublishPage() {
   };
 
   const executeWorkflow = async () => {
-    const validKeys = envKeys.filter((k) => k.key.trim() && k.value.trim());
+    const manualKeys = envKeys.filter((k) => k.key.trim() && k.value.trim());
+    const vaultKeys: SandboxApiKey[] = [];
+    for (const e of useVaultStore.getState().entries) {
+      if (!e.value.trim()) continue;
+      const envName = e.key.trim().match(/^[A-Z][A-Z0-9_]+$/)
+        ? e.key.trim()
+        : e.value.startsWith("gsk_")   ? "GROQ_API_KEY"
+        : e.value.startsWith("sk-ant") ? "ANTHROPIC_API_KEY"
+        : e.value.startsWith("sk-")    ? "OPENAI_API_KEY"
+        : e.value.startsWith("AIza")   ? "GEMINI_API_KEY"
+        : e.key.trim();
+      vaultKeys.push({ key: envName, value: e.value.trim() });
+    }
+    // vault first, manual overrides
+    const seen = new Set(manualKeys.map((k) => k.key.trim()));
+    const validKeys = [...vaultKeys.filter((k) => !seen.has(k.key)), ...manualKeys];
     const effectiveInput = inputValue || "Hello";
     const hasExtras = sandboxAttachments.length > 0 || sandboxTextContext;
     let nodesForRun: any[] = nodes as any;
@@ -375,97 +412,31 @@ export default function PublishPage() {
     // ── Step 2: E2B execution — Mirror Mode (AGENTFORGE_MODE=PREVIEW)
     // GET requests are allowed (live token/ID validation).
     // POST/PUT/DELETE/PATCH are intercepted: a DRAFT PAYLOAD block is printed
-    // to stdout instead of sending data. No API keys are injected.
-    const envVarsMap = { AGENTFORGE_INPUT: inputValue || "Hello", AGENTFORGE_MODE: "PREVIEW" };
+    // to stdout instead of sending data. API keys from env panel + vault are injected.
+    const validEnvKeys = envKeys.filter((k) => k.key.trim() && k.value.trim());
 
-    const pythonShim = `\
-import os as _os_sb
-if _os_sb.environ.get('AGENTFORGE_MODE') == 'PREVIEW':
-    import json as _jsb
-    class _SBR:
-        status_code=200;ok=True;text='{}';headers={};content=b'{}'
-        def json(self):return {}
-        def raise_for_status(self):pass
-    def _draft(m,url,**kw):
-        b=kw.get('json',kw.get('data',{}));h=kw.get('headers',{})
-        print(f'\\n╯══ DRAFT PAYLOAD ═══════════════════════════════════')
-        print(f'║  Method  : {m.upper()}')
-        print(f'║  URL     : {url}')
-        print(f'║  Headers : {_jsb.dumps(dict(h),indent=2)}')
-        print(f'║  Body    : {_jsb.dumps(b,indent=2) if b else "{}"}')
-        print(f'╚═══════════════════════════════════════════════\\n')
-        return _SBR()
-    import requests as _rs
-    for _m2 in ('post','put','delete','patch'):
-        setattr(_rs,_m2,(lambda _mx:lambda url,**kw:_draft(_mx,url,**kw))(_m2))
-    try:
-        import httpx as _hx
-        for _m2 in ('post','put','delete','patch'):
-            setattr(_hx,_m2,(lambda _mx:lambda url,**kw:_draft(_mx,url,**kw))(_m2))
-    except ImportError:pass
-    try:
-        import aiohttp as _aio
-        class _AR:
-            status=200
-            async def json(self):return {}
-            async def text(self):return '{}'
-            def raise_for_status(self):pass
-            async def __aenter__(self):return self
-            async def __aexit__(self,*a):pass
-        class _AS:
-            def get(self,url,**kw):return _AR()
-            def post(self,url,**kw):_draft('POST',url,**kw);return _AR()
-            def put(self,url,**kw):_draft('PUT',url,**kw);return _AR()
-            def delete(self,url,**kw):_draft('DELETE',url,**kw);return _AR()
-            def patch(self,url,**kw):_draft('PATCH',url,**kw);return _AR()
-            async def __aenter__(self):return self
-            async def __aexit__(self,*a):pass
-        _aio.ClientSession=_AS
-    except ImportError:pass
+    // Auto-inject vault entries — detect env var name from value prefix when key isn't already a proper env var name
+    const vaultAutoEnv: Record<string, string> = {};
+    for (const e of useVaultStore.getState().entries) {
+      if (!e.value.trim()) continue;
+      const envName = e.key.trim().match(/^[A-Z][A-Z0-9_]+$/)
+        ? e.key.trim()                                           // already looks like ENV_VAR_NAME
+        : e.value.startsWith("gsk_")   ? "GROQ_API_KEY"
+        : e.value.startsWith("sk-ant") ? "ANTHROPIC_API_KEY"
+        : e.value.startsWith("sk-")    ? "OPENAI_API_KEY"
+        : e.value.startsWith("AIza")   ? "GEMINI_API_KEY"
+        : e.key.trim();                                          // fallback: use key as-is
+      vaultAutoEnv[envName] = e.value.trim();
+    }
 
-`;
-
-    const jsShim = `\
-if (process.env.AGENTFORGE_MODE === 'PREVIEW') {
-  const _draft = (method, url, headers, body) => {
-    console.log('\\n╯══ DRAFT PAYLOAD ═══════════════════════════════════');
-    console.log('║  Method  : ' + method);
-    console.log('║  URL     : ' + url);
-    console.log('║  Headers : ' + JSON.stringify(headers || {}, null, 2));
-    console.log('║  Body    : ' + JSON.stringify(body || {}, null, 2));
-    console.log('╚═══════════════════════════════════════════════\\n');
-  };
-  const _mock = () => Promise.resolve({ ok: true, status: 200, json: async () => ({}), text: async () => '{}' });
-  const _origFetch = (global as any).fetch;
-  (global as any).fetch = async (url: string, init: any = {}) => {
-    const method = (init?.method || 'GET').toUpperCase();
-    if (method === 'GET') return _origFetch ? _origFetch(url, init) : _mock();
-    let body = {};
-    try { body = JSON.parse(init?.body || '{}'); } catch {}
-    _draft(method, url, init?.headers || {}, body);
-    return _mock();
-  };
-  try {
-    const ax = require('axios');
-    const _origAdapter = ax.defaults.adapter;
-    ax.defaults.adapter = async (config: any) => {
-      const method = (config.method || 'GET').toUpperCase();
-      if (method === 'GET') return _origAdapter ? _origAdapter(config) : { data: {}, status: 200, statusText: 'OK', headers: {}, config };
-      _draft(method, config.url, config.headers, config.data || {});
-      return { data: {}, status: 200, statusText: 'OK', headers: {}, config };
+    const envVarsMap: Record<string, string> = {
+      AGENTFORGE_INPUT: inputValue || "Hello",
+      AGENTFORGE_MODE: "PREVIEW",
+      ...vaultAutoEnv,
+      ...Object.fromEntries(validEnvKeys.map((k) => [k.key.trim(), k.value.trim()])), // manual entries override vault
     };
-  } catch {}
-  try {
-    const got = require('got');
-    const _mockGot = async () => ({ body: {}, statusCode: 200 });
-    for (const _m of ['post','put','delete','patch']) (got as any)[_m] = _mockGot;
-  } catch {}
-}
 
-`;
-
-    const sandboxShim = lang === "python" ? pythonShim : jsShim;
-    const codeToRun = sandboxShim + compiledCode;
+    const codeToRun = compiledCode;
 
     try {
       const res = await fetch("/api/sandbox/execute-code", {
@@ -1086,20 +1057,25 @@ if (process.env.AGENTFORGE_MODE === 'PREVIEW') {
                 "border border-border bg-[#0b0e14] rounded-2xl flex flex-col transition-all duration-200 overflow-hidden",
                 codeTerminalOpen ? "min-h-[200px]" : "h-11"
               )}>
-                <button
-                  onClick={() => setCodeTerminalOpen((v) => !v)}
-                  className="flex items-center gap-2 px-4 h-11 text-[9px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-300 transition-colors flex-shrink-0 w-full"
-                >
-                  <Terminal size={10} />
-                  <span>Code Output</span>
-                  {codeStatus === "loading" && <Loader2 size={9} className="animate-spin text-indigo-400 ml-1" />}
-                  {codeStatus === "success" && <CheckCircle size={9} className="text-emerald-400 ml-1" />}
-                  {codeStatus === "error" && <X size={9} className="text-rose-400 ml-1" />}
+                <div className="flex items-center h-11 px-4 flex-shrink-0">
+                  <button
+                    onClick={() => setCodeTerminalOpen((v) => !v)}
+                    className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-300 transition-colors flex-1 min-w-0"
+                  >
+                    <Terminal size={10} />
+                    <span>Code Output</span>
+                    {codeStatus === "loading" && <Loader2 size={9} className="animate-spin text-indigo-400 ml-1" />}
+                    {codeStatus === "success" && <CheckCircle size={9} className="text-emerald-400 ml-1" />}
+                    {codeStatus === "error" && <X size={9} className="text-rose-400 ml-1" />}
+                    {codeLogs.length > 0 && (
+                      <span className="text-[8px] font-mono text-slate-600 ml-1">{codeLogs.length} lines</span>
+                    )}
+                    <ChevronRight size={10} className={cn("ml-1 transition-transform", codeTerminalOpen && "rotate-90")} />
+                  </button>
                   {codeLogs.length > 0 && (
-                    <span className="text-[8px] font-mono text-slate-600 ml-1">{codeLogs.length} lines</span>
+                    <CopyLogsButton logs={terminalLines} />
                   )}
-                  <ChevronRight size={10} className={cn("ml-auto transition-transform", codeTerminalOpen && "rotate-90")} />
-                </button>
+                </div>
                 {codeTerminalOpen && (
                   <div className="flex-1 px-4 pb-4 font-mono text-[10px] leading-relaxed space-y-0.5 overflow-hidden">
                     {codeLogs.length === 0 ? (
@@ -1135,9 +1111,19 @@ if (process.env.AGENTFORGE_MODE === 'PREVIEW') {
                               .map(([key, val], idx) => {
                                 const packet = val as any;
                                 const raw = packet?.payload;
-                                const nodeLabel = nodes.find(
+                                const matchedNode = nodes.find(
                                   (n) => (n.data.label || "").toLowerCase().replace(/\s+/g, "_") === key
-                                )?.data.label || key.replace(/_/g, " ");
+                                );
+                                const nodeLabel = matchedNode?.data.label || key.replace(/_/g, " ");
+                                const appProv = (matchedNode?.data as any)?.appProvider?.toLowerCase();
+                                const APP_NAMES: Record<string, string> = {
+                                  x: "Twitter/X", twitter: "Twitter/X", instagram: "Instagram",
+                                  linkedin: "LinkedIn", medium: "Medium", discord: "Discord",
+                                  slack: "Slack", github: "GitHub", notion: "Notion",
+                                  sendgrid: "SendGrid", mailchimp: "Mailchimp", stripe: "Stripe",
+                                  twilio: "Twilio", airtable: "Airtable", shopify: "Shopify",
+                                };
+                                const appName = appProv ? (APP_NAMES[appProv] ?? appProv) : nodeLabel;
                                 const isIntercepted = typeof raw === "object" && raw !== null && Object.keys(raw).length === 0;
                                 const matchedDraft = isIntercepted ? draftPayloads[idx] : undefined;
                                 const display = raw === null || raw === undefined ? "—"
@@ -1148,7 +1134,7 @@ if (process.env.AGENTFORGE_MODE === 'PREVIEW') {
                                       <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide min-w-[120px] truncate" title={nodeLabel}>{nodeLabel}</span>
                                       {isIntercepted ? (
                                         <span className="text-[10px] text-amber-400 font-mono">
-                                          🔍 PREVIEW: {nodeLabel} → Payload Generated (No data sent)
+                                          🔍 PREVIEW: {appName} → Payload Generated (No data sent)
                                         </span>
                                       ) : (
                                         <span className="text-[10px] text-emerald-300 font-mono break-all">{display}</span>

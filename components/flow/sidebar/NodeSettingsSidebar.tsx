@@ -121,6 +121,8 @@ function jsonToKv(raw: string | undefined): KVPair[] {
 import { cn } from "@/lib/utils";
 import VaultInput from "@/components/ui/VaultInput";
 import { APP_REGISTRY, getApp, getAction, CONTENT_FIELD_KEYS } from "@/lib/providers";
+import { AppBrandIcon } from "@/lib/providers/brandIcons";
+import { ChevronDown } from "lucide-react";
 
 interface NodeSettingsSidebarProps {
   isOwner?: boolean;
@@ -229,6 +231,13 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
 
   // Connection status for the selected appProvider — must be here (before early return) to obey Rules of Hooks
   const [appConnected, setAppConnected] = React.useState<boolean | null>(null);
+  const [appDropdownOpen, setAppDropdownOpen] = React.useState(false);
+  React.useEffect(() => {
+    if (!appDropdownOpen) return;
+    const close = () => setAppDropdownOpen(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [appDropdownOpen]);
   const appProviderKey = selectedNode?.type === "appaction" ? (selectedNode.data.appProvider || "") : "";
   React.useEffect(() => {
     if (!appProviderKey) { setAppConnected(null); return; }
@@ -1156,27 +1165,62 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         {/* Select App (Account) */}
         <div className="flex flex-col gap-2">
           <label className="text-[10px] font-bold uppercase text-slate-500">Select Account</label>
-          <select
-            className={cn(
-              "rounded-lg p-2 text-sm focus:ring-2 focus:ring-violet-500/20 outline-none transition-all border",
-              "bg-background border-border text-foreground focus:border-violet-500"
+          {/* Custom icon dropdown */}
+          <div className="relative" onMouseDown={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setAppDropdownOpen((o) => !o)}
+              className={cn(
+                "w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm border transition-all outline-none",
+                "bg-background border-border text-foreground hover:border-violet-500/60 focus:border-violet-500"
+              )}
+            >
+              {app ? (
+                <>
+                  <AppBrandIcon provider={app.id} size={18} />
+                  <span className="flex-1 text-left">{app.name}</span>
+                </>
+              ) : (
+                <span className="flex-1 text-left text-muted-foreground">Choose an app...</span>
+              )}
+              <ChevronDown size={13} className={cn("text-muted-foreground transition-transform", appDropdownOpen && "rotate-180")} />
+            </button>
+
+            {appDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-border bg-background shadow-xl overflow-y-auto max-h-52">
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-2 px-2.5 py-2 text-sm text-muted-foreground hover:bg-accent transition-colors"
+                  onClick={() => {
+                    const preserved = Object.fromEntries(Object.entries(appInputs).filter(([k]) => !CONTENT_FIELD_KEYS.has(k)));
+                    updateNodeData(selectedNode.id, { appProvider: "", appAction: "", appInputs: preserved, label: selectedNode.data.label });
+                    setAppDropdownOpen(false);
+                  }}
+                >
+                  <span className="w-[18px] h-[18px] rounded flex-shrink-0" />
+                  <span>Choose an app...</span>
+                </button>
+                {APP_REGISTRY.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    className={cn(
+                      "w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors hover:bg-accent",
+                      appProvider === a.id && "bg-violet-500/10 text-violet-400"
+                    )}
+                    onClick={() => {
+                      const preserved = Object.fromEntries(Object.entries(appInputs).filter(([k]) => !CONTENT_FIELD_KEYS.has(k)));
+                      updateNodeData(selectedNode.id, { appProvider: a.id, appAction: "", appInputs: preserved, label: a.name });
+                      setAppDropdownOpen(false);
+                    }}
+                  >
+                    <AppBrandIcon provider={a.id} size={18} />
+                    <span>{a.name}</span>
+                  </button>
+                ))}
+              </div>
             )}
-            value={appProvider}
-            onChange={(e) => {
-              const newProvider = e.target.value;
-              const providerMeta = APP_REGISTRY.find((a) => a.id === newProvider);
-              const newLabel = providerMeta ? providerMeta.name : selectedNode.data.label;
-              const preserved = Object.fromEntries(
-                Object.entries(appInputs).filter(([k]) => !CONTENT_FIELD_KEYS.has(k))
-              );
-              updateNodeData(selectedNode.id, { appProvider: newProvider, appAction: "", appInputs: preserved, label: newLabel });
-            }}
-          >
-            <option value="">Choose an app...</option>
-            {APP_REGISTRY.map((a) => (
-              <option key={a.id} value={a.id}>{a.icon} {a.name}</option>
-            ))}
-          </select>
+          </div>
 
           {/* Connection status badge */}
           {app && appConnected !== null && (

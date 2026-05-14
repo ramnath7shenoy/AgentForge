@@ -312,15 +312,22 @@ export function genApprovalPause(lib: Library, label: string, varName: string, i
   const msg = (label || 'Approval Gate').replace(/'/g, "\\'").replace(/"/g, '\\"');
   if (isPythonLib(lib)) {
     return [
-      `${ind}input("\\n⏸  ${msg} — Press Enter to approve and continue...")`,
+      `${ind}if os.environ.get('AGENTFORGE_MODE') == 'PREVIEW':`,
+      `${ind}    print(f"\\n⏸  ${msg} — [auto-approved in preview mode]")`,
+      `${ind}else:`,
+      `${ind}    input("\\n⏸  ${msg} — Press Enter to approve and continue...")`,
       `${ind}ctx['${varName}'] = {'type': 'text', 'payload': 'approved'}`,
     ].join('\n') + '\n';
   }
   return [
-    `${ind}{ const { createInterface: _rlCI } = await import('readline/promises');`,
+    `${ind}if (process.env.AGENTFORGE_MODE === 'PREVIEW') {`,
+    `${ind}  console.log('\\n⏸  ${msg} — [auto-approved in preview mode]');`,
+    `${ind}} else {`,
+    `${ind}  const { createInterface: _rlCI } = await import('readline/promises');`,
     `${ind}  const _rl = _rlCI({ input: process.stdin, output: process.stdout });`,
     `${ind}  await _rl.question('\\n⏸  ${msg} — Press Enter to approve and continue... ');`,
-    `${ind}  _rl.close(); }`,
+    `${ind}  _rl.close();`,
+    `${ind}}`,
     `${ind}ctx['${varName}'] = { type: 'text', payload: 'approved' };`,
   ].join('\n') + '\n';
 }
@@ -422,30 +429,13 @@ export interface HttpBlockOpts {
   ind: string;          // indentation prefix
 }
 
-export function genHttpBlock(lib: Library, opts: HttpBlockOpts): string {
-  const { method, url, extraHeaders, authType, authValue, body, varName, ind } = opts;
+// Generates just the raw HTTP call lines at the given indentation.
+// Used internally by genHttpBlock — not exported.
+function genHttpCallLines(lib: Library, opts: HttpBlockOpts, headers: Record<string, string>, ind: string): string {
+  const { method, url, body, varName } = opts;
   const M = method.toUpperCase();
-  const isGetLike = M === 'GET' || M === 'HEAD' || M === 'OPTIONS';
-
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...extraHeaders };
-
-  if (authType === 'bearer' && authValue) {
-    const envKey = authValue.replace(/[^A-Z0-9_]/gi, '_').toUpperCase();
-    if (isPythonLib(lib)) {
-      headers['Authorization'] = `Bearer {os.environ.get('${envKey}', '${authValue}')}`;
-    } else {
-      headers['Authorization'] = `Bearer \${process.env.${envKey} ?? '${authValue}'}`;
-    }
-  } else if (authType === 'basic' && authValue) {
-    const envKey = authValue.replace(/[^A-Z0-9_]/gi, '_').toUpperCase();
-    if (isPythonLib(lib)) {
-      headers['Authorization'] = `Basic {os.environ.get('${envKey}', '')}`;
-    } else {
-      headers['Authorization'] = `Basic \${Buffer.from(process.env.${envKey} ?? '').toString('base64')}`;
-    }
-  }
-
   const i = ind;
+  const isGetLike = M === 'GET' || M === 'HEAD' || M === 'OPTIONS';
   const lines: string[] = [];
 
   switch (lib) {
@@ -475,9 +465,9 @@ export function genHttpBlock(lib: Library, opts: HttpBlockOpts): string {
     }
     case 'got': {
       const h = serializeTsHeaders(headers);
-      const gotOpts = [`headers: ${h.replace(/\n/g, `\n${i}  `)}`, `responseType: 'json' as const`];
+      const gotOpts = [`headers: ${h.replace(/\n/g, `\n${i}  `)}`, `responseType: 'json'`];
       if (!isGetLike && body) gotOpts.push(`json: ${body}`);
-      lines.push(`const ${varName}_res = await got.${M.toLowerCase()}<unknown>('${url.replace(/'/g, "\\'")}', {`);
+      lines.push(`const ${varName}_res = await got.${M.toLowerCase()}('${url.replace(/'/g, "\\'")}', {`);
       lines.push(`  ${gotOpts.join(`,\n${i}  `)},`);
       lines.push(`});`);
       lines.push(`ctx['${varName}'] = { type: 'data', payload: ${varName}_res.body };`);
@@ -528,6 +518,64 @@ export function genHttpBlock(lib: Library, opts: HttpBlockOpts): string {
   }
 
   return lines.map(l => `${i}${l}`).join('\n');
+}
+
+export function genHttpBlock(lib: Library, opts: HttpBlockOpts): string {
+  const { method, url, authType, authValue, extraHeaders, body, varName, ind } = opts;
+  const M = method.toUpperCase();
+  const isGetLike = M === 'GET' || M === 'HEAD' || M === 'OPTIONS';
+  const i = ind;
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...extraHeaders };
+
+  if (authType === 'bearer' && authValue) {
+    const envKey = authValue.replace(/[^A-Z0-9_]/gi, '_').toUpperCase();
+    if (isPythonLib(lib)) {
+      headers['Authorization'] = `Bearer {os.environ.get('${envKey}', '${authValue}')}`;
+    } else {
+      headers['Authorization'] = `Bearer \${process.env.${envKey} ?? '${authValue}'}`;
+    }
+  } else if (authType === 'basic' && authValue) {
+    const envKey = authValue.replace(/[^A-Z0-9_]/gi, '_').toUpperCase();
+    if (isPythonLib(lib)) {
+      headers['Authorization'] = `Basic {os.environ.get('${envKey}', '')}`;
+    } else {
+      headers['Authorization'] = `Basic \${Buffer.from(process.env.${envKey} ?? '').toString('base64')}`;
+    }
+  }
+
+  const bodyExpr = (!isGetLike && body) ? body : (isPythonLib(lib) ? '{}' : '{}');
+
+  if (isPythonLib(lib)) {
+    const realCall = genHttpCallLines(lib, opts, headers, i + '    ');
+    return [
+      `${i}if os.environ.get('AGENTFORGE_MODE') == 'PREVIEW':`,
+      `${i}    _draft_body = ${bodyExpr}`,
+      `${i}    print('\\n╯══ DRAFT PAYLOAD ═══════════════════════════════════')`,
+      `${i}    print('║  Method  : ${M}')`,
+      `${i}    print(f'║  URL     : ${url}')`,
+      `${i}    print('║  Body    : ' + (json.dumps(_draft_body, indent=2) if isinstance(_draft_body, (dict, list)) else str(_draft_body)))`,
+      `${i}    print('╚═══════════════════════════════════════════════\\n')`,
+      `${i}    ctx['${varName}'] = {'type': 'data', 'payload': _draft_body}`,
+      `${i}else:`,
+      realCall,
+    ].join('\n');
+  } else {
+    const realCall = genHttpCallLines(lib, opts, headers, i + '  ');
+    return [
+      `${i}if (process.env.AGENTFORGE_MODE === 'PREVIEW') {`,
+      `${i}  const _draftBody_${varName} = ${bodyExpr};`,
+      `${i}  console.log('\\n╯══ DRAFT PAYLOAD ═══════════════════════════════════');`,
+      `${i}  console.log('║  Method  : ${M}');`,
+      `${i}  console.log(\`║  URL     : ${url}\`);`,
+      `${i}  console.log('║  Body    : ' + JSON.stringify(_draftBody_${varName}, null, 2));`,
+      `${i}  console.log('╚═══════════════════════════════════════════════\\n');`,
+      `${i}  ctx['${varName}'] = { type: 'data', payload: _draftBody_${varName} };`,
+      `${i}} else {`,
+      realCall,
+      `${i}}`,
+    ].join('\n');
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────

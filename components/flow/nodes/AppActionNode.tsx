@@ -2,10 +2,11 @@
 
 import React, { useEffect, useState } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
-import { PlugZap, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { PlugZap, AlertTriangle } from "lucide-react";
 import { NodeCard } from "./NodeCard";
 import { cn } from "@/lib/utils";
 import { getApp, getAction } from "@/lib/providers";
+import { AppBrandIcon } from "@/lib/providers/brandIcons";
 
 export default function AppActionNode({ id, data, selected }: NodeProps) {
   const app = data.appProvider ? getApp(data.appProvider) : undefined;
@@ -46,7 +47,7 @@ export default function AppActionNode({ id, data, selected }: NodeProps) {
 
       {isConfigured ? (
         <div className="flex items-center gap-1.5 mt-0.5">
-          <span className="text-sm leading-none select-none">{app.icon}</span>
+          <AppBrandIcon provider={app.id} size={16} />
           <div className="flex flex-col min-w-0">
             <p className="text-[10px] font-bold text-foreground truncate">{app.name}</p>
             <p className="text-[9px] text-muted-foreground truncate">{action.label}</p>

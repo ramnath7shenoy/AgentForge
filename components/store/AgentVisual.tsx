@@ -8,7 +8,7 @@ function djb2(str: string): number {
   return hash >>> 0;
 }
 
-function lcg(seed: number, n: number): number {
+function seeded(seed: number, n: number): number {
   let s = seed;
   for (let i = 0; i < n; i++) {
     s = (s * 1664525 + 1013904223) & 0xffffffff;
@@ -17,171 +17,55 @@ function lcg(seed: number, n: number): number {
   return s / 0x100000000;
 }
 
-const PALETTES = [
-  { bg: "#0a0a0a", shapes: ["#1c1c1c", "#2a2a2a", "#3f3f3f"], accent: "#e4e4e7" },
-  { bg: "#0f0e17", shapes: ["#1e1b4b", "#312e81", "#3730a3"], accent: "#a78bfa" },
-  { bg: "#0b1120", shapes: ["#0f172a", "#1e3a5f", "#1e3a8a"], accent: "#60a5fa" },
-  { bg: "#0a1a12", shapes: ["#052e16", "#14532d", "#166534"], accent: "#34d399" },
-  { bg: "#150a0c", shapes: ["#3b0764", "#4c1d95", "#5b21b6"], accent: "#c084fc" },
+const THEMES = [
+  { from: "#3b0764", to: "#1e1b4b", mid: "#6d28d9", accent: "#a78bfa", dot: "#c4b5fd" },
+  { from: "#0c1445", to: "#0f172a", mid: "#1d4ed8", accent: "#60a5fa", dot: "#93c5fd" },
+  { from: "#042f2e", to: "#0f172a", mid: "#0d9488", accent: "#34d399", dot: "#6ee7b7" },
+  { from: "#1c0533", to: "#0f0a1e", mid: "#7c3aed", accent: "#e879f9", dot: "#f0abfc" },
+  { from: "#1a0a00", to: "#1c1400", mid: "#b45309", accent: "#fbbf24", dot: "#fde68a" },
+  { from: "#0f0f1a", to: "#1a1030", mid: "#4f46e5", accent: "#818cf8", dot: "#a5b4fc" },
 ];
-
-type Pattern = "circles" | "grid" | "bauhaus" | "rings" | "stripes";
-const PATTERNS: Pattern[] = ["circles", "grid", "bauhaus", "rings", "stripes"];
-
-function renderCircles(uid: string, p: typeof PALETTES[0], seed: number, w: number, h: number) {
-  const circles = Array.from({ length: 6 }, (_, i) => ({
-    cx: lcg(seed, i * 3 + 1) * w,
-    cy: lcg(seed, i * 3 + 2) * h,
-    r: 12 + lcg(seed, i * 3 + 3) * 48,
-    fill: p.shapes[i % p.shapes.length],
-  }));
-  return (
-    <>
-      {circles.map((c, i) => (
-        <circle key={i} cx={c.cx} cy={c.cy} r={c.r} fill={c.fill} opacity={0.7} />
-      ))}
-      <circle
-        cx={lcg(seed, 20) * w}
-        cy={lcg(seed, 21) * h}
-        r={8}
-        fill={p.accent}
-        opacity={0.9}
-      />
-    </>
-  );
-}
-
-function renderGrid(uid: string, p: typeof PALETTES[0], seed: number, w: number, h: number) {
-  const cols = 6, rows = 4;
-  const cw = w / cols, ch = h / rows;
-  return (
-    <>
-      {Array.from({ length: cols * rows }, (_, i) => {
-        const col = i % cols, row = Math.floor(i / cols);
-        const val = lcg(seed, i + 1);
-        const fill = val > 0.7 ? p.accent : val > 0.4 ? p.shapes[1] : p.shapes[0];
-        const opacity = 0.4 + val * 0.5;
-        return (
-          <rect
-            key={i}
-            x={col * cw + 1}
-            y={row * ch + 1}
-            width={cw - 2}
-            height={ch - 2}
-            fill={fill}
-            opacity={opacity}
-            rx={2}
-          />
-        );
-      })}
-    </>
-  );
-}
-
-function renderBauhaus(uid: string, p: typeof PALETTES[0], seed: number, w: number, h: number) {
-  return (
-    <>
-      <rect x={0} y={0} width={w * 0.5} height={h} fill={p.shapes[0]} />
-      <rect x={w * 0.5} y={0} width={w * 0.5} height={h * 0.5} fill={p.shapes[1]} />
-      <rect x={w * 0.5} y={h * 0.5} width={w * 0.5} height={h * 0.5} fill={p.shapes[2]} />
-      <circle cx={w * 0.25} cy={h * 0.5} r={Math.min(w, h) * 0.22} fill={p.accent} opacity={0.85} />
-      <rect
-        x={w * 0.5 + 8}
-        y={8}
-        width={w * 0.4}
-        height={h * 0.18}
-        fill={p.accent}
-        opacity={0.4}
-        rx={3}
-      />
-    </>
-  );
-}
-
-function renderRings(uid: string, p: typeof PALETTES[0], seed: number, w: number, h: number) {
-  const cx = w * (0.3 + lcg(seed, 1) * 0.4);
-  const cy = h * (0.3 + lcg(seed, 2) * 0.4);
-  return (
-    <>
-      {[60, 42, 26, 13].map((r, i) => (
-        <circle
-          key={i}
-          cx={cx}
-          cy={cy}
-          r={r}
-          fill="none"
-          stroke={i % 2 === 0 ? p.accent : p.shapes[i % p.shapes.length]}
-          strokeWidth={i === 0 ? 1 : 2}
-          opacity={0.5 + i * 0.12}
-        />
-      ))}
-      <circle cx={cx} cy={cy} r={5} fill={p.accent} />
-      <circle
-        cx={w * 0.72}
-        cy={h * 0.22}
-        r={18}
-        fill="none"
-        stroke={p.shapes[2]}
-        strokeWidth={1.5}
-        opacity={0.4}
-      />
-    </>
-  );
-}
-
-function renderStripes(uid: string, p: typeof PALETTES[0], seed: number, w: number, h: number) {
-  const count = 7;
-  const sw = w / count;
-  return (
-    <>
-      {Array.from({ length: count }, (_, i) => {
-        const val = lcg(seed, i + 1);
-        return (
-          <rect
-            key={i}
-            x={i * sw}
-            y={0}
-            width={sw}
-            height={h}
-            fill={val > 0.6 ? p.accent : val > 0.35 ? p.shapes[1] : p.shapes[0]}
-            opacity={0.5 + val * 0.4}
-          />
-        );
-      })}
-      <rect
-        x={lcg(seed, 10) * w * 0.7}
-        y={h * 0.3}
-        width={w * 0.25}
-        height={h * 0.4}
-        fill={p.accent}
-        opacity={0.15}
-        rx={4}
-      />
-    </>
-  );
-}
 
 interface AgentVisualProps {
   agentId: string;
+  name?: string;
   width?: number;
   height?: number;
   className?: string;
 }
 
-export default function AgentVisual({ agentId, width = 320, height = 160, className }: AgentVisualProps) {
+export default function AgentVisual({ agentId, name, width = 320, height = 160, className }: AgentVisualProps) {
   const seed = djb2(agentId);
-  const palette = PALETTES[seed % 5];
-  const pattern = PATTERNS[(seed >> 8) % 5];
-  const uid = agentId.replace(/[^a-z0-9]/gi, "").slice(0, 12) || "av";
+  const theme = THEMES[seed % THEMES.length];
+  const uid = agentId.replace(/[^a-z0-9]/gi, "").slice(0, 10) || "av";
+  const initial = (name?.[0] ?? agentId[0] ?? "A").toUpperCase();
 
-  let shapes: React.ReactNode;
-  switch (pattern) {
-    case "circles":  shapes = renderCircles(uid, palette, seed, width, height); break;
-    case "grid":     shapes = renderGrid(uid, palette, seed, width, height); break;
-    case "bauhaus":  shapes = renderBauhaus(uid, palette, seed, width, height); break;
-    case "rings":    shapes = renderRings(uid, palette, seed, width, height); break;
-    case "stripes":  shapes = renderStripes(uid, palette, seed, width, height); break;
+  // Generate node positions for a mini-graph
+  const nodeCount = 5 + (seed % 4);
+  const nodes = Array.from({ length: nodeCount }, (_, i) => ({
+    x: seeded(seed, i * 4 + 1) * width * 0.8 + width * 0.1,
+    y: seeded(seed, i * 4 + 2) * height * 0.7 + height * 0.15,
+    r: 2.5 + seeded(seed, i * 4 + 3) * 3,
+    opacity: 0.3 + seeded(seed, i * 4 + 4) * 0.5,
+  }));
+
+  // Connect nodes with edges (simple sequential + a few cross-links)
+  const edges: { x1: number; y1: number; x2: number; y2: number }[] = [];
+  for (let i = 0; i < nodes.length - 1; i++) {
+    edges.push({ x1: nodes[i].x, y1: nodes[i].y, x2: nodes[i + 1].x, y2: nodes[i + 1].y });
   }
+  if (nodes.length > 3) {
+    edges.push({ x1: nodes[0].x, y1: nodes[0].y, x2: nodes[2].x, y2: nodes[2].y });
+  }
+
+  // Decorative glow circles
+  const glowCx = width * (0.2 + seeded(seed, 50) * 0.6);
+  const glowCy = height * (0.2 + seeded(seed, 51) * 0.6);
+
+  const gradId = `g_${uid}`;
+  const glowId = `gl_${uid}`;
+  const radId = `r_${uid}`;
+  const fontSize = Math.min(width, height) * 0.38;
 
   return (
     <svg
@@ -192,8 +76,79 @@ export default function AgentVisual({ agentId, width = 320, height = 160, classN
       className={className}
       style={{ display: "block" }}
     >
-      <rect width={width} height={height} fill={palette.bg} />
-      {shapes}
+      <defs>
+        <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor={theme.from} />
+          <stop offset="50%" stopColor={theme.mid} stopOpacity="0.6" />
+          <stop offset="100%" stopColor={theme.to} />
+        </linearGradient>
+        <radialGradient id={glowId} cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor={theme.accent} stopOpacity="0.25" />
+          <stop offset="100%" stopColor={theme.accent} stopOpacity="0" />
+        </radialGradient>
+        <radialGradient id={radId} cx="30%" cy="30%" r="70%">
+          <stop offset="0%" stopColor={theme.mid} stopOpacity="0.4" />
+          <stop offset="100%" stopColor={theme.to} stopOpacity="0" />
+        </radialGradient>
+      </defs>
+
+      {/* Background */}
+      <rect width={width} height={height} fill={`url(#${gradId})`} />
+      <rect width={width} height={height} fill={`url(#${radId})`} />
+
+      {/* Glow blob */}
+      <ellipse
+        cx={glowCx} cy={glowCy}
+        rx={width * 0.45} ry={height * 0.45}
+        fill={`url(#${glowId})`}
+      />
+
+      {/* Graph edges */}
+      {edges.map((e, i) => (
+        <line
+          key={i}
+          x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
+          stroke={theme.accent}
+          strokeWidth={0.8}
+          opacity={0.2}
+          strokeDasharray="3 4"
+        />
+      ))}
+
+      {/* Graph nodes */}
+      {nodes.map((n, i) => (
+        <circle
+          key={i}
+          cx={n.x} cy={n.y} r={n.r}
+          fill={theme.dot}
+          opacity={n.opacity}
+        />
+      ))}
+
+      {/* Central initial letter */}
+      <text
+        x={width / 2}
+        y={height / 2 + fontSize * 0.35}
+        textAnchor="middle"
+        fontSize={fontSize}
+        fontFamily="system-ui, -apple-system, sans-serif"
+        fontWeight="900"
+        fill={theme.accent}
+        opacity="0.15"
+        letterSpacing="-2"
+      >
+        {initial}
+      </text>
+
+      {/* Subtle border vignette */}
+      <rect
+        width={width} height={height}
+        fill="none"
+        stroke={theme.accent}
+        strokeWidth="1"
+        opacity="0.1"
+        rx="0"
+      />
     </svg>
   );
 }
