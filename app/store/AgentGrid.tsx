@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -13,8 +13,13 @@ import {
   Code2,
   Workflow,
   Eye,
+  MessageSquare,
+  Send,
+  ChevronDown,
+  ChevronUp,
+  Trash2,
 } from "lucide-react";
-import { cloneFlow, incrementViewCount } from "@/app/actions/flow";
+import { cloneFlow, incrementViewCount, getFlowComments, postFlowComment, deleteFlowComment } from "@/app/actions/flow";
 import { cn } from "@/lib/utils";
 import AgentVisual from "@/components/store/AgentVisual";
 import WorkflowLightbox from "./WorkflowLightbox";
@@ -33,12 +38,154 @@ export interface StoreFlow {
   nodes: any[];
   edges: any[];
   viewCount?: number | null;
+  commentCount?: number;
 }
 
 function formatViews(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
+}
+
+function timeAgo(date: Date | string): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  const diff = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+interface Comment {
+  id: string;
+  authorName: string;
+  body: string;
+  createdAt: Date | string;
+  userId: string | null;
+}
+
+function CommentsPanel({
+  flowId,
+  flowOwnerId,
+  currentUserId,
+  onCountChange,
+}: {
+  flowId: string;
+  flowOwnerId: string | null | undefined;
+  currentUserId: string | null;
+  onCountChange: (delta: number) => void;
+}) {
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [text, setText] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  useEffect(() => {
+    getFlowComments(flowId).then(r => {
+      if (r.success) setComments(r.comments as Comment[]);
+      setLoading(false);
+    });
+  }, [flowId]);
+
+  const submit = async () => {
+    const trimmed = text.trim();
+    if (!trimmed || posting) return;
+    setPosting(true);
+    const result = await postFlowComment(flowId, trimmed);
+    if (result.success && result.comment) {
+      setComments(prev => [result.comment as Comment, ...prev]);
+      setText("");
+      onCountChange(1);
+    }
+    setPosting(false);
+  };
+
+  const handleDelete = async (commentId: string) => {
+    if (deleting) return;
+    setDeleting(commentId);
+    const result = await deleteFlowComment(commentId);
+    if (result.success) {
+      setComments(prev => prev.filter(c => c.id !== commentId));
+      onCountChange(-1);
+    }
+    setDeleting(null);
+  };
+
+  const handleKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+  };
+
+  return (
+    <div className="border-t border-border bg-muted/20 px-4 py-3 flex flex-col gap-3">
+      {/* Post input */}
+      {currentUserId ? (
+        <div className="flex gap-2 items-end">
+          <textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={handleKey}
+            placeholder="Write a review or report a bug…"
+            rows={2}
+            maxLength={1000}
+            className="flex-1 resize-none rounded-xl border border-border bg-card px-3 py-2 text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-violet-500/50 transition-colors"
+          />
+          <button
+            onClick={submit}
+            disabled={!text.trim() || posting}
+            className="flex items-center justify-center h-8 w-8 rounded-xl bg-violet-500 text-white disabled:opacity-40 hover:bg-violet-600 transition-colors flex-shrink-0"
+          >
+            {posting ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+          </button>
+        </div>
+      ) : (
+        <p className="text-[10px] text-muted-foreground text-center py-1">
+          <Link href="/login" className="text-violet-500 hover:underline font-semibold">Sign in</Link> to leave a comment
+        </p>
+      )}
+
+      {/* Comments list */}
+      {loading ? (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 size={13} className="animate-spin text-muted-foreground" />
+        </div>
+      ) : comments.length === 0 ? (
+        <p className="text-[10px] text-muted-foreground text-center py-2">No comments yet. Be the first!</p>
+      ) : (
+        <ul className="space-y-2.5 max-h-52 overflow-y-auto pr-1">
+          {comments.map(c => {
+            const canDelete = currentUserId && (c.userId === currentUserId || flowOwnerId === currentUserId);
+            return (
+              <li key={c.id} className="flex gap-2.5 group/comment">
+                <span className="flex-shrink-0 h-6 w-6 rounded-full bg-violet-500/15 text-violet-600 dark:text-violet-400 text-[10px] font-black flex items-center justify-center">
+                  {c.authorName[0]?.toUpperCase() ?? "?"}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="text-[10px] font-bold text-foreground">{c.authorName}</span>
+                    <span className="text-[9px] text-muted-foreground">{timeAgo(c.createdAt)}</span>
+                    {canDelete && (
+                      <button
+                        onClick={() => handleDelete(c.id)}
+                        disabled={deleting === c.id}
+                        className="ml-auto opacity-0 group-hover/comment:opacity-100 flex items-center justify-center h-4 w-4 rounded text-muted-foreground hover:text-rose-500 transition-all"
+                        title="Delete comment"
+                      >
+                        {deleting === c.id
+                          ? <Loader2 size={9} className="animate-spin" />
+                          : <Trash2 size={9} />}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed break-words">{c.body}</p>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: string | null }) {
@@ -48,6 +195,8 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
   const [cloneError, setCloneError] = useState<string | null>(null);
   const [workflowOpen, setWorkflowOpen] = useState(false);
   const [codeOpen, setCodeOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentCount, setCommentCount] = useState(flow.commentCount ?? 0);
 
   const isOwner = currentUserId && flow.userId === currentUserId;
   const creatorHandle = flow.creatorName || (flow.userId ? flow.userId.slice(-8).toUpperCase() : "COMMUNITY");
@@ -58,10 +207,9 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
     if (cloning || cloned) return;
 
     if (!currentUserId) {
-      // Guest: save to localStorage and open editor directly
       try {
         localStorage.setItem("agentforge_guest_flow", JSON.stringify({ nodes: flow.nodes, edges: flow.edges }));
-      } catch { /* quota exceeded — proceed anyway */ }
+      } catch { }
       setCloned(true);
       setTimeout(() => router.push("/editor"), 700);
       return;
@@ -86,6 +234,11 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
     }
   };
 
+  const toggleComments = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCommentsOpen(p => !p);
+  };
+
   return (
     <>
       <div className="group relative flex flex-col bg-card border border-border rounded-2xl overflow-hidden hover:border-violet-500/40 dark:hover:border-violet-400/30 hover:shadow-xl hover:shadow-violet-500/5 transition-all duration-200 backdrop-blur-sm">
@@ -97,20 +250,10 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
           ) : (
             <AgentVisual agentId={flow.id} width={320} height={144} className="w-full h-full" />
           )}
-
-          {/* Gradient overlay */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
-
-          {/* Owner manage panel */}
           {isOwner && (
-            <ManagePanel
-              flowId={flow.id}
-              flowName={flow.name}
-              flowDescription={flow.description}
-            />
+            <ManagePanel flowId={flow.id} flowName={flow.name} flowDescription={flow.description} />
           )}
-
-          {/* Multimodal badge */}
           {flow.isMultimodal && (
             <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 bg-sky-500/15 border border-sky-500/30 rounded-full backdrop-blur-sm">
               <ImageIcon size={9} className="text-sky-400" />
@@ -130,16 +273,13 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
               by {creatorHandle}
             </span>
             <span className="text-[9px] text-muted-foreground">
-              {new Date(flow.updated_at).toLocaleDateString("en-US", {
-                month: "short", day: "numeric", year: "numeric",
-              })}
+              {new Date(flow.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
             </span>
-            {(flow.viewCount ?? 0) > 0 && (
-              <span className="flex items-center gap-0.5 text-[9px] text-muted-foreground ml-auto">
-                <Eye size={9} />
-                {formatViews(flow.viewCount!)}
-              </span>
-            )}
+            {/* View count — always shown */}
+            <span className="flex items-center gap-0.5 text-[9px] text-muted-foreground ml-auto">
+              <Eye size={9} />
+              {formatViews(flow.viewCount ?? 0)}
+            </span>
           </div>
 
           {flow.description && (
@@ -148,9 +288,8 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
             </p>
           )}
 
-          {/* Actions */}
+          {/* Action buttons */}
           <div className="mt-auto pt-3 border-t border-border grid grid-cols-2 gap-1.5">
-            {/* Row 1 */}
             <Link
               href={`/sandbox/${flow.id}`}
               onClick={(e) => { e.stopPropagation(); incrementViewCount(flow.id); }}
@@ -176,7 +315,6 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
               {cloned ? "Opening…" : cloneError ? "Failed" : "Clone"}
             </button>
 
-            {/* Row 2 */}
             <button
               onClick={(e) => { e.stopPropagation(); setWorkflowOpen(true); incrementViewCount(flow.id); }}
               className="flex items-center justify-center gap-1.5 py-2 rounded-xl border border-border text-[10px] font-bold text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-all"
@@ -193,7 +331,27 @@ function AgentCard({ flow, currentUserId }: { flow: StoreFlow; currentUserId: st
               Code
             </button>
           </div>
+
+          {/* Comments toggle */}
+          <button
+            onClick={toggleComments}
+            className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-xl border border-border text-[10px] font-bold text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-all"
+          >
+            <MessageSquare size={9} />
+            {commentCount > 0 ? `${commentCount} Comment${commentCount !== 1 ? "s" : ""}` : "Comments"}
+            {commentsOpen ? <ChevronUp size={9} /> : <ChevronDown size={9} />}
+          </button>
         </div>
+
+        {/* Comments panel */}
+        {commentsOpen && (
+          <CommentsPanel
+            flowId={flow.id}
+            flowOwnerId={flow.userId}
+            currentUserId={currentUserId}
+            onCountChange={(delta) => setCommentCount(n => n + delta)}
+          />
+        )}
       </div>
 
       <WorkflowLightbox
@@ -239,7 +397,7 @@ export default function AgentGrid({
   if (flows.length === 0) return <AgentGridEmpty />;
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 items-start">
       {flows.map((flow) => (
         <AgentCard key={flow.id} flow={flow} currentUserId={currentUserId} />
       ))}

@@ -25,6 +25,7 @@ declare global {
     Storage: {
       nodes: Json;
       edges: Json;
+      thread: Json;
     };
     UserMeta: {
       id: string;

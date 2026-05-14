@@ -297,13 +297,83 @@ export async function getDeployedFlows() {
   try {
     const flows = await prisma.flow.findMany({
       where: { isDeployed: true, isPublic: true },
-      select: { id: true, name: true, description: true, thumbnail: true, userId: true, creatorName: true, updated_at: true, nodes: true, edges: true, viewCount: true },
+      select: {
+        id: true, name: true, description: true, thumbnail: true,
+        userId: true, creatorName: true, updated_at: true,
+        nodes: true, edges: true, viewCount: true,
+        _count: { select: { comments: true } },
+      },
       orderBy: { updated_at: 'desc' },
     });
     return { success: true, flows };
   } catch (error: any) {
     console.error('Failed to fetch deployed flows:', error);
     return { success: false, flows: [], error: error.message };
+  }
+}
+
+export async function getFlowComments(flowId: string) {
+  try {
+    const comments = await prisma.flowComment.findMany({
+      where: { flowId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: { id: true, authorName: true, body: true, createdAt: true, userId: true },
+    });
+    return { success: true, comments };
+  } catch (error: any) {
+    return { success: false, comments: [], error: error.message };
+  }
+}
+
+export async function postFlowComment(flowId: string, body: string) {
+  "use server";
+  const trimmed = body.trim().slice(0, 1000);
+  if (!trimmed) return { success: false, error: "Comment is empty" };
+
+  const supabase = await import("@/lib/supabase/server").then(m => m.createClient());
+  const { data: { user } } = await supabase.auth.getUser();
+
+  const authorName = (() => {
+    if (!user) return "Anonymous";
+    const m = user.user_metadata;
+    const name = m?.full_name || m?.name || m?.preferred_username;
+    if (name?.trim()) return name.trim();
+    return user.email?.split("@")[0] || "Anonymous";
+  })();
+
+  try {
+    const comment = await prisma.flowComment.create({
+      data: { flowId, userId: user?.id ?? null, authorName, body: trimmed },
+      select: { id: true, authorName: true, body: true, createdAt: true, userId: true },
+    });
+    return { success: true, comment };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+export async function deleteFlowComment(commentId: string) {
+  "use server";
+  const supabase = await import("@/lib/supabase/server").then(m => m.createClient());
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Unauthorized" };
+
+  try {
+    const comment = await prisma.flowComment.findUnique({
+      where: { id: commentId },
+      select: { userId: true, flow: { select: { userId: true } } },
+    });
+    if (!comment) return { success: false, error: "Not found" };
+
+    const isAuthor = comment.userId === user.id;
+    const isFlowOwner = comment.flow?.userId === user.id;
+    if (!isAuthor && !isFlowOwner) return { success: false, error: "Unauthorized" };
+
+    await prisma.flowComment.delete({ where: { id: commentId } });
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
   }
 }
 

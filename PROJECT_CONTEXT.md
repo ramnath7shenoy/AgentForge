@@ -20,6 +20,11 @@ app/
       execute/route.ts        # POST → SSE: runs serverExecutor; maxDuration=60
       execute-code/route.ts   # POST → SSE: raw E2B code execution; maxDuration=60
     vector-search/route.ts
+  auth/
+    confirm/route.ts    # Handles token_hash email flow (verifyOtp → /update-password for recovery)
+    callback/route.ts   # Handles PKCE code flow (exchangeCodeForSession → detects recovery via recovery_sent_at)
+  update-password/
+    page.tsx            # Password reset form: strength meter, show/hide, confirm field; updateUser()
   editor/page.tsx        # Main canvas (~1700 lines): FlowCanvas, sidebars, toolbar, AI Architect, chat, terminal
   publish/page.tsx       # Publish & Export: Mirror Mode sandbox, polyglot codegen, flowId-keyed localStorage
   sandbox/[id]/
@@ -36,12 +41,16 @@ components/flow/
   canvas/                # FlowCanvas, ReadOnlyCanvas
   chat/ChatHub.tsx
   collaboration/
-    FlowCollaboration.tsx    # Manages enterRoom/leaveRoom lifecycle (pure side effect, returns null)
+    FlowCollaboration.tsx    # Manages enterRoom/leaveRoom lifecycle; enterRoom wrapped in try/catch (silent skip if LIVEBLOCKS_SECRET_KEY missing)
     CollaborationStatus.tsx  # "Live"/"Syncing…" badge + avatar row for other users
   sidebar/
     NodeSettingsSidebar.tsx  # AppAction label auto-syncs to action.label on mount via useEffect
-    NodeSidebar.tsx          # Vault tab: preferred provider dropdown
+    NodeSidebar.tsx          # Vault tab: preferred provider dropdown; root div has data-tutorial="node-palette"
   ResponseGallery.tsx / SandboxGallery.tsx / ImageLightbox.tsx
+
+components/ui/tutorial/
+  MissionBriefing.tsx   # 9-section flip-through guide; useHighlightRects queries [data-tutorial=id] elements;
+                        # HighlightRings renders fixed-position glow rings over tagged UI buttons
 
 hooks/useSandboxExecution.ts
 
@@ -174,11 +183,26 @@ Entry points throw `RuntimeError`/`Error` if `AGENTFORGE_INPUT` env var is missi
 - Auto-save: debounced 2s
 - **Prisma schema change → must run `npx prisma generate`** to update `lib/generated/prisma/`
 
+### Password Reset Flow
+Two paths depending on Supabase email template format:
+1. **token_hash path** (default email template): `{SiteURL}/auth/confirm?token_hash=...&type=recovery`
+   → `/app/auth/confirm/route.ts` calls `verifyOtp({ type, token_hash })` → redirects to `/update-password`
+2. **PKCE code path**: `{SiteURL}/auth/callback?code=...`
+   → `/app/auth/callback/route.ts` calls `exchangeCodeForSession(code)` then `getUser()`
+   → recovery detected by checking `user.recovery_sent_at` within last 10 minutes → redirects to `/update-password`
+   → (Supabase PKCE does NOT append `type=recovery` to redirect URL — cannot rely on URL params)
+
+**Production Supabase setup (do before merging to main):**
+- Site URL → production Vercel domain
+- Redirect URLs → `https://<prod-domain>/**` + `http://localhost:3000/**`
+
 ---
 
 ## Real-Time Collaboration (Liveblocks)
 
 **Config:** `liveblocks.config.ts` — global `Presence` (cursor x/y, hoveredNodeId, user metadata), `Storage` (nodes/edges LiveList), `UserMeta` types.
+
+**Client:** `lib/liveblocks/client.ts` — `createClient` with async `authEndpoint` function (POSTs to `/api/liveblocks-auth`). Requires `LIVEBLOCKS_SECRET_KEY` env var in Vercel.
 
 **Auth:** `app/api/liveblocks-auth/route.ts` — POST, checks Supabase session + Prisma flow ownership.
 - Owner → `FULL_ACCESS`
@@ -199,6 +223,27 @@ Entry points throw `RuntimeError`/`Error` if `AGENTFORGE_INPUT` env var is missi
 
 ---
 
+## Dashboard
+
+- **Stats**: 2-column grid — Total Flows + Vault Keys (Public stat card removed)
+- **Flow grouping**: Named groups shown first (alphabetical), ungrouped flows at bottom
+- **Tabs**: Flows · Templates · Account
+  - Account tab: user email from Supabase browser client; Sign Out (server action) + Switch Account (`signOut()` → `/login`)
+- **Flow cards**: no Eye/Public badge; Share button only in card footer
+- **Templates**: matches actual `FLOW_TEMPLATES` — Basic Chatbot (💬), Research Assistant (🔬), Omnichannel Content Generator (📡), Webhook Processor (🔗)
+
+---
+
+## Editor — Tutorial System
+
+- **First visit**: `showTutorialHint` state shown for 6 seconds (small pill notification, does NOT auto-open tutorial)
+- **Help FAB**: `fixed bottom-6 right-6 z-[50]` — HelpCircle button opens `MissionBriefing`
+- **`data-tutorial` attributes** tag interactive elements for highlight ring targeting:
+  - `"node-palette"` (NodeSidebar root), `"utility-pill"`, `"templates"`, `"ai-build"`, `"run-flow"`, `"publish"`, `"share"`, `"right-sidebar"`
+- **MissionBriefing**: 9-section flip-through; `HighlightRings` queries `[data-tutorial=id]` via `getBoundingClientRect()`; progress dots clickable; Done button calls `completeTutorial()`
+
+---
+
 ## Agent Store
 
 Universal access — identical content for guests and logged-in users.
@@ -215,7 +260,7 @@ Universal access — identical content for guests and logged-in users.
 **Categories:** All · Vision (multimodal providers) · Text · Logic (router/decision nodes) · Productivity (trigger/action/webhook nodes). Sort: Recent (default, `updated_at DESC`) or Popular (`viewCount DESC`).
 
 ## Prisma Models
-`Flow` (nodes/edges JSON, isPublic, isDeployed, isDeployed, viewCount, creatorName, description, thumbnail) · `Project` · `Folder` · `Vault` · `Integration` (provider, accessToken, refreshToken; unique userId+provider)
+`Flow` (nodes/edges JSON, isPublic, isDeployed, viewCount, creatorName, description, thumbnail, **groupName String? @map("group_name")**) · `Project` · `Folder` · `Vault` · `Integration` (provider, accessToken, refreshToken; unique userId+provider)
 
 `viewCount Int? @default(0) @map("view_count")` — incremented (atomic `{ increment: 1 }`) on Sandbox/Workflow/Code interactions in the store. DB column: `view_count`. **Requires SQL migration when first added:** `ALTER TABLE public.flows ADD COLUMN IF NOT EXISTS view_count INTEGER DEFAULT 0;`
 

@@ -1030,8 +1030,11 @@ function EditorContent() {
             )}
           </div>
 
-          {/* COLLABORATION STATUS */}
-          <CollaborationStatus />
+          {/* COLLABORATION STATUS + CHAT */}
+          <CollaborationStatus
+            currentUserId={userId}
+            displayName={user?.user_metadata?.full_name ?? user?.email ?? null}
+          />
 
           <div className="h-6 w-[1px] bg-slate-200 dark:bg-slate-800 mx-1" />
 
@@ -1212,18 +1215,18 @@ function EditorContent() {
             </button>
           )}
 
-          {/* HELP FAB */}
+          {/* HELP FAB — bottom-right */}
           <div className="fixed bottom-6 right-6 z-[50] flex flex-col items-end gap-2">
             <AnimatePresence>
               {showTutorialHint && (
                 <motion.div
-                  initial={{ opacity: 0, y: 8, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 8, scale: 0.95 }}
-                  className="flex items-center gap-2 px-3 py-2 bg-slate-800/95 border border-indigo-500/30 rounded-xl shadow-xl backdrop-blur-md text-xs text-slate-300 whitespace-nowrap"
+                  initial={{ opacity: 0, x: 8, scale: 0.95 }}
+                  animate={{ opacity: 1, x: 0, scale: 1 }}
+                  exit={{ opacity: 0, x: 8, scale: 0.95 }}
+                  className="flex items-center gap-2 px-3.5 py-2.5 bg-indigo-600/95 border border-indigo-400/40 rounded-xl shadow-xl shadow-indigo-500/30 backdrop-blur-md text-xs text-white whitespace-nowrap font-semibold"
                 >
-                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse flex-shrink-0" />
-                  Interactive tutorial available — click <HelpCircle size={12} className="inline mx-0.5 text-indigo-400" />
+                  <span className="w-2 h-2 rounded-full bg-white animate-pulse flex-shrink-0" />
+                  Tour available — click the <HelpCircle size={13} className="inline mx-0.5" /> below
                 </motion.div>
               )}
             </AnimatePresence>
@@ -1234,10 +1237,10 @@ function EditorContent() {
                 setTutorialStep(1);
               }}
               className={cn(
-                "bg-slate-800/50 backdrop-blur-md p-3 rounded-full border transition-all shadow-2xl group active:scale-95",
+                "backdrop-blur-md p-3 rounded-full border transition-all shadow-2xl group active:scale-95",
                 showTutorialHint
-                  ? "border-indigo-500/50 text-indigo-400 ring-2 ring-indigo-500/20"
-                  : "border-slate-700 text-slate-400 hover:text-indigo-400"
+                  ? "bg-indigo-600/80 border-indigo-400/60 text-white ring-2 ring-indigo-500/30"
+                  : "bg-slate-800/60 border-slate-700 text-slate-400 hover:text-indigo-400 hover:border-indigo-500/50"
               )}
               title="Open Tutorial"
             >

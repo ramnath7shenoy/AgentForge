@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo, useEffect } from "react";
+import React, { useCallback, useMemo, useEffect, useRef } from "react";
 
 import ReactFlow, {
   Controls,
@@ -69,6 +69,10 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true, collabo
   const setHoveredNodeId = useFlowStore((state) => state.setHoveredNodeId);
   const { project, fitView } = useReactFlow();
   const viewport = useViewport();
+  const canvasRef = useRef<HTMLDivElement>(null);
+  // Keep a stable ref to project so the event listener doesn't need to re-attach on every pan/zoom
+  const projectRef = useRef(project);
+  useEffect(() => { projectRef.current = project; }, [project]);
 
   // Auto-fit view when subagents are wrapped/unwrapped
   useEffect(() => {
@@ -211,29 +215,42 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true, collabo
     }
   }, [project, nodes, setNodes, tutorialStep, setTutorialStep]);
 
-  const handlePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (!collaborationEnabled) return;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const position = project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
-    setCollaborationCursor({ x: position.x, y: position.y });
-  }, [collaborationEnabled, project, setCollaborationCursor]);
+  // Use native capture-phase mousemove so ReactFlow's pointer capture (used during pan/drag)
+  // cannot intercept or stop propagation of cursor position updates.
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el || !collaborationEnabled) return;
 
-  const handlePointerLeave = useCallback(() => {
-    if (!collaborationEnabled) return;
-    setCollaborationCursor(null);
-    setHoveredNodeId(null);
+    const onMove = (e: MouseEvent) => {
+      const bounds = el.getBoundingClientRect();
+      const pos = projectRef.current({ x: e.clientX - bounds.left, y: e.clientY - bounds.top });
+      setCollaborationCursor({ x: pos.x, y: pos.y });
+    };
+
+    const onLeave = (e: MouseEvent) => {
+      if (!el.contains(e.relatedTarget as Element)) {
+        setCollaborationCursor(null);
+        setHoveredNodeId(null);
+      }
+    };
+
+    el.addEventListener("mousemove", onMove, true);
+    el.addEventListener("mouseleave", onLeave);
+    return () => {
+      el.removeEventListener("mousemove", onMove, true);
+      el.removeEventListener("mouseleave", onLeave);
+    };
   }, [collaborationEnabled, setCollaborationCursor, setHoveredNodeId]);
 
   return (
     <div
+      ref={canvasRef}
       className={cn(
         "w-full h-full transition-colors duration-300",
         "bg-background"
       )}
-      onPointerMove={handlePointerMove}
-      onPointerLeave={handlePointerLeave}
       style={{ position: "relative" }}
-      onDragOver={editable ? (e) => e.preventDefault() : undefined} 
+      onDragOver={editable ? (e) => e.preventDefault() : undefined}
       onDrop={editable ? onDrop : undefined}
     >
       <ReactFlow
@@ -347,18 +364,26 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true, collabo
             return (
               <div
                 key={other.connectionId ?? user.name}
-                className="absolute left-0 top-0 flex items-start gap-1"
-                style={{ transform: `translate3d(${cursorX}px, ${cursorY}px, 0)` }}
+                className="absolute left-0 top-0 flex items-start gap-1 pointer-events-none"
+                style={{
+                  transform: `translate3d(${cursorX}px, ${cursorY}px, 0)`,
+                  transition: "transform 80ms linear",
+                  willChange: "transform",
+                }}
               >
-                <div
-                  className="h-3 w-3 rotate-45 border border-white shadow-sm"
-                  style={{ backgroundColor: user.color }}
-                />
+                <svg width="16" height="20" viewBox="0 0 16 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path
+                    d="M0 0L0 16L4.5 11.5L7.5 19L9.5 18L6.5 10.5L12 10.5L0 0Z"
+                    fill={user.color}
+                    stroke="white"
+                    strokeWidth="1.2"
+                  />
+                </svg>
                 <span
-                  className="rounded-md px-1.5 py-0.5 text-[10px] font-bold text-white shadow-lg"
+                  className="ml-0.5 mt-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-white shadow-lg whitespace-nowrap"
                   style={{ backgroundColor: user.color }}
                 >
-                  {hoveredLabel ? `${user.name} on ${hoveredLabel}` : user.name}
+                  {hoveredLabel ? `${user.name} · ${hoveredLabel}` : user.name}
                 </span>
               </div>
             );

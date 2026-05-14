@@ -36,6 +36,7 @@ export default async function StorePage() {
     nodes: Array.isArray(f.nodes) ? f.nodes : [],
     edges: Array.isArray(f.edges) ? f.edges : [],
     viewCount: f.viewCount ?? 0,
+    commentCount: f._count?.comments ?? 0,
   }));
 
   return (

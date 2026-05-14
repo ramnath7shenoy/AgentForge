@@ -19,15 +19,23 @@ export default function UpdatePasswordPage() {
   const [success, setSuccess] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
 
-  // Supabase fires PASSWORD_RECOVERY once the recovery session is established
   useEffect(() => {
+    // Handle hash-fragment tokens (#access_token=...&type=recovery) — old Supabase flow
+    const hash = typeof window !== "undefined" ? window.location.hash : "";
+    if (hash.includes("type=recovery") || hash.includes("access_token")) {
+      // Let the Supabase client parse the hash and fire PASSWORD_RECOVERY
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) setSessionReady(true);
+      });
+    }
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY" || (session && event === "SIGNED_IN")) {
         setSessionReady(true);
       }
     });
 
-    // Also check if there's already an active session (page reloaded after redirect)
+    // Also check for an already-established session (server-side redirect already set cookie)
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) setSessionReady(true);
     });

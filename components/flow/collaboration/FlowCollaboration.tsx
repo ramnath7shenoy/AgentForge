@@ -48,7 +48,12 @@ export default function FlowCollaboration({ flowId, enabled, displayName }: Prop
 
   useEffect(() => {
     if (!enabled || !flowId || !enterRoom) return;
-    enterRoom(getFlowRoomId(flowId));
+    try {
+      enterRoom(getFlowRoomId(flowId));
+    } catch {
+      // Liveblocks not configured — silently skip collaboration
+      return;
+    }
     return () => {
       setCollaborationCursor(null);
       if (leaveRoom) {

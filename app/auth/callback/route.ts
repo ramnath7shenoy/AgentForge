@@ -11,8 +11,13 @@ export async function GET(request: Request) {
     const supabase = await createClient()
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (!error) {
-      // Password recovery codes must land on the update-password page
-      if (type === 'recovery') {
+      // Supabase PKCE flow doesn't append type=recovery to the redirect URL,
+      // so we detect recovery by checking recovery_sent_at on the user object.
+      const { data: { user } } = await supabase.auth.getUser()
+      const isRecovery = user?.recovery_sent_at
+        ? Date.now() - new Date(user.recovery_sent_at).getTime() < 10 * 60 * 1000
+        : type === 'recovery'
+      if (isRecovery) {
         return NextResponse.redirect(`${origin}/update-password`)
       }
       return NextResponse.redirect(`${origin}${next}`)

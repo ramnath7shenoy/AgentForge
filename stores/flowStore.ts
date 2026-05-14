@@ -73,6 +73,9 @@ export interface ExtendedFlowState extends FlowState {
   setCollaborationCursor: (cursor: CollaborationCursor) => void;
   setCollaborationUser: (user: CollaborationUser | null) => void;
   setHoveredNodeId: (id: string | null) => void;
+  // Collaboration chat
+  thread: Json;
+  sendChatMessage: (msg: { id: string; userId: string; name: string; color: string; text: string; createdAt: number }) => void;
 }
 
 import {
@@ -109,6 +112,7 @@ type FlowPresence = {
 type FlowStorage = {
   nodes: Json;
   edges: Json;
+  thread: Json;
 };
 
 type FlowUserMeta = {
@@ -280,6 +284,15 @@ export const useFlowStore = create<WithLiveblocks<ExtendedFlowState, FlowPresenc
   setCollaborationCursor: (cursor) => set({ collaborationCursor: cursor }),
   setCollaborationUser: (user) => set({ collaborationUser: user }),
   setHoveredNodeId: (id) => set({ hoveredNodeId: id }),
+  // Collaboration chat
+  thread: [] as Json,
+  sendChatMessage: (msg) => {
+    const current = (get() as any).thread;
+    const arr = Array.isArray(current) ? current : [];
+    // Keep last 200 messages to avoid unbounded growth
+    const trimmed = arr.length >= 200 ? arr.slice(arr.length - 199) : arr;
+    set({ thread: [...trimmed, msg] as Json });
+  },
 
   // --- STANDARD ACTIONS ---
   // chatHistory is intentionally NOT cleared here so conversation persists
@@ -1199,6 +1212,7 @@ export const useFlowStore = create<WithLiveblocks<ExtendedFlowState, FlowPresenc
     storageMapping: {
       nodes: true,
       edges: true,
+      thread: true,
     },
   }
 ));
