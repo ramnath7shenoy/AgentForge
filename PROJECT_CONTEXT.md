@@ -12,13 +12,15 @@ AI providers: Gemini · Groq · OpenAI · Anthropic (auto-detected via vault key
 app/
   actions/
     ai-architect.ts      # NL → validated flow JSON (12-node schema)
-    integration.ts       # OAuth CRUD + executeAppAction (8 OAuth + browser/E2B) + getIntegrationEnvVars()
-    flow.ts              # Flow CRUD: save/get/publish/deploy/delete/folders/templates
+    integration.ts       # OAuth CRUD + executeAppAction (9 OAuth + browser/E2B) + getIntegrationEnvVars()
+    flow.ts              # Flow CRUD: save/get/publish/deploy/delete/folders/templates + logFlowRun(flowId, input, output, status, costUsd, durationMs, source)
     project.ts           # Project CRUD + templates
   api/
     sandbox/
       execute/route.ts        # POST → SSE: runs serverExecutor; maxDuration=60
       execute-code/route.ts   # POST → SSE: raw E2B code execution; maxDuration=60
+    webhook/
+      [id]/route.ts           # POST: execute deployed flow by flowId; returns JSON {success, output, durationMs, costUsd}; falls back to owner vault keys if no apiKeys supplied; logs via logFlowRun
     vector-search/route.ts
   auth/
     confirm/route.ts    # Handles token_hash email flow (verifyOtp → /update-password for recovery)
@@ -55,6 +57,7 @@ components/ui/tutorial/
                         # HighlightRings renders fixed-position glow rings over tagged UI buttons
 
 hooks/useSandboxExecution.ts
+hooks/useScheduler.ts         # Client-side recursive scheduler for trigger nodes; getSchedulerIntervalMs() maps cron label → ms; useScheduler() returns {isActive, start, stop}
 
 lib/
   flow/
@@ -85,9 +88,12 @@ NodeData     { label, instructions, provider, modelName, apiKey,
                connectionType, url, method, headers, authType, authValue, bodyMapping,
                appProvider, appAction, appInputs,
                subflowId, subflowName, workflowOverride,
-               gatekeeperMessage, batchLogic, schedule, cron, webhookID }
+               gatekeeperMessage, timeoutMinutes, timeoutAction, batchLogic,
+               schedule, cron, webhookID, time, days, timezone,
+               intervalSeconds, intervalMinutes, minuteOffset, monthDay, cronExpression }
 ExecutionContext  { variables: Record<string,FlowPacket>, nodes: Record<string,FlowPacket>, __exit__? }
 ActionField  { key, label, type, placeholder?, isContent?: boolean }  // isContent = auto-filled from upstream
+FlowRun      { id, flowId, input?, output Json?, status, costUsd, durationMs?, source, createdAt }
 ```
 
 ---
@@ -107,6 +113,15 @@ runClientFlow(input) → executeGraph(_nodes, edges, ...)
 POST {nodes, edges, input, apiKeys[]} → SSE
   Same zombie filter + strict content injection as clientExecutor
   AGENTFORGE_MODE=LIVE — full execution, real OAuth tokens
+```
+
+### Webhook Execution — `/api/webhook/[id]`
+```
+POST {input, apiKeys?} → JSON {success, output, durationMs, costUsd}
+  Deployed/public flows only (isPublic || isDeployed)
+  Falls back to flow owner's vault keys if apiKeys not supplied
+  Logs run via logFlowRun(... source:"webhook")
+  maxDuration=60
 ```
 
 ### Code Sandbox — `/api/sandbox/execute-code` (Mirror Mode)
@@ -176,7 +191,7 @@ Kahn's topo-sort (isolated nodes excluded) → snake_case identifiers → per-li
 | TypeScript | fetch · axios · node-fetch |
 | JavaScript | fetch · got · axios |
 
-Entry points throw `RuntimeError`/`Error` if `AGENTFORGE_INPUT` env var is missing (no 'Hello' fallback).
+Entry points use the Input node's `packet.payload` as the default for `AGENTFORGE_INPUT` — the fallback chain is: `AGENTFORGE_INPUT` env var → Input node's configured text → `"Default"`. The compiled function signature also bakes in the same default literal.
 
 **Execution Plan** in terminal parsed from `# ── [type] label` comments in compiled code. Node/edge counts fall back to `steps.length` / `steps.length-1` when store is empty (localStorage-restored compiledCode).
 
@@ -304,9 +319,15 @@ app/store/
 ```
 
 ## Prisma Models
-`Flow` (nodes/edges JSON, isPublic, isDeployed, viewCount, **sandboxRunCount Int? @default(0)**, **changelog String?**, creatorName, description, thumbnail, groupName) · `Project` · `Folder` · `Vault` · `Integration`
+`Flow` (nodes/edges JSON, isPublic, isDeployed, viewCount, **sandboxRunCount Int? @default(0)**, **changelog String?**, **cloneCount Int? @default(0)**, **tags String[]**, **isFeatured Boolean?**, creatorName, description, thumbnail, groupName, folderId) · `Project` · `Folder` · `Vault` · `Integration`
 
-`FlowStar` (`flowId`, `userId`, `@@unique([flowId, userId])`) · `FlowWishlist` (`flowId`, `userId`, `@@unique([flowId, userId])`) · `FlowFollow` (`followerId`, `followingId`, `@@unique([followerId, followingId])`) · `FlowVersion` (`flowId`, nodes JSON, edges JSON, note?, `@@index([flowId])`)
+`FlowStar` (`flowId`, `userId`, `@@unique([flowId, userId])`) · `FlowWishlist` (`flowId`, `userId`, `@@unique([flowId, userId])`) · `FlowFollow` (`followerId`, `followingId` as plain UUIDs — no FK to auth.users, `@@unique([followerId, followingId])`) · `FlowVersion` (`flowId`, nodes JSON, edges JSON, note?, `@@index([flowId])`)
+
+`FlowRun` (`flowId`, `input String?`, `output Json?`, `status String @default("success")`, `costUsd Float @default(0)`, `durationMs Int?`, `source String @default("sandbox")`, `createdAt`) — logged on every sandbox/webhook execution via `logFlowRun()`.
+
+`FlowComment` (`flowId`, `userId?`, `authorName String @default("Anonymous")`, `body String`) — community comments on store detail pages.
+
+`FlowReport` (`flowId`, `userId?`, `reason String`) — abuse reports for deployed flows.
 
 `viewCount` — incremented on Sandbox/Workflow/Code interactions. `sandboxRunCount` — incremented when `/sandbox/[id]` page loads for a deployed flow. Both use atomic `{ increment: 1 }`.
 

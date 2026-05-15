@@ -233,9 +233,13 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
   // Connection status for the selected appProvider — must be here (before early return) to obey Rules of Hooks
   const [appConnected, setAppConnected] = React.useState<boolean | null>(null);
   const [appDropdownOpen, setAppDropdownOpen] = React.useState(false);
+  const appDropdownRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     if (!appDropdownOpen) return;
-    const close = () => setAppDropdownOpen(false);
+    const close = (e: MouseEvent) => {
+      if (appDropdownRef.current && appDropdownRef.current.contains(e.target as Node)) return;
+      setAppDropdownOpen(false);
+    };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [appDropdownOpen]);
@@ -1300,7 +1304,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
         <div className="flex flex-col gap-2">
           <label className="text-[10px] font-bold uppercase text-slate-500">Select Account</label>
           {/* Custom icon dropdown */}
-          <div className="relative" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="relative" ref={appDropdownRef}>
             <button
               type="button"
               onClick={() => setAppDropdownOpen((o) => !o)}
@@ -1326,8 +1330,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                   type="button"
                   className="w-full flex items-center gap-2 px-2.5 py-2 text-sm text-muted-foreground hover:bg-accent transition-colors"
                   onClick={() => {
-                    const preserved = Object.fromEntries(Object.entries(appInputs).filter(([k]) => !CONTENT_FIELD_KEYS.has(k)));
-                    updateNodeData(selectedNode.id, { appProvider: "", appAction: "", appInputs: preserved, label: selectedNode.data.label });
+                    updateNodeData(selectedNode.id, { appProvider: "", appAction: "", appInputs: {}, label: selectedNode.data.label });
                     setAppDropdownOpen(false);
                   }}
                 >
@@ -1343,8 +1346,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                       appProvider === a.id && "bg-violet-500/10 text-violet-400"
                     )}
                     onClick={() => {
-                      const preserved = Object.fromEntries(Object.entries(appInputs).filter(([k]) => !CONTENT_FIELD_KEYS.has(k)));
-                      updateNodeData(selectedNode.id, { appProvider: a.id, appAction: "", appInputs: preserved, label: a.name });
+                      updateNodeData(selectedNode.id, { appProvider: a.id, appAction: "", appInputs: {}, label: a.name });
                       setAppDropdownOpen(false);
                     }}
                   >

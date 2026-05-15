@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, Wand2 } from "lucide-react";
 import { detectArchitectProvider } from "@/lib/utils";
@@ -13,22 +13,46 @@ interface AIArchitectModalProps {
   onSubmit: (prompt: string, pastedKey: string, provider: ArchitectProvider) => void;
 }
 
+function detectProviderFromEntries(entries: { key: string; value: string }[]): ArchitectProvider | null {
+  const entry = entries.find((e) => {
+    const v = e.value?.trim() ?? "";
+    return v.startsWith("gsk_") || v.startsWith("AIza") || v.startsWith("sk-");
+  });
+  return entry ? detectArchitectProvider(entry.value) : null;
+}
+
 export default function AIArchitectModal({ open, onClose, onSubmit }: AIArchitectModalProps) {
   const architectKey = useVaultStore((s) => s.architectKey);
   const setArchitectKey = useVaultStore((s) => s.setArchitectKey);
+  const entries = useVaultStore((s) => s.entries);
 
   const [prompt, setPrompt] = useState("");
-  // Initialise from the session-persisted vault key so the field is pre-filled
-  // on every subsequent open within the same browser session.
   const [pastedKey, setPastedKey] = useState(architectKey);
   const [provider, setProvider] = useState<ArchitectProvider>(
     architectKey ? detectArchitectProvider(architectKey) : "gemini"
   );
 
+  // On each open: re-derive provider from pasted key or vault entries
+  useEffect(() => {
+    if (!open) return;
+    if (pastedKey.trim()) {
+      setProvider(detectArchitectProvider(pastedKey.trim()));
+      return;
+    }
+    const detected = detectProviderFromEntries(entries as any);
+    if (detected) setProvider(detected);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const vaultDetectedProvider = !pastedKey.trim() ? detectProviderFromEntries(entries as any) : null;
+
   const handleKeyChange = (val: string) => {
     setPastedKey(val);
-    setArchitectKey(val);           // persist for session immediately
+    setArchitectKey(val);
     if (val.trim()) setProvider(detectArchitectProvider(val.trim()));
+    else {
+      const detected = detectProviderFromEntries(entries as any);
+      if (detected) setProvider(detected);
+    }
   };
 
   const handleSubmit = () => {
@@ -76,13 +100,19 @@ export default function AIArchitectModal({ open, onClose, onSubmit }: AIArchitec
                   value={pastedKey}
                   onChange={(e) => handleKeyChange(e.target.value)}
                 />
-                {pastedKey.trim() && (
+                {pastedKey.trim() ? (
                   <p className="text-[10px] text-slate-500 pl-1">
                     Detected provider:{" "}
                     <span className="text-indigo-400 font-bold capitalize">{provider}</span>
                     {" "}· Key saved for this session
                   </p>
-                )}
+                ) : vaultDetectedProvider ? (
+                  <p className="text-[10px] text-slate-500 pl-1">
+                    Using vault key ·{" "}
+                    <span className="text-emerald-400 font-bold capitalize">{vaultDetectedProvider}</span>
+                    {" "}detected
+                  </p>
+                ) : null}
               </div>
               <textarea
                 autoFocus

@@ -513,8 +513,9 @@ export default function PublishPage() {
       vaultAutoEnv[envName] = e.value.trim();
     }
 
+    const _inputNodePayload = ((nodes.find((n: any) => n.type === "input") as any)?.data?.packet?.payload ?? "") as string;
     const envVarsMap: Record<string, string> = {
-      AGENTFORGE_INPUT: inputValue || "Hello",
+      AGENTFORGE_INPUT: inputValue || _inputNodePayload.trim() || "Default",
       AGENTFORGE_MODE: "PREVIEW",
       ...vaultAutoEnv,
       ...Object.fromEntries(validEnvKeys.map((k) => [k.key.trim(), k.value.trim()])), // manual entries override vault

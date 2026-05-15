@@ -555,32 +555,34 @@ function EditorContent() {
   };
 
   const handleGenerateAI = async (prompt: string, pastedKey: string, provider: ArchitectProvider) => {
-    const vaultStore = (await import("@/stores/vaultStore")).useVaultStore.getState();
+    const { useVaultStore } = await import("@/stores/vaultStore");
+    const { detectArchitectProvider } = await import("@/lib/utils");
+    const vaultStore = useVaultStore.getState();
 
-    const providerVaultKeys: Record<ArchitectProvider, string[]> = {
-      gemini: ["GEMINI_API_KEY", "API_KEY"],
-      groq:   ["GROQ_API_KEY",   "API_KEY"],
-      openai: ["OPENAI_API_KEY", "API_KEY"],
-    };
-
-    // JIT: explicit paste takes priority, then vault lookup
+    // JIT: explicit paste takes priority, then scan vault by key VALUE prefix
     let jitKey: string | null = pastedKey.trim() || null;
+    let resolvedProvider: ArchitectProvider = provider;
+
     if (!jitKey) {
-      for (const keyName of providerVaultKeys[provider]) {
-        const entry = vaultStore.entries.find((e: any) => e.key === keyName);
-        if (entry?.value) { jitKey = entry.value; break; }
+      const entry = vaultStore.entries.find((e: any) => {
+        const v: string = e.value?.trim() ?? "";
+        return v.startsWith("gsk_") || v.startsWith("AIza") || v.startsWith("sk-");
+      });
+      if (entry?.value) {
+        jitKey = entry.value;
+        resolvedProvider = detectArchitectProvider(jitKey);
       }
     }
 
     if (!jitKey) {
-      alert(`Please paste an API key or add ${providerVaultKeys[provider][0]} to the Vault.`);
+      alert("Please paste an API key or add a Groq / OpenAI / Gemini key to the Vault.");
       return;
     }
 
     setIsGenerating(true);
 
     try {
-      const result = await generateWorkflow({ prompt, provider, decryptedKey: jitKey });
+      const result = await generateWorkflow({ prompt, provider: resolvedProvider, decryptedKey: jitKey });
       if (result.success && result.data?.nodes) {
         setNodes(result.data.nodes);
         setEdges(result.data.edges);

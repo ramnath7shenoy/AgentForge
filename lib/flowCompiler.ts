@@ -1016,6 +1016,11 @@ function compileTypeScriptOrJS(
   const meta = collectFlowMeta(nodes);
   const fileExt = isTS ? 'ts' : 'js';
 
+  // Bake the Input node's configured text as the default input value
+  const _inputNode = nodes.find(n => n.type === 'input');
+  const _inputPayload = (_inputNode?.data?.packet?.payload ?? '') as string;
+  const defaultInputLiteral = JSON.stringify(_inputPayload.trim() || 'Run agent');
+
   // Install comment at very top
   let code = genInstallComment(lib, meta.llmProviders, hasSchedule, meta.hasBrowserAction);
 
@@ -1047,8 +1052,8 @@ function compileTypeScriptOrJS(
 
   // Function declaration
   const fnDecl = isTS
-    ? `async function runAgent(initialInput: string = 'Default'): Promise<FlowContext> {`
-    : `async function runAgent(initialInput = 'Default') {`;
+    ? `async function runAgent(initialInput: string = ${defaultInputLiteral}): Promise<FlowContext> {`
+    : `async function runAgent(initialInput = ${defaultInputLiteral}) {`;
 
   code += fnDecl + '\n';
   code += isTS
@@ -1211,7 +1216,7 @@ function compileTypeScriptOrJS(
     code += buildCronBlock(triggerNode, 'js').split('\n').map(l => l.trim() ? '  ' + l : l).join('\n');
     code += `}\n`;
   } else {
-    code += `// ── Run\nif (!process.env.AGENTFORGE_INPUT) throw new Error('AGENTFORGE_INPUT is required');\nrunAgent(process.env.AGENTFORGE_INPUT)\n  .then(ctx => console.log(JSON.stringify(ctx, null, 2)))\n  .catch(console.error);\n`;
+    code += `// ── Run\nrunAgent(process.env.AGENTFORGE_INPUT || ${defaultInputLiteral})\n  .then(ctx => console.log(JSON.stringify(ctx, null, 2)))\n  .catch(console.error);\n`;
   }
 
   return code;
@@ -1230,6 +1235,11 @@ function compilePython(
 ): string {
   const meta = collectFlowMeta(nodes);
   const isAsync = lib === 'aiohttp' || meta.hasBrowserAction;
+
+  // Bake the Input node's configured text as the default input value
+  const _inputNode = nodes.find(n => n.type === 'input');
+  const _inputPayload = (_inputNode?.data?.packet?.payload ?? '') as string;
+  const defaultInputLiteral = JSON.stringify(_inputPayload.trim() || 'Run agent');
 
   // Install comment at very top
   let code = genInstallComment(lib, meta.llmProviders, hasSchedule, meta.hasBrowserAction);
@@ -1263,8 +1273,8 @@ function compilePython(
 
   const ind = '    '; // 4-space indent inside function
   const defLine = isAsync
-    ? `async def run_agent(initial_input: str = "Default") -> dict:`
-    : `def run_agent(initial_input: str = "Default") -> dict:`;
+    ? `async def run_agent(initial_input: str = ${defaultInputLiteral}) -> dict:`
+    : `def run_agent(initial_input: str = ${defaultInputLiteral}) -> dict:`;
   code += defLine + '\n';
   code += `${ind}ctx = {'input': {'type': 'text', 'payload': initial_input}}\n\n`;
 
@@ -1453,8 +1463,7 @@ function compilePython(
     // Run async agent in a dedicated thread with its own event loop.
     // This works both locally and inside E2B / Jupyter kernels that already
     // have a running event loop (where asyncio.run() would raise RuntimeError).
-    code += `    _initial = os.environ.get('AGENTFORGE_INPUT')\n`;
-    code += `    if not _initial:\n        raise RuntimeError('AGENTFORGE_INPUT is required')\n`;
+    code += `    _initial = os.environ.get('AGENTFORGE_INPUT') or ${defaultInputLiteral}\n`;
     code += `    import threading as _threading\n`;
     code += `    _result_box: dict = {}\n`;
     code += `    def _run_agent_thread():\n`;
@@ -1471,9 +1480,7 @@ function compilePython(
     code += `    result = _result_box.get('v', {})\n`;
     code += `    print(json.dumps(result, indent=2, default=str))\n`;
   } else {
-    code += `    _initial = os.environ.get('AGENTFORGE_INPUT')\n`;
-    code += `    if not _initial:\n        raise RuntimeError('AGENTFORGE_INPUT is required')\n`;
-    code += `    result = run_agent(_initial)\n`;
+    code += `    result = run_agent(os.environ.get('AGENTFORGE_INPUT') or ${defaultInputLiteral})\n`;
     code += `    print(json.dumps(result, indent=2, default=str))\n`;
   }
 
