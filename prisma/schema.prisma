@@ -52,6 +52,7 @@ model Flow {
   reports         FlowReport[]
   versions        FlowVersion[]
   wishlists       FlowWishlist[]
+  runs            FlowRun[]
 
   @@index([projectId], map: "idx_flows_project_id")
   @@map("flows")
@@ -108,6 +109,23 @@ model FlowVersion {
 
   @@index([flowId], map: "idx_flow_versions_flow_id")
   @@map("flow_versions")
+  @@schema("public")
+}
+
+model FlowRun {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  flowId     String   @map("flow_id") @db.Uuid
+  input      String?
+  output     Json?
+  status     String   @default("success")
+  costUsd    Float    @default(0) @map("cost_usd")
+  durationMs Int?     @map("duration_ms")
+  source     String   @default("sandbox")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  flow       Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@index([flowId, createdAt(sort: Desc)])
+  @@map("flow_runs")
   @@schema("public")
 }
 

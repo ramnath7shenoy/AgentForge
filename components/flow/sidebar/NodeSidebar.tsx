@@ -36,7 +36,7 @@ const categories = [
   {
     name: "Triggers & Inputs",
     nodes: [
-      { type: "input", label: "Starting Point", icon: <Play size={14} className="text-blue-500" /> },
+      { type: "input", label: "Input Node", icon: <Play size={14} className="text-blue-500" /> },
       { type: "trigger", label: "Smart Trigger", icon: <Zap size={14} className="text-amber-400" /> },
       { type: "webhook", label: "Webhook", icon: <Globe size={14} className="text-purple-400" /> },
     ]
@@ -62,7 +62,7 @@ const categories = [
     nodes: [
       { type: "appaction", label: "App Action", icon: <PlugZap size={14} className="text-violet-400" /> },
       { type: "action", label: "Integration", icon: <Zap size={14} className="text-emerald-500" /> },
-      { type: "output", label: "Final Result", icon: <MessageSquare size={14} className="text-pink-500" /> },
+      { type: "output", label: "Output", icon: <MessageSquare size={14} className="text-pink-500" /> },
     ]
   }
 ];

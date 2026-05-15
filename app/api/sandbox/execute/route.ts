@@ -8,6 +8,7 @@ import {
   SandboxNodeStatus,
   SandboxLogType,
 } from "@/lib/flow/serverExecutor";
+import { logFlowRun } from "@/app/actions/flow";
 
 export const maxDuration = 60;
 
@@ -17,6 +18,7 @@ type SseEvent =
   | { t: "output"; nodeId: string; packet: SandboxFlowPacket }
   | { t: "result"; packet: SandboxFlowPacket }
   | { t: "cost"; amount: number }
+  | { t: "token"; nodeId: string; token: string }
   | { t: "done" }
   | { t: "error"; message: string };
 
@@ -25,6 +27,7 @@ export async function POST(req: NextRequest) {
   let edges: SandboxEdge[] = [];
   let input = "";
   let apiKeys: SandboxApiKey[] = [];
+  let flowId: string | undefined;
 
   try {
     const body = await req.json();
@@ -32,6 +35,7 @@ export async function POST(req: NextRequest) {
     edges = body.edges ?? [];
     input = body.input ?? "";
     apiKeys = body.apiKeys ?? [];
+    flowId = body.flowId || undefined;
   } catch {
     return new Response(JSON.stringify({ error: "Invalid request body" }), { status: 400 });
   }
@@ -41,6 +45,7 @@ export async function POST(req: NextRequest) {
   }
 
   const encoder = new TextEncoder();
+  const startedAt = Date.now();
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -68,6 +73,9 @@ export async function POST(req: NextRequest) {
             onNodeComplete: (nodeId, packet) => {
               enqueue({ t: "output", nodeId, packet });
             },
+            onToken: (token, nodeId) => {
+              enqueue({ t: "token", nodeId, token });
+            },
           }
         );
 
@@ -75,8 +83,15 @@ export async function POST(req: NextRequest) {
           context.variables.output || { type: "text", payload: "" };
         enqueue({ t: "result", packet: resultPacket });
         if (totalCostUsd > 0) enqueue({ t: "cost", amount: totalCostUsd });
+
+        if (flowId) {
+          logFlowRun(flowId, input, resultPacket, "success", totalCostUsd, Date.now() - startedAt).catch(() => {});
+        }
       } catch (err: any) {
         enqueue({ t: "error", message: err.message || "Execution failed" });
+        if (flowId) {
+          logFlowRun(flowId, input, null, "error", 0, Date.now() - startedAt).catch(() => {});
+        }
       } finally {
         enqueue({ t: "done" });
         controller.close();

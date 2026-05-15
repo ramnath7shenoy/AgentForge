@@ -22,7 +22,7 @@ export default function InputNode({ id, data, selected }: NodeProps) {
     <NodeCard nodeId={id} selected={selected} className="min-w-[200px]">
       <div className="flex items-center gap-2 font-bold text-blue-500 uppercase tracking-tighter mb-2 select-none">
         <Play size={14} fill="currentColor" />
-        <span>Starting Point</span>
+        <span>Input Node</span>
       </div>
 
       {/* Text preview */}
@@ -59,6 +59,11 @@ export default function InputNode({ id, data, selected }: NodeProps) {
         </div>
       )}
 
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="!w-3 !h-3 !bg-slate-400 !border-2 !border-[#0b0e14] !opacity-100 !left-1/2 !-translate-x-1/2 !top-[-6px]"
+      />
       <Handle
         type="source"
         position={Position.Bottom}

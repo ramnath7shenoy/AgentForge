@@ -103,6 +103,55 @@ export async function getLatestFlow() {
   }
 }
 
+export async function logFlowRun(
+  flowId: string,
+  input: string,
+  output: unknown,
+  status: "success" | "error",
+  costUsd: number,
+  durationMs: number,
+  source: string = "sandbox"
+) {
+  try {
+    await prisma.flowRun.create({
+      data: {
+        flowId,
+        input: input.slice(0, 500),
+        output: output as any,
+        status,
+        costUsd,
+        durationMs,
+        source,
+      },
+    });
+  } catch {
+    // non-critical — never block the caller
+  }
+}
+
+export async function getFlowRuns(flowId: string, limit = 10) {
+  try {
+    const runs = await prisma.flowRun.findMany({
+      where: { flowId },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      select: {
+        id: true,
+        input: true,
+        output: true,
+        status: true,
+        costUsd: true,
+        durationMs: true,
+        source: true,
+        createdAt: true,
+      },
+    });
+    return { success: true, runs };
+  } catch {
+    return { success: true, runs: [] };
+  }
+}
+
 /**
  * Get all flows for a specific user (for the Dashboard).
  */

@@ -1133,8 +1133,8 @@ function compileTypeScriptOrJS(
           const incomingId = edges.find(e => e.target === node.id)?.source;
           const upstreamVar = incomingId ? names[incomingId] : 'input';
           code += `  const ${varName}_review = \`Review this content for safety and policy compliance. Respond APPROVED or REJECTED:<reason>\\n\\n\${ctx['${upstreamVar}']?.payload ?? ''}\`;\n`;
-          code += `  // Gatekeeper: replace with a real LLM safety check if needed\n`;
-          code += `  const ${varName}_verdict = 'APPROVED'; // TODO: call LLM with ${varName}_review\n`;
+          code += `  // Gatekeeper: auto-approved in exported code. Wire ${varName}_review to your LLM to enforce.\n`;
+          code += `  const ${varName}_verdict = 'APPROVED';\n`;
           code += `  if (${varName}_verdict.startsWith('REJECTED')) throw new Error(\`Gatekeeper blocked: \${${varName}_verdict}\`);\n`;
           code += `  ctx['${varName}'] = { type: 'text', payload: 'approved' };\n`;
         }
@@ -1492,28 +1492,62 @@ function buildCronBlock(
   const timeStr = triggerNode.data.time || '09:00';
   const days = triggerNode.data.days || ['Mon'];
 
+  const intervalSeconds = Number(triggerNode.data.intervalSeconds) || 5;
+  const intervalMinutes = Number(triggerNode.data.intervalMinutes) || 5;
+  const monthDay = Number(triggerNode.data.monthDay) || 1;
+  const cronExpression = (triggerNode.data.cronExpression as string | undefined)?.trim() || '* * * * *';
+
   if (lang === 'js') {
-    let cronExpression = '* * * * *';
-    if (cronSetting === 'Hourly') cronExpression = '0 * * * *';
+    // node-cron doesn't support sub-minute; use setInterval for seconds-based schedules.
+    if (cronSetting === 'Every N Seconds') {
+      return `// ── Scheduled Execution (every ${intervalSeconds}s)\nsetInterval(() => {\n  runAgent().catch(console.error);\n}, ${intervalSeconds * 1000});\n`;
+    }
+    let expr = '* * * * *';
+    if (cronSetting === 'Every N Minutes') expr = `*/${intervalMinutes} * * * *`;
+    else if (cronSetting === 'Hourly') {
+      const minuteOffset = Number(triggerNode.data.minuteOffset ?? 0);
+      expr = `${minuteOffset} * * * *`;
+    }
     else if (cronSetting === 'Daily') {
       const [h, m] = timeStr.split(':');
-      cronExpression = `${parseInt(m || '0')} ${parseInt(h || '9')} * * *`;
+      expr = `${parseInt(m || '0')} ${parseInt(h || '9')} * * *`;
     } else if (cronSetting === 'Weekly') {
       const [h, m] = timeStr.split(':');
       const dayMap: Record<string, string> = { Sun: '0', Mon: '1', Tue: '2', Wed: '3', Thu: '4', Fri: '5', Sat: '6' };
-      cronExpression = `${parseInt(m || '0')} ${parseInt(h || '9')} * * ${days.map(d => dayMap[d]).filter(Boolean).join(',') || '1'}`;
+      expr = `${parseInt(m || '0')} ${parseInt(h || '9')} * * ${days.map(d => dayMap[d]).filter(Boolean).join(',') || '1'}`;
+    } else if (cronSetting === 'Monthly') {
+      const [h, m] = timeStr.split(':');
+      expr = `${parseInt(m || '0')} ${parseInt(h || '9')} ${monthDay} * *`;
+    } else if (cronSetting === 'Custom') {
+      expr = cronExpression;
     }
-    return `// ── Scheduled Execution\ncron.schedule('${cronExpression}', () => {\n  runAgent().catch(console.error);\n});\n`;
+    return `// ── Scheduled Execution\ncron.schedule('${expr}', () => {\n  runAgent().catch(console.error);\n});\n`;
   }
 
   const runCmd = isAsync ? 'asyncio.run(run_agent("Scheduled Run"))' : 'run_agent("Scheduled Run")';
   let lines = `    def job():\n        ${runCmd}\n\n`;
-  if (cronSetting === 'Every Minute') lines += `    schedule.every(1).minutes.do(job)\n`;
-  else if (cronSetting === 'Hourly') lines += `    schedule.every(1).hours.do(job)\n`;
+  if (cronSetting === 'Every N Seconds') lines += `    schedule.every(${intervalSeconds}).seconds.do(job)\n`;
+  else if (cronSetting === 'Every Minute') lines += `    schedule.every(1).minutes.do(job)\n`;
+  else if (cronSetting === 'Every N Minutes') lines += `    schedule.every(${intervalMinutes}).minutes.do(job)\n`;
+  else if (cronSetting === 'Hourly') {
+    const minuteOffset = Number(triggerNode.data.minuteOffset ?? 0);
+    lines += minuteOffset > 0
+      ? `    schedule.every(1).hours.at(":${String(minuteOffset).padStart(2, '0')}").do(job)\n`
+      : `    schedule.every(1).hours.do(job)\n`;
+  }
   else if (cronSetting === 'Daily') lines += `    schedule.every().day.at("${timeStr}").do(job)\n`;
   else if (cronSetting === 'Weekly') {
     const dayMap: Record<string, string> = { Mon: 'monday', Tue: 'tuesday', Wed: 'wednesday', Thu: 'thursday', Fri: 'friday', Sat: 'saturday', Sun: 'sunday' };
     days.forEach(d => { lines += `    schedule.every().${dayMap[d] || 'monday'}.at("${timeStr}").do(job)\n`; });
+  } else if (cronSetting === 'Monthly') {
+    // Python `schedule` has no native monthly; approximate with 30 days.
+    lines += `    # Monthly on day ${monthDay} at ${timeStr} — approximated as every 30 days\n`;
+    lines += `    schedule.every(30).days.at("${timeStr}").do(job)\n`;
+  } else if (cronSetting === 'Custom') {
+    lines += `    # Custom cron: ${cronExpression} — not natively supported by 'schedule'; replace with a cron daemon or APScheduler\n`;
+    lines += `    schedule.every(1).minutes.do(job)  # fallback: every minute\n`;
+  } else {
+    lines += `    schedule.every(1).minutes.do(job)\n`;
   }
   lines += `\n    while True:\n        schedule.run_pending()\n        time.sleep(1)\n`;
   return lines;

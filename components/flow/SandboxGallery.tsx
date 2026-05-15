@@ -54,6 +54,7 @@ export default function SandboxGallery({
   finalResult,
   running,
   runCostFormatted,
+  streamingTokens,
   nodes,
   onClearLogs,
 }: SandboxGalleryProps) {
@@ -153,7 +154,7 @@ export default function SandboxGallery({
       {/* Terminal */}
       {activeTab === "terminal" && (
         <div className="flex-1 overflow-y-auto p-4 font-mono text-[11px] leading-relaxed scrollbar-hide space-y-0.5 text-zinc-900 dark:text-zinc-100">
-          {logs.length === 0 ? (
+          {logs.length === 0 && !running ? (
             <div className="flex items-center justify-center h-full text-zinc-400 dark:text-zinc-700 text-[10px] italic">
               Awaiting execution...
             </div>
@@ -172,6 +173,19 @@ export default function SandboxGallery({
                 <span className={cn("flex-1", colorMap[log.type])}>{log.message}</span>
               </div>
             ))
+          )}
+          {/* Live streaming token display */}
+          {running && streamingTokens && Object.keys(streamingTokens).length > 0 && (
+            <div className="mt-2 rounded-lg border border-indigo-500/20 bg-indigo-500/5 px-3 py-2">
+              <p className="text-[8px] font-bold uppercase tracking-widest text-indigo-400 mb-1.5">Live Output</p>
+              {Object.entries(streamingTokens).map(([nodeId, text]) =>
+                text ? (
+                  <pre key={nodeId} className="text-[11px] text-slate-200 whitespace-pre-wrap leading-relaxed">
+                    {text}<span className="inline-block w-1.5 h-3 bg-indigo-400 animate-pulse ml-0.5 align-text-bottom" />
+                  </pre>
+                ) : null
+              )}
+            </div>
           )}
           <div ref={bottomRef} />
         </div>

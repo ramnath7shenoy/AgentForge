@@ -16,6 +16,7 @@ export interface WalkerOptions {
   onNodeStatusChange?: (nodeId: string, status: NodeExecutionStatus) => void;
   onNodeComplete?: (nodeId: string, packet: FlowPacket) => void;
   isDryRun?: boolean;
+  abortSignal?: AbortSignal;
 }
 
 type LogFn = (
@@ -205,7 +206,8 @@ async function dispatchLLM(
   onLog: (msg: string, type: any) => void,
   attachments?: Attachment[],
   onCost?: (amount: number) => void,
-  systemPrompt?: string
+  systemPrompt?: string,
+  abortSignal?: AbortSignal
 ): Promise<string> {
   const provider = providerKey || detectProvider(apiKey);
   const turnCount = conversationHistory.length + 1;
@@ -344,10 +346,12 @@ async function dispatchLLM(
       );
     } catch { /* serialisation error — skip log */ }
 
+    if (abortSignal?.aborted) throw new DOMException("Aborted", "AbortError");
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify(body),
+      signal: abortSignal,
     });
 
     const data = await response.json();
@@ -623,7 +627,8 @@ async function executeNode(
   initialInput: string,
   chatHistory: ChatMessage[],
   sendLog: LogFn,
-  isDryRun?: boolean
+  isDryRun?: boolean,
+  abortSignal?: AbortSignal
 ): Promise<FlowPacket> {
   switch (current.type) {
     case "trigger": {
@@ -770,7 +775,8 @@ async function executeNode(
                   const { useCostStore } = await import("@/stores/useCostStore");
                   useCostStore.getState().addCost(cost);
                 },
-                resolvedPrompt      // system role: the node instructions
+                resolvedPrompt,     // system role: the node instructions
+                abortSignal
               ),
               30_000,
               `${resolvedProvider.toUpperCase()}/${model}`
@@ -1487,7 +1493,14 @@ export async function executeGraph(
     onNodeStatusChange?.(node.id, "running");
     sendLog(`⚡ Dispatching: ${resolveNodeLabel(node)}`, "INFO", node.id);
 
-    executeNode(node, context, edges, initialInput, chatHistory, sendLog, isDryRun)
+    if (options.abortSignal?.aborted) {
+      skipped.add(node.id);
+      onNodeStatusChange?.(node.id, "skipped");
+      pendingCount--; inflight.delete(node.id);
+      checkDone();
+      return;
+    }
+    executeNode(node, context, edges, initialInput, chatHistory, sendLog, isDryRun, options.abortSignal)
       .then((packet) => {
         context.nodes[node.id] = packet;
         executed.add(node.id);
@@ -1532,18 +1545,20 @@ export async function executeGraph(
       })
       .catch((err) => {
         const errMsg = (err as Error)?.message || String(err);
-        sendLog(`❌ Error in ${resolveNodeLabel(node)}: ${errMsg}`, "ERROR", node.id);
-        onNodeStatusChange?.(node.id, "error");
+        const isAbort = (err as Error)?.name === "AbortError";
+        if (isAbort) {
+          sendLog(`🛑 Run stopped by user`, "WARN", node.id);
+          onNodeStatusChange?.(node.id, "skipped");
+        } else {
+          sendLog(`❌ Error in ${resolveNodeLabel(node)}: ${errMsg}`, "ERROR", node.id);
+          onNodeStatusChange?.(node.id, "error");
+        }
 
-        // Store an error packet so downstream nodes (especially sinks) can reference
-        // this node's output without crashing — they'll read the error message as text.
-        const errorPacket = { type: "text" as const, payload: `[Error: ${errMsg}]`, error: errMsg };
+        const errorPacket = { type: "text" as const, payload: isAbort ? "[Stopped]" : `[Error: ${errMsg}]`, error: errMsg };
         context.nodes[node.id] = errorPacket;
         executed.add(node.id);
         onNodeComplete?.(node.id, errorPacket);
 
-        // Contribute "success" to children so they are not pruned solely because
-        // this node failed — the error packet is valid data they can act on.
         for (const childId of adj.get(node.id) || []) {
           resolveParentForChild(node.id, childId, "success");
         }

@@ -37,6 +37,8 @@ import {
   X,
   AlertTriangle,
   Terminal,
+  Square,
+  MessageSquare,
 } from "lucide-react";
 import { packFiles } from "@/lib/utils/contextPacker";
 import { cn } from "@/lib/utils";
@@ -44,7 +46,8 @@ import { useRouter } from "next/navigation";
 import Navbar from "@/components/ui/Navbar";
 import SandboxGallery from "@/components/flow/SandboxGallery";
 import { useSandboxExecution } from "@/hooks/useSandboxExecution";
-import { saveFlow, publishFlow, deployToStore } from "@/app/actions/flow";
+import { useScheduler, getSchedulerIntervalMs } from "@/hooks/useScheduler";
+import { saveFlow, publishFlow, deployToStore, getFlowRuns } from "@/app/actions/flow";
 import DeployModal from "./DeployModal";
 import { useVaultStore } from "@/stores/vaultStore";
 import type { SandboxApiKey } from "@/lib/flow/serverExecutor";
@@ -76,6 +79,10 @@ export default function PublishPage() {
   const router = useRouter();
   const { nodes, edges, activeProject, theme } = useFlowStore();
   const sandboxExec = useSandboxExecution();
+  const scheduler = useScheduler();
+  const triggerNode = (nodes as any[]).find((n: any) => n.type === "trigger");
+  const schedulerIntervalMs = triggerNode ? getSchedulerIntervalMs(triggerNode.data) : null;
+  const isSchedulerFlow = schedulerIntervalMs !== null;
 
   const [activeTab, setActiveTab] = useState<Tab>("python");
   const [activeLibrary, setActiveLibrary] = useState<Library>(getDefaultLibrary("python"));
@@ -85,6 +92,7 @@ export default function PublishPage() {
 
   // Input & env config — persisted in sessionStorage so Back navigation restores state
   const [inputValue, setInputValue] = useState("");
+  const [placeholderValues, setPlaceholderValues] = useState<Record<string, string>>({});
   const [envKeys, setEnvKeys] = useState<SandboxApiKey[]>([{ key: "", value: "" }]);
   const [envOpen, setEnvOpen] = useState(false);
   const [showValues, setShowValues] = useState<Record<number, boolean>>({});
@@ -98,6 +106,12 @@ export default function PublishPage() {
   const [attachWarnings, setAttachWarnings] = useState<string[]>([]);
 
   // Keyed by flowId so each project has independent persisted state
+  // Multi-turn chat history
+  type ChatTurn = { role: "user" | "assistant"; content: string };
+  const [chatHistory, setChatHistory] = useState<ChatTurn[]>([]);
+  const pendingUserMsgRef = useRef("");
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
   const FORGE_STATE_KEY = `FORGE_PUBLISH_STATE_${activeProject?.id ?? "default"}`;
 
   // Effect 1 — Rehydrate state on mount.
@@ -132,6 +146,12 @@ export default function PublishPage() {
       if (Array.isArray(s.envKeys) && s.envKeys.length) setEnvKeys(s.envKeys);
       if (Array.isArray(s.attachments) && s.attachments.length) setSandboxAttachments(s.attachments);
       if (s.fileContext) setSandboxTextContext(s.fileContext);
+      if (Array.isArray(s.chatHistory) && s.chatHistory.length) setChatHistory(s.chatHistory);
+      else {
+        // Fall back to editor's in-memory chat history if this is a fresh publish session
+        const editorHistory = useFlowStore.getState().chatHistory as ChatTurn[];
+        if (editorHistory?.length) setChatHistory(editorHistory);
+      }
       // Only use cached compiledCode on hard page refresh (no sessionStorage snapshot = no live nodes)
       if (s.compiledCode && nodes.length === 0) {
         try {
@@ -158,9 +178,17 @@ export default function PublishPage() {
         attachments: sandboxAttachments,
         fileContext: sandboxTextContext,
         compiledCode,
+        chatHistory: chatHistory.slice(-20),
       }));
     } catch {}
-  }, [inputValue, envKeys, sandboxAttachments, sandboxTextContext, compiledCode]);
+  }, [inputValue, envKeys, sandboxAttachments, sandboxTextContext, compiledCode, chatHistory]);
+
+  // Escape to abort
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape" && sandboxExec.running) sandboxExec.abort(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [sandboxExec.running, sandboxExec.abort]);
 
   // Vault sync
   const [vaultSynced, setVaultSynced] = useState(false);
@@ -183,6 +211,8 @@ export default function PublishPage() {
     setSandboxAttachments([]);
     setSandboxTextContext("");
     setAttachWarnings([]);
+    setChatHistory([]);
+    pendingUserMsgRef.current = "";
     localStorage.removeItem(FORGE_STATE_KEY);
     sandboxExec.clearResult();
   };
@@ -192,11 +222,32 @@ export default function PublishPage() {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
 
-  // Deploy to Store state
+  // Deploy to Store state (declared before history effect that references deployedFlowId)
   const [deployLoading, setDeployLoading] = useState(false);
   const [deployedFlowId, setDeployedFlowId] = useState<string | null>(null);
   const [isDeployed, setIsDeployed] = useState(false);
   const [deployModalOpen, setDeployModalOpen] = useState(false);
+
+  // Run history
+  type RunRecord = { id: string; input: string | null; output: any; status: string; costUsd: number; durationMs: number | null; source: string; createdAt: Date };
+  const [runHistory, setRunHistory] = useState<RunRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [webhookCopied, setWebhookCopied] = useState(false);
+  const refreshHistory = async (flowId: string) => {
+    setHistoryLoading(true);
+    const { runs } = await getFlowRuns(flowId, 20);
+    setRunHistory(runs as RunRecord[]);
+    setHistoryLoading(false);
+  };
+
+  // Refresh run history when a run completes — prefer deployed flow ID so webhook runs appear
+  useEffect(() => {
+    const idToFetch = deployedFlowId || activeProject?.id;
+    if (!sandboxExec.running && idToFetch) {
+      refreshHistory(idToFetch);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sandboxExec.running, deployedFlowId, activeProject?.id]);
 
   // Dual-trigger execution status
   type ExecStatus = "idle" | "loading" | "success" | "error";
@@ -307,12 +358,33 @@ export default function PublishPage() {
 
   // Track workflow completion after sandboxExec.running flips back to false
   useEffect(() => {
-    if (prevRunningRef.current && !sandboxExec.running && workflowStatus === "loading") {
-      const hasErrors = sandboxExec.logs.some((l) => l.type === "ERROR");
-      setWorkflowStatus(sandboxExec.finalResult !== null && !hasErrors ? "success" : "error");
+    if (prevRunningRef.current && !sandboxExec.running) {
+      if (workflowStatus === "loading") {
+        const hasErrors = sandboxExec.logs.some((l) => l.type === "ERROR");
+        setWorkflowStatus(sandboxExec.finalResult !== null && !hasErrors ? "success" : "error");
+      }
+      // Append turn to chat history
+      if (sandboxExec.finalResult && pendingUserMsgRef.current) {
+        const assistantContent =
+          typeof sandboxExec.finalResult.payload === "string"
+            ? sandboxExec.finalResult.payload
+            : JSON.stringify(sandboxExec.finalResult.payload, null, 2);
+        setChatHistory((prev) => [
+          ...prev,
+          { role: "user", content: pendingUserMsgRef.current },
+          { role: "assistant", content: assistantContent },
+        ]);
+        setInputValue("");
+        pendingUserMsgRef.current = "";
+      }
     }
     prevRunningRef.current = sandboxExec.running;
   }, [sandboxExec.running]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Scroll chat history to bottom when it grows
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatHistory]);
 
   // Auto-scroll code terminal
   useEffect(() => {
@@ -356,17 +428,29 @@ export default function PublishPage() {
     // vault first, manual overrides
     const seen = new Set(manualKeys.map((k) => k.key.trim()));
     const validKeys = [...vaultKeys.filter((k) => !seen.has(k.key)), ...manualKeys];
-    const effectiveInput = inputValue || "Hello";
-    const hasExtras = sandboxAttachments.length > 0 || sandboxTextContext;
-    let nodesForRun: any[] = nodes as any;
-    if (hasExtras) {
-      nodesForRun = (nodes as any[]).map((n: any) =>
-        n.type === "input"
-          ? { ...n, data: { ...n.data, packet: { type: "text", payload: effectiveInput, ...(sandboxAttachments.length > 0 && { attachments: sandboxAttachments }), ...(sandboxTextContext && { fileContext: sandboxTextContext }) } } }
-          : n
-      );
+    let effectiveInput = inputValue || "Hello";
+    // Substitute any {{variable}} placeholders with user-provided values
+    for (const [k, v] of Object.entries(placeholderValues)) {
+      if (v) effectiveInput = effectiveInput.replaceAll(`{{${k}}}`, v);
     }
-    await sandboxExec.run(nodesForRun, edges as any, effectiveInput, validKeys);
+    pendingUserMsgRef.current = effectiveInput;
+
+    // Inject last 10 exchanges (20 turns) so context stays bounded
+    let fullInput = effectiveInput;
+    const recentHistory = chatHistory.slice(-20);
+    if (recentHistory.length > 0) {
+      const historyText = recentHistory
+        .map((t) => `${t.role === "user" ? "User" : "Assistant"}: ${t.content}`)
+        .join("\n");
+      fullInput = `[Previous conversation]\n${historyText}\n[End previous]\n\nCurrent message: ${effectiveInput}`;
+    }
+
+    const nodesForRun = (nodes as any[]).map((n: any) =>
+      n.type === "input"
+        ? { ...n, data: { ...n.data, packet: { type: "text", payload: fullInput, ...(sandboxAttachments.length > 0 && { attachments: sandboxAttachments }), ...(sandboxTextContext && { fileContext: sandboxTextContext }) } } }
+        : n
+    );
+    await sandboxExec.run(nodesForRun, edges as any, fullInput, validKeys, activeProject?.id);
   };
 
   const NODE_ICON: Record<string, string> = {
@@ -486,9 +570,19 @@ export default function PublishPage() {
     }
   };
 
-  const handleRunWorkflow = async () => {
-    setWorkflowStatus("loading");
-    await executeWorkflow();
+  const executeWorkflowRef = useRef(executeWorkflow);
+  executeWorkflowRef.current = executeWorkflow;
+
+  const handleRunWorkflow = () => {
+    if (isSchedulerFlow) {
+      scheduler.start(
+        async () => { setWorkflowStatus("loading"); await executeWorkflowRef.current(); },
+        schedulerIntervalMs!,
+      );
+    } else {
+      setWorkflowStatus("loading");
+      executeWorkflow();
+    }
   };
 
   const handleExecuteCode = () => {
@@ -530,6 +624,7 @@ export default function PublishPage() {
         setDeployedFlowId(result.flowId);
         setIsDeployed(true);
         setDeployModalOpen(false);
+        refreshHistory(result.flowId);
         router.push("/store");
       }
     } catch (err: any) {
@@ -621,24 +716,32 @@ export default function PublishPage() {
                 {shareCopied ? "Link Copied!" : "Share Sandbox"}
               </button>
 
-              {/* Run Sandbox */}
-              <button
-                onClick={handleRunWorkflow}
-                disabled={sandboxExec.running}
-                className={cn(
-                  "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg",
-                  sandboxExec.running
-                    ? "bg-indigo-600/50 text-white/50 cursor-not-allowed shadow-none"
-                    : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20"
-                )}
-              >
-                {sandboxExec.running ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
+              {/* Run / Auto-Run / Stop */}
+              {scheduler.isActive ? (
+                <button
+                  onClick={() => scheduler.stop()}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg bg-rose-600 hover:bg-rose-700 text-white shadow-rose-500/20"
+                >
+                  {sandboxExec.running ? <Loader2 size={14} className="animate-spin" /> : <Square size={14} className="fill-current" />}
+                  {sandboxExec.running ? "Running..." : "Stop Auto-Run"}
+                </button>
+              ) : sandboxExec.running ? (
+                <button
+                  onClick={() => sandboxExec.abort()}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg bg-rose-600 hover:bg-rose-700 text-white shadow-rose-500/20"
+                >
+                  <Square size={14} className="fill-current" />
+                  Stop
+                </button>
+              ) : (
+                <button
+                  onClick={handleRunWorkflow}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20"
+                >
                   <Play size={14} className="fill-current" />
-                )}
-                {sandboxExec.running ? "Running..." : "Run Sandbox"}
-              </button>
+                  {isSchedulerFlow ? "Start Auto-Run" : "Run Sandbox"}
+                </button>
+              )}
             </div>
           </header>
 
@@ -655,6 +758,39 @@ export default function PublishPage() {
                 >
                   Open <ChevronRight size={10} />
                 </button>
+              </div>
+            )}
+
+            {/* Webhook URL — shown after deploy */}
+            {isDeployed && deployedFlowId && (
+              <div className="flex flex-col gap-2 px-4 py-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-black uppercase tracking-[0.2em] text-indigo-400 flex items-center gap-1.5">
+                    <Link2 size={10} />
+                    Webhook URL
+                  </span>
+                  <span className="text-[8px] text-slate-500">POST to trigger from cron-job.org or any scheduler</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] font-mono text-slate-300 truncate flex-1 bg-slate-900/80 px-2 py-1.5 rounded-lg border border-slate-700">
+                    {typeof window !== "undefined" ? window.location.origin : ""}/api/webhook/{deployedFlowId}
+                  </span>
+                  <button
+                    onClick={() => {
+                      const origin = typeof window !== "undefined" ? window.location.origin : "";
+                      navigator.clipboard.writeText(`${origin}/api/webhook/${deployedFlowId}`);
+                      setWebhookCopied(true);
+                      setTimeout(() => setWebhookCopied(false), 2000);
+                    }}
+                    className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9px] font-bold transition-all"
+                  >
+                    {webhookCopied ? <CheckCircle size={10} /> : <Copy size={10} />}
+                    {webhookCopied ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+                <p className="text-[8px] text-slate-500">
+                  Body: <code className="text-indigo-400 font-mono">{`{ "input": "your prompt" }`}</code> — vault keys used automatically, no auth needed
+                </p>
               </div>
             )}
 
@@ -749,7 +885,9 @@ export default function PublishPage() {
             {/* UNIVERSAL INPUT */}
             <div className="flex flex-col gap-3">
               <div className="flex items-center gap-2">
-                <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Universal Input</h2>
+                <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+                  {chatHistory.length > 0 ? "New Message" : "Universal Input"}
+                </h2>
                 <button
                   onClick={handleResetSandbox}
                   className="ml-auto flex items-center gap-1 text-[9px] font-bold text-slate-600 hover:text-rose-400 transition-colors px-1.5 py-0.5 rounded border border-slate-800 hover:border-rose-500/30"
@@ -823,6 +961,29 @@ export default function PublishPage() {
                   }}
                 />
 
+                {/* Template placeholder inputs */}
+                {(() => {
+                  const vars = [...new Set([...inputValue.matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]))];
+                  if (!vars.length) return null;
+                  return (
+                    <div className="flex flex-col gap-1.5">
+                      <p className="text-[8px] font-bold uppercase tracking-widest text-amber-400/80">Template Variables</p>
+                      {vars.map((v) => (
+                        <div key={v} className="flex items-center gap-2">
+                          <span className="text-[9px] font-mono text-amber-300 shrink-0 w-28 truncate">{`{{${v}}}`}</span>
+                          <input
+                            type="text"
+                            placeholder={`Value for ${v}…`}
+                            value={placeholderValues[v] || ""}
+                            onChange={(e) => setPlaceholderValues(prev => ({ ...prev, [v]: e.target.value }))}
+                            className="flex-1 bg-slate-800 border border-amber-500/20 rounded-lg px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-amber-500/50"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
                 {/* Attachment previews + text context + warnings */}
                 {(sandboxAttachments.length > 0 || sandboxTextContext || attachWarnings.length > 0) && (
                   <div className="flex flex-wrap gap-2">
@@ -888,9 +1049,47 @@ export default function PublishPage() {
               </div>
             </div>
 
+            {/* CHAT HISTORY */}
+            {chatHistory.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 flex items-center gap-1.5">
+                    <MessageSquare size={10} /> Conversation
+                  </h2>
+                  <button
+                    onClick={() => { setChatHistory([]); sandboxExec.clearResult(); }}
+                    className="flex items-center gap-1 text-[9px] text-slate-600 hover:text-rose-400 transition-colors"
+                  >
+                    <RotateCcw size={9} /> Clear chat
+                  </button>
+                </div>
+                <div className="max-h-56 overflow-y-auto flex flex-col gap-2 pr-1 scrollbar-hide">
+                  {chatHistory.map((turn, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        "rounded-lg px-3 py-2 text-[10px] leading-relaxed",
+                        turn.role === "user"
+                          ? "bg-indigo-500/10 border border-indigo-500/20 text-indigo-200 self-end ml-8"
+                          : "bg-slate-800 border border-slate-700 text-slate-300 self-start mr-8"
+                      )}
+                    >
+                      <span className={cn("text-[8px] font-bold uppercase tracking-wider block mb-1", turn.role === "user" ? "text-indigo-400" : "text-emerald-400")}>
+                        {turn.role === "user" ? "You" : "Agent"}
+                      </span>
+                      <span className="whitespace-pre-wrap break-words line-clamp-6">{turn.content}</span>
+                    </div>
+                  ))}
+                  <div ref={chatBottomRef} />
+                </div>
+              </div>
+            )}
+
             {/* SANDBOX GALLERY */}
             <div className="flex flex-col gap-3 flex-1 min-h-[400px]">
-              <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Response Gallery</h2>
+              <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+                {chatHistory.length > 0 ? "Latest Response" : "Response Gallery"}
+              </h2>
               <div className="flex-1">
                 <SandboxGallery
                   {...sandboxExec}
@@ -899,6 +1098,73 @@ export default function PublishPage() {
                 />
               </div>
             </div>
+
+            {/* Run History */}
+            {(runHistory.length > 0 || (deployedFlowId && isDeployed)) && (
+              <div className="flex flex-col gap-2 mt-2">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 flex items-center gap-1.5">
+                    Recent Runs
+                    {runHistory.some(r => r.source === "webhook") && (
+                      <span className="text-[8px] px-1.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded font-bold">
+                        webhook active
+                      </span>
+                    )}
+                  </h2>
+                  <button
+                    onClick={() => { const id = deployedFlowId || activeProject?.id; if (id) refreshHistory(id); }}
+                    disabled={historyLoading}
+                    className="flex items-center gap-1 text-[8px] text-slate-600 hover:text-slate-300 transition-colors"
+                  >
+                    <RefreshCw size={9} className={cn(historyLoading && "animate-spin")} />
+                    Refresh
+                  </button>
+                </div>
+                {runHistory.length === 0 ? (
+                  <p className="text-[9px] text-slate-600 italic px-1">No runs yet — trigger the webhook or run the sandbox above.</p>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    {runHistory.map((run) => {
+                      const output = run.output && typeof run.output === "object" && "payload" in run.output
+                        ? String((run.output as any).payload).slice(0, 80)
+                        : null;
+                      return (
+                        <div key={run.id} className={cn(
+                          "flex flex-col gap-1 px-3 py-2 border rounded-lg text-[10px]",
+                          run.source === "webhook"
+                            ? "bg-amber-500/5 border-amber-500/20"
+                            : "bg-slate-900/60 border-slate-800"
+                        )}>
+                          <div className="flex items-center gap-3">
+                            <span className={cn(
+                              "w-1.5 h-1.5 rounded-full shrink-0",
+                              run.status === "success" ? "bg-emerald-400" : "bg-rose-400"
+                            )} />
+                            <span className="text-slate-400 shrink-0 font-mono text-[9px]">
+                              {new Date(run.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                            <span className="text-slate-300 truncate flex-1">{run.input || "—"}</span>
+                            {run.durationMs != null && <span className="text-slate-600 shrink-0">{(run.durationMs / 1000).toFixed(1)}s</span>}
+                            {run.costUsd > 0 && <span className="text-slate-600 shrink-0">${run.costUsd.toFixed(4)}</span>}
+                            <span className={cn(
+                              "text-[8px] font-bold px-1.5 py-0.5 rounded shrink-0 capitalize",
+                              run.source === "webhook"
+                                ? "bg-amber-500/10 text-amber-400"
+                                : "text-slate-600"
+                            )}>
+                              {run.source}
+                            </span>
+                          </div>
+                          {output && (
+                            <p className="text-[9px] text-slate-500 pl-4 truncate">{output}{String((run.output as any).payload).length > 80 ? "…" : ""}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

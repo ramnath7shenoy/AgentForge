@@ -27,7 +27,11 @@
       "Bash(mkdir -p \"E:\\\\agentforge\\\\flowforge-ai\\\\app\\\\store\\\\creator\\\\[userId]\")",
       "Bash(git show *)",
       "Bash(git ls-tree *)",
-      "Bash(npx next *)"
+      "Bash(npx next *)",
+      "Bash(Get-ChildItem -Path \"E:\\\\agentforge\\\\flowforge-ai\" -Recurse -Depth 2 -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(cat next.config.ts)",
+      "Bash(cat next.config.js)"
     ]
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useCostStore } from "@/stores/useCostStore";
 import { formatCost } from "@/lib/utils/tokenCost";
 import type {
@@ -29,6 +29,8 @@ export interface SandboxExecutionState {
   finalResult: SandboxFlowPacket | null;
   /** Cost incurred only in this sandbox session (never includes editor costs). */
   runCostFormatted: string;
+  /** Accumulated streaming tokens per node while a run is in progress. */
+  streamingTokens: Record<string, string>;
 }
 
 export interface SandboxExecutionHook extends SandboxExecutionState {
@@ -36,21 +38,30 @@ export interface SandboxExecutionHook extends SandboxExecutionState {
     nodes: SandboxNode[],
     edges: SandboxEdge[],
     input: string,
-    apiKeys: SandboxApiKey[]
+    apiKeys: SandboxApiKey[],
+    flowId?: string
   ) => Promise<void>;
   clearResult: () => void;
   restoreState: (logs: SandboxLogEntry[], result: SandboxFlowPacket | null) => void;
+  /** Synchronous running check — safe to call from setInterval without stale closure issues. */
+  getRunning: () => boolean;
+  /** Abort the in-flight SSE run immediately. */
+  abort: () => void;
 }
 
 const SANDBOX_RESULT_KEY = "ff_sandbox_last_result";
 
 export function useSandboxExecution(): SandboxExecutionHook {
   const [running, setRunning] = useState(false);
+  const runningRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [logs, setLogs] = useState<SandboxLogEntry[]>([]);
   const [nodeStatuses, setNodeStatuses] = useState<Record<string, SandboxNodeStatus>>({});
   const [nodeOutputs, setNodeOutputs] = useState<Record<string, SandboxFlowPacket>>({});
   const [executedNodeIds, setExecutedNodeIds] = useState<string[]>([]);
   const [finalResult, setFinalResult] = useState<SandboxFlowPacket | null>(null);
+  const [streamingTokens, setStreamingTokens] = useState<Record<string, string>>({});
+  const streamBufferRef = useRef<Record<string, string>>({});
   // Local run cost — isolated from the global editor session cost
   const [runCost, setRunCost] = useState(0);
 
@@ -66,6 +77,8 @@ export function useSandboxExecution(): SandboxExecutionHook {
     setNodeOutputs({});
     setExecutedNodeIds([]);
     setFinalResult(null);
+    setStreamingTokens({});
+    streamBufferRef.current = {};
     setRunCost(0);
     sessionStorage.removeItem(SANDBOX_RESULT_KEY);
   }, []);
@@ -79,14 +92,18 @@ export function useSandboxExecution(): SandboxExecutionHook {
     nodes: SandboxNode[],
     edges: SandboxEdge[],
     input: string,
-    apiKeys: SandboxApiKey[]
+    apiKeys: SandboxApiKey[],
+    flowId?: string
   ) => {
+    runningRef.current = true;
     setRunning(true);
     setLogs([]);
     setNodeStatuses({});
     setNodeOutputs({});
     setExecutedNodeIds([]);
     setFinalResult(null);
+    setStreamingTokens({});
+    streamBufferRef.current = {};
     setRunCost(0);
 
     const addLog = (type: SandboxLogType, message: string, nodeId?: string) => {
@@ -96,11 +113,15 @@ export function useSandboxExecution(): SandboxExecutionHook {
       ]);
     };
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       const res = await fetch("/api/sandbox/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nodes, edges, input, apiKeys }),
+        body: JSON.stringify({ nodes, edges, input, apiKeys, flowId }),
+        signal: controller.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -127,7 +148,7 @@ export function useSandboxExecution(): SandboxExecutionHook {
           if (!jsonStr) continue;
 
           let event: any;
-          try { event = JSON.parse(jsonStr); } catch { continue; }
+          try { event = JSON.parse(jsonStr); } catch { console.warn("[sandbox] malformed SSE event:", jsonStr.slice(0, 120)); continue; }
 
           switch (event.t) {
             case "log":
@@ -148,7 +169,7 @@ export function useSandboxExecution(): SandboxExecutionHook {
               break;
 
             case "result":
-              if (event.packet?.payload) {
+              if (event.packet != null) {
                 setFinalResult(event.packet);
                 try { sessionStorage.setItem(SANDBOX_RESULT_KEY, JSON.stringify(event.packet)); } catch { /* ignore */ }
               }
@@ -158,6 +179,13 @@ export function useSandboxExecution(): SandboxExecutionHook {
               if (typeof event.amount === "number" && event.amount > 0) {
                 setRunCost((prev) => prev + event.amount);
                 addGlobalCost(event.amount); // accumulate in editor session cost too
+              }
+              break;
+
+            case "token":
+              if (event.nodeId && event.token) {
+                streamBufferRef.current[event.nodeId] = (streamBufferRef.current[event.nodeId] || "") + event.token;
+                setStreamingTokens({ ...streamBufferRef.current });
               }
               break;
 
@@ -171,8 +199,10 @@ export function useSandboxExecution(): SandboxExecutionHook {
         }
       }
     } catch (err: any) {
-      addLog("ERROR", `Network error: ${err.message}`);
+      if (err?.name !== "AbortError") addLog("ERROR", `Network error: ${err.message}`);
     } finally {
+      abortControllerRef.current = null;
+      runningRef.current = false;
       setRunning(false);
     }
   }, [addGlobalCost]);
@@ -184,9 +214,12 @@ export function useSandboxExecution(): SandboxExecutionHook {
     nodeOutputs,
     executedNodeIds,
     finalResult,
+    streamingTokens,
     runCostFormatted: runCost > 0 ? formatCost(runCost) : "$0.00",
     run,
     clearResult,
     restoreState,
+    getRunning: () => runningRef.current,
+    abort: () => abortControllerRef.current?.abort(),
   };
 }

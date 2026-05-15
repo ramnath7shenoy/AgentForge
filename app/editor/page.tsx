@@ -34,6 +34,7 @@ import {
   FileImage,
   FileDown,
   AlertTriangle,
+  Square,
 } from "lucide-react";
 
 import FlowCanvas from "@/components/flow/canvas/FlowCanvas";
@@ -57,6 +58,7 @@ import AIArchitectModal from "@/components/flow/AIArchitectModal";
 import { FLOW_TEMPLATES } from "@/lib/constants/templates";
 import { getSnapshots, saveSnapshot, deleteSnapshot, FlowSnapshot } from "@/lib/versionSnapshots";
 import { cn } from "@/lib/utils";
+import { useScheduler, getSchedulerIntervalMs } from "@/hooks/useScheduler";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ReactFlowProvider } from "reactflow";
 import { createClient } from "@/lib/supabase/client";
@@ -128,6 +130,8 @@ function EditorContent() {
     undo,
     past,
     activeProject,
+    setActiveProject,
+    abortFlow,
     autoSave,
     restoreAutoSave,
     webhookPayloadWarning,
@@ -176,6 +180,14 @@ function EditorContent() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [showTutorialHint, setShowTutorialHint] = useState(false);
 
+  // Scheduler — for trigger nodes with a live-loop interval
+  const scheduler = useScheduler();
+  const triggerNode = nodes.find(n => n.type === "trigger");
+  const schedulerIntervalMs = (!isDryRun && triggerNode)
+    ? getSchedulerIntervalMs(triggerNode.data)
+    : null;
+  const isSchedulerFlow = schedulerIntervalMs !== null;
+
   // Get auth user on mount
   useEffect(() => {
     const supabase = createClient();
@@ -205,10 +217,13 @@ function EditorContent() {
         e.preventDefault();
         undo();
       }
+      if (e.key === "Escape" && isRunning) {
+        abortFlow();
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [undo]);
+  }, [undo, isRunning, abortFlow]);
 
   // Initial Fetch on Load
   useEffect(() => {
@@ -221,6 +236,7 @@ function EditorContent() {
         setIsPublic(false);
         setPublicEditable(false);
         setFlowName("Untitled Agent");
+        setActiveProject({ id: projectIdParam, name: "" });
         setHasHydrated(true);
         return;
       }
@@ -237,6 +253,7 @@ function EditorContent() {
         setIsPublic(result.flow.isPublic ?? false);
         setPublicEditable(result.flow.publicEditable ?? false);
         setFlowName(result.flow.name || "Untitled Agent");
+        if (result.flow.projectId) setActiveProject({ id: result.flow.projectId, name: result.flow.name || "" });
       } else {
         // Guest: load from localStorage (guest key first, autosave as fallback)
         let restored = false;
@@ -299,7 +316,6 @@ function EditorContent() {
     const timeoutId = setTimeout(async () => {
       try {
         if (userId) {
-          console.log("Attempting to save flow for project:", activeProject?.id);
           const serializedNodes = JSON.stringify(nodes);
           const serializedEdges = JSON.stringify(edges);
           const result = await saveFlow(userId, flowName, serializedNodes, serializedEdges, currentFlowId, isPublic, publicEditable, activeProject?.id);
@@ -353,6 +369,11 @@ function EditorContent() {
   useEffect(() => {
     if (finalResult) setShowTerminal(true);
   }, [finalResult]);
+
+  // Stop the scheduler if the user switches the trigger to a non-loopable mode.
+  useEffect(() => {
+    if (!isSchedulerFlow && scheduler.isActive) scheduler.stop();
+  }, [isSchedulerFlow]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!isRunning) return;
@@ -810,86 +831,127 @@ function EditorContent() {
             </ActionButton>
           </motion.div>
 
-          {/* Run Flow — split button (Run Live / Dry Run) */}
+          {/* Run Flow — split button (Run Live / Dry Run) / Auto-Run / Stop */}
           <div data-tutorial="run-flow" ref={runMenuRef} className="relative flex items-stretch h-8 min-w-0 flex-shrink-0">
-            {/* Main action */}
-            <button
-              onClick={() => runClientFlow("Initial Input")}
-              disabled={isRunning}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 rounded-l-md text-[13px] font-semibold transition-all active:scale-95 border-r border-white/20 min-w-0",
-                isRunning
-                  ? "opacity-75 cursor-wait bg-indigo-500 text-white"
-                  : isDryRun
-                  ? "bg-gradient-to-br from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white shadow-lg shadow-amber-500/20"
-                  : "bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white shadow-lg shadow-indigo-500/20"
-              )}
-            >
-              {isRunning ? (
-                <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>{isDryRun ? "Simulating..." : "Running..."}</span>
-                </div>
-              ) : isDryRun ? (
-                <>
-                  <FlaskConical size={14} />
-                  Dry Run
-                </>
-              ) : (
-                <>
-                  <Play size={14} className="fill-current" />
-                  Run Flow
-                </>
-              )}
-            </button>
-
-            {/* Mode selector chevron */}
-            <button
-              onClick={() => setShowRunMenu((v) => !v)}
-              disabled={isRunning}
-              className={cn(
-                "flex items-center justify-center px-2 rounded-r-md transition-all active:scale-95 disabled:opacity-50",
-                isDryRun
-                  ? "bg-gradient-to-br from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white"
-                  : "bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white"
-              )}
-            >
-              <ChevronDown size={11} className={cn("transition-transform", showRunMenu && "rotate-180")} />
-            </button>
-
-            {/* Dropdown */}
-            {showRunMenu && !isRunning && (
-              <div className="absolute top-full right-0 mt-1.5 w-44 rounded-xl border border-white/10 bg-[#0b0e14]/95 backdrop-blur-xl shadow-2xl overflow-hidden z-50">
+            {scheduler.isActive ? (
+              <button
+                onClick={() => scheduler.stop()}
+                className="flex items-center gap-1.5 px-2.5 rounded-md text-[13px] font-semibold transition-all active:scale-95 bg-rose-600 hover:bg-rose-700 text-white shadow-lg shadow-rose-500/20"
+              >
+                {isRunning ? (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Running...</span>
+                  </div>
+                ) : (
+                  <><Square size={14} className="fill-current" />Stop Auto-Run</>
+                )}
+              </button>
+            ) : isRunning ? (
+              <button
+                onClick={() => abortFlow()}
+                className="flex items-center gap-1.5 px-2.5 rounded-md text-[13px] font-semibold transition-all active:scale-95 bg-rose-600 hover:bg-rose-700 text-white shadow-lg shadow-rose-500/20"
+                title="Stop run (Escape)"
+              >
+                <Square size={14} className="fill-current" />
+                Stop
+              </button>
+            ) : (
+              <>
+                {/* Main action */}
                 <button
-                  onClick={() => { setIsDryRun(false); setShowRunMenu(false); }}
+                  onClick={() => {
+                    if (isSchedulerFlow) {
+                      scheduler.start(
+                        async () => { await runClientFlow("Initial Input"); },
+                        schedulerIntervalMs!,
+                      );
+                    } else {
+                      runClientFlow("Initial Input");
+                    }
+                  }}
+                  disabled={isRunning}
                   className={cn(
-                    "flex items-center gap-2.5 w-full px-3 py-2.5 text-left text-[11px] font-semibold transition-colors",
-                    !isDryRun ? "text-indigo-400 bg-indigo-500/10" : "text-slate-300 hover:bg-white/5"
+                    "flex items-center gap-1.5 px-2.5 rounded-l-md text-[13px] font-semibold transition-all active:scale-95 border-r border-white/20 min-w-0",
+                    isRunning
+                      ? "opacity-75 cursor-wait bg-indigo-500 text-white"
+                      : isDryRun
+                      ? "bg-gradient-to-br from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white shadow-lg shadow-amber-500/20"
+                      : "bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white shadow-lg shadow-indigo-500/20"
                   )}
                 >
-                  <Play size={11} className={cn("fill-current", !isDryRun ? "text-indigo-400" : "text-slate-500")} />
-                  <div>
-                    <p>Run Live</p>
-                    <p className="text-[9px] font-normal text-slate-500">Execute with real API calls</p>
-                  </div>
-                  {!isDryRun && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-indigo-400" />}
+                  {isRunning ? (
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>{isDryRun ? "Simulating..." : "Running..."}</span>
+                    </div>
+                  ) : isDryRun ? (
+                    <>
+                      <FlaskConical size={14} />
+                      Dry Run
+                    </>
+                  ) : isSchedulerFlow ? (
+                    <>
+                      <Zap size={14} className="fill-current" />
+                      Auto-Run
+                    </>
+                  ) : (
+                    <>
+                      <Play size={14} className="fill-current" />
+                      Run Flow
+                    </>
+                  )}
                 </button>
-                <div className="h-px bg-white/5 mx-3" />
+
+                {/* Mode selector chevron */}
                 <button
-                  onClick={() => { setIsDryRun(true); setShowRunMenu(false); }}
+                  onClick={() => setShowRunMenu((v) => !v)}
+                  disabled={isRunning}
                   className={cn(
-                    "flex items-center gap-2.5 w-full px-3 py-2.5 text-left text-[11px] font-semibold transition-colors",
-                    isDryRun ? "text-amber-400 bg-amber-500/10" : "text-slate-300 hover:bg-white/5"
+                    "flex items-center justify-center px-2 rounded-r-md transition-all active:scale-95 disabled:opacity-50",
+                    isDryRun
+                      ? "bg-gradient-to-br from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white"
+                      : "bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white"
                   )}
                 >
-                  <FlaskConical size={11} className={cn(isDryRun ? "text-amber-400" : "text-slate-500")} />
-                  <div>
-                    <p>Dry Run</p>
-                    <p className="text-[9px] font-normal text-slate-500">Simulate — no live requests</p>
-                  </div>
-                  {isDryRun && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                  <ChevronDown size={11} className={cn("transition-transform", showRunMenu && "rotate-180")} />
                 </button>
-              </div>
+
+                {/* Dropdown */}
+                {showRunMenu && !isRunning && (
+                  <div className="absolute top-full right-0 mt-1.5 w-44 rounded-xl border border-white/10 bg-[#0b0e14]/95 backdrop-blur-xl shadow-2xl overflow-hidden z-50">
+                    <button
+                      onClick={() => { setIsDryRun(false); setShowRunMenu(false); }}
+                      className={cn(
+                        "flex items-center gap-2.5 w-full px-3 py-2.5 text-left text-[11px] font-semibold transition-colors",
+                        !isDryRun ? "text-indigo-400 bg-indigo-500/10" : "text-slate-300 hover:bg-white/5"
+                      )}
+                    >
+                      <Play size={11} className={cn("fill-current", !isDryRun ? "text-indigo-400" : "text-slate-500")} />
+                      <div>
+                        <p>Run Live</p>
+                        <p className="text-[9px] font-normal text-slate-500">Execute with real API calls</p>
+                      </div>
+                      {!isDryRun && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-indigo-400" />}
+                    </button>
+                    <div className="h-px bg-white/5 mx-3" />
+                    <button
+                      onClick={() => { setIsDryRun(true); setShowRunMenu(false); }}
+                      className={cn(
+                        "flex items-center gap-2.5 w-full px-3 py-2.5 text-left text-[11px] font-semibold transition-colors",
+                        isDryRun ? "text-amber-400 bg-amber-500/10" : "text-slate-300 hover:bg-white/5"
+                      )}
+                    >
+                      <FlaskConical size={11} className={cn(isDryRun ? "text-amber-400" : "text-slate-500")} />
+                      <div>
+                        <p>Dry Run</p>
+                        <p className="text-[9px] font-normal text-slate-500">Simulate — no live requests</p>
+                      </div>
+                      {isDryRun && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
 

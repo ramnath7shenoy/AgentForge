@@ -64,6 +64,11 @@ export interface NodeData {
   time?: string;
   days?: string[];
   timezone?: string;
+  intervalSeconds?: number;
+  intervalMinutes?: number;
+  minuteOffset?: number;
+  monthDay?: number;
+  cronExpression?: string;
 
   // 6. WEBHOOK (Outgoing HTTP Action)
   url?: string;

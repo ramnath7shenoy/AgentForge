@@ -42,6 +42,7 @@ export interface ExtendedFlowState extends FlowState {
   clearChatHistory: () => void;
   addMessage: (role: 'user' | 'assistant', content: string) => void;
   runClientFlow: (initialInput: string) => Promise<void>;
+  abortFlow: () => void;
   updateNodeData: (nodeId: string, newData: Partial<NodeData>) => void;
   addNode: (node: Node<NodeData>) => void;
   deleteNode: (nodeId: string) => void;
@@ -120,6 +121,9 @@ type FlowUserMeta = {
   info: { name?: string; color?: string; email?: string | null; isGuest?: boolean };
 };
 
+// Module-level abort controller — not reactive, just a handle to cancel in-flight runs.
+let _runAbortController: AbortController | null = null;
+
 export const useFlowStore = create<WithLiveblocks<ExtendedFlowState, FlowPresence, FlowStorage, FlowUserMeta>>()(
   liveblocks(
   (set, get) => ({
@@ -161,6 +165,7 @@ export const useFlowStore = create<WithLiveblocks<ExtendedFlowState, FlowPresenc
   setIsDryRun: (value: boolean) => set({ isDryRun: value }),
   chatHistory: [],
   clearChatHistory: () => set({ chatHistory: [] }),
+  abortFlow: () => { _runAbortController?.abort(); _runAbortController = null; set({ running: false, isRunning: false }); },
   addMessage: (role, content) => set((state) => ({
     chatHistory: [...state.chatHistory, { role, content }]
   })),
@@ -451,6 +456,7 @@ export const useFlowStore = create<WithLiveblocks<ExtendedFlowState, FlowPresenc
     // Build dependency map before execution — used by UI (manifest, node badges)
     const depMap = buildDependencyMap(edges);
 
+    _runAbortController = new AbortController();
     set({
       running: true,
       isRunning: true,
@@ -535,6 +541,7 @@ export const useFlowStore = create<WithLiveblocks<ExtendedFlowState, FlowPresenc
           }));
         },
         isDryRun,
+        abortSignal: _runAbortController?.signal,
       }
     );
 
@@ -568,6 +575,7 @@ export const useFlowStore = create<WithLiveblocks<ExtendedFlowState, FlowPresenc
         }
       }
 
+      _runAbortController = null;
       return {
         executionResult: finalState.nodes as any,
         executionState: finalState,

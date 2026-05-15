@@ -43,6 +43,7 @@ export type SandboxLogType = "INFO" | "SUCCESS" | "ERROR" | "WARN";
 export interface SandboxWalkerOptions {
   onNodeStatusChange?: (nodeId: string, status: SandboxNodeStatus) => void;
   onNodeComplete?: (nodeId: string, packet: SandboxFlowPacket) => void;
+  onToken?: (token: string, nodeId: string) => void;
 }
 
 type LogFn = (msg: string, type?: SandboxLogType, nodeId?: string) => void;
@@ -167,7 +168,8 @@ async function dispatchLLM(
   onLog: (msg: string, type: any) => void,
   attachments?: Attachment[],
   onCost?: (amount: number) => void,
-  systemPrompt?: string
+  systemPrompt?: string,
+  onToken?: (token: string) => void
 ): Promise<string> {
   const provider = providerKey || detectProvider(apiKey);
   onLog(`📡 Dispatching to ${provider.toUpperCase()} via ${modelName || "default"}...`, "INFO");
@@ -268,6 +270,10 @@ async function dispatchLLM(
     return obj;
   };
 
+  // Enable streaming when an onToken callback is provided (Gemini uses a different protocol — skip).
+  const isStreaming = !!onToken && provider !== "gemini";
+  if (isStreaming) body.stream = true;
+
   // 404/410 = model gone; 413 = payload too large; 429 = rate limit — cascade in all cases
   const STALE = new Set([404, 410, 413, 429]);
   let lastError: Error | null = null;
@@ -279,12 +285,6 @@ async function dispatchLLM(
       body.model = candidate;
     }
 
-    try {
-      console.log(
-        `[dispatchLLM] ${provider.toUpperCase()} /${candidate}  attachments=${imageAtts.length}`,
-        JSON.stringify(truncateBase64(JSON.parse(JSON.stringify(body))), null, 2)
-      );
-    } catch { /* serialisation error — skip log */ }
 
     const response = await fetch(url, {
       method: "POST",
@@ -292,9 +292,8 @@ async function dispatchLLM(
       body: JSON.stringify(body),
     });
 
-    const data = await response.json();
-
     if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
       const errMsg = (
         data.error?.message || data.error?.code || data.error?.type || ""
       ).toLowerCase();
@@ -323,6 +322,56 @@ async function dispatchLLM(
         throw new Error(`${provider.toUpperCase()} server error (${response.status}).`);
       throw new Error(data.error?.message || `${provider.toUpperCase()} API Error ${response.status}`);
     }
+
+    // ── Streaming path ──────────────────────────────────────────────────
+    if (isStreaming && response.body) {
+      const reader = response.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "", fullText = "";
+      let inputTokens = 0, outputTokens = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t.startsWith("data: ")) continue;
+          const json = t.slice(6).trim();
+          if (json === "[DONE]") continue;
+          try {
+            const chunk = JSON.parse(json);
+            let token: string | undefined;
+            if (provider === "anthropic") {
+              if (chunk.type === "content_block_delta" && chunk.delta?.type === "text_delta") {
+                token = chunk.delta.text;
+              } else if (chunk.type === "message_start") {
+                inputTokens = chunk.message?.usage?.input_tokens ?? 0;
+              } else if (chunk.type === "message_delta") {
+                outputTokens = chunk.usage?.output_tokens ?? 0;
+              }
+            } else {
+              token = chunk.choices?.[0]?.delta?.content;
+              // OpenAI/Groq emit usage in the last chunk (stream_options not set — approximate via chars)
+            }
+            if (token) { fullText += token; onToken!(token); }
+          } catch { /* malformed chunk */ }
+        }
+      }
+
+      // Best-effort cost: use token counts if captured, otherwise approximate.
+      if (inputTokens > 0 || outputTokens > 0) {
+        const cost = calculateExecutionCost(candidate, inputTokens, outputTokens);
+        if (cost > 0) onCost?.(cost);
+      }
+      return fullText;
+    }
+
+    // ── Non-streaming path ──────────────────────────────────────────────
+    const data = await response.json();
 
     // Extract response text
     let resultText: string;
@@ -487,7 +536,8 @@ async function executeNode(
   initialInput: string,
   apiKeys: SandboxApiKey[],
   sendLog: LogFn,
-  onCost?: (amount: number) => void
+  onCost?: (amount: number) => void,
+  onToken?: (token: string, nodeId: string) => void
 ): Promise<SandboxFlowPacket> {
   const type = current.type;
 
@@ -579,7 +629,7 @@ async function executeNode(
           try {
             sendLog(`📡 Probing ${resolvedProvider.toUpperCase()} via ${model}...`, "INFO", current.id);
             responseText = await withTimeout(
-              dispatchLLM(resolvedProvider, model, jitKey, resolvedUserMessage, (msg, t) => sendLog(msg, t, current.id), inputAttachments, onCost, systemPromptOverride),
+              dispatchLLM(resolvedProvider, model, jitKey, resolvedUserMessage, (msg, t) => sendLog(msg, t, current.id), inputAttachments, onCost, systemPromptOverride, onToken ? (token) => onToken(token, current.id) : undefined),
               30_000,
               `${resolvedProvider.toUpperCase()}/${model}`
             );
@@ -883,7 +933,7 @@ export async function executeGraphServer(
   let totalCostUsd = 0;
   const accumulateCost = (amount: number) => { totalCostUsd += amount; };
 
-  const { onNodeStatusChange, onNodeComplete } = options;
+  const { onNodeStatusChange, onNodeComplete, onToken } = options;
 
   sendLog("🚀 Sandbox Engine started...", "INFO");
 
@@ -968,7 +1018,7 @@ export async function executeGraphServer(
     let routerRoute: string | undefined;
 
     try {
-      packet = await executeNode(current, context, edges, initialInput, apiKeys, sendLog, accumulateCost);
+      packet = await executeNode(current, context, edges, initialInput, apiKeys, sendLog, accumulateCost, onToken);
 
       context.nodes[nodeId] = packet;
       onNodeComplete?.(nodeId, packet);

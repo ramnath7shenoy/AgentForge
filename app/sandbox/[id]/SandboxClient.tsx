@@ -16,12 +16,16 @@ import {
   FileText,
   X,
   AlertTriangle,
+  MessageSquare,
+  RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import SandboxGallery from "@/components/flow/SandboxGallery";
 import { useSandboxExecution } from "@/hooks/useSandboxExecution";
 import type { SandboxApiKey } from "@/lib/flow/serverExecutor";
 import { packFiles } from "@/lib/utils/contextPacker";
+import { useScheduler, getSchedulerIntervalMs } from "@/hooks/useScheduler";
+import { Square } from "lucide-react";
 
 interface SandboxClientProps {
   flowId: string;
@@ -39,16 +43,34 @@ export default function SandboxClient({
   edges,
 }: SandboxClientProps) {
   const sandboxExec = useSandboxExecution();
+  const scheduler = useScheduler();
 
-  // Always start as a clean slate — never inherit editor sessionStorage state
-  useEffect(() => { sandboxExec.clearResult(); }, []);
+  // Derive scheduler config from the trigger node in this flow (if any).
+  const triggerNode = nodes.find((n: any) => n.type === "trigger");
+  const schedulerIntervalMs = triggerNode ? getSchedulerIntervalMs(triggerNode.data) : null;
+  const isSchedulerFlow = schedulerIntervalMs !== null;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
+  const KEYS_STORAGE_KEY = `SANDBOX_KEYS_${flowId}`;
   const [inputValue, setInputValue] = useState("");
-  const [envKeys, setEnvKeys] = useState<SandboxApiKey[]>([{ key: "", value: "" }]);
+  const [envKeys, setEnvKeys] = useState<SandboxApiKey[]>(() => {
+    try {
+      const saved = localStorage.getItem(`SANDBOX_KEYS_${flowId}`);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [{ key: "", value: "" }];
+  });
   const [envOpen, setEnvOpen] = useState(true);
+
+  // Always start as a clean slate — never inherit editor sessionStorage state
+  useEffect(() => { sandboxExec.clearResult(); }, []);
+
+  // Persist env keys to localStorage whenever they change
+  useEffect(() => {
+    try { localStorage.setItem(KEYS_STORAGE_KEY, JSON.stringify(envKeys)); } catch {}
+  }, [envKeys, KEYS_STORAGE_KEY]);
   const [showValues, setShowValues] = useState<Record<number, boolean>>({});
   const [linkCopied, setLinkCopied] = useState(false);
 
@@ -56,6 +78,36 @@ export default function SandboxClient({
   const [attachments, setAttachments] = useState<{ data: string; mimeType: string; name: string }[]>([]);
   const [textContext, setTextContext] = useState("");
   const [attachWarnings, setAttachWarnings] = useState<string[]>([]);
+
+  // Multi-turn chat history
+  type ChatTurn = { role: "user" | "assistant"; content: string };
+  const [chatHistory, setChatHistory] = useState<ChatTurn[]>([]);
+  const pendingUserMsgRef = useRef("");
+  const prevRunningRef = useRef(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  // After a run finishes with a result, append the turn to chat history
+  useEffect(() => {
+    if (prevRunningRef.current && !sandboxExec.running && sandboxExec.finalResult && pendingUserMsgRef.current) {
+      const assistantContent =
+        typeof sandboxExec.finalResult.payload === "string"
+          ? sandboxExec.finalResult.payload
+          : JSON.stringify(sandboxExec.finalResult.payload, null, 2);
+      setChatHistory((prev) => [
+        ...prev,
+        { role: "user", content: pendingUserMsgRef.current },
+        { role: "assistant", content: assistantContent },
+      ]);
+      setInputValue("");
+      pendingUserMsgRef.current = "";
+    }
+    prevRunningRef.current = sandboxExec.running;
+  }, [sandboxExec.running, sandboxExec.finalResult]);
+
+  // Scroll chat to bottom when history grows
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatHistory]);
 
   const addFiles = async (files: FileList | File[] | null) => {
     if (!files?.length) return;
@@ -66,32 +118,46 @@ export default function SandboxClient({
     if (textBlock) setTextContext((prev) => prev ? `${prev}\n${textBlock}` : textBlock);
   };
 
+  // Ref so the scheduler always calls the latest version of handleRun
+  // (captures current envKeys, inputValue, attachments, etc.)
+  const handleRunRef = useRef<() => Promise<void>>(async () => {});
+
   const handleRun = async () => {
     const validKeys = envKeys.filter((k) => k.key.trim() && k.value.trim());
     const effectiveInput = inputValue || "Hello";
+    pendingUserMsgRef.current = effectiveInput;
 
-    const hasExtras = attachments.length > 0 || textContext;
-    const nodesForRun = hasExtras
-      ? nodes.map((n: any) =>
-          n.type === "input"
-            ? {
-                ...n,
-                data: {
-                  ...n.data,
-                  packet: {
-                    type: "text",
-                    payload: effectiveInput,
-                    ...(attachments.length > 0 && { attachments }),
-                    ...(textContext && { fileContext: textContext }),
-                  },
-                },
-              }
-            : n
-        )
-      : nodes;
+    let fullInput = effectiveInput;
+    const recentHistory = chatHistory.slice(-20);
+    if (recentHistory.length > 0) {
+      const historyText = recentHistory
+        .map((t) => `${t.role === "user" ? "User" : "Assistant"}: ${t.content}`)
+        .join("\n");
+      fullInput = `[Previous conversation]\n${historyText}\n[End previous]\n\nCurrent message: ${effectiveInput}`;
+    }
 
-    await sandboxExec.run(nodesForRun, edges, effectiveInput, validKeys);
+    const nodesForRun = nodes.map((n: any) =>
+      n.type === "input"
+        ? {
+            ...n,
+            data: {
+              ...n.data,
+              packet: {
+                type: "text",
+                payload: fullInput,
+                ...(attachments.length > 0 && { attachments }),
+                ...(textContext && { fileContext: textContext }),
+              },
+            },
+          }
+        : n
+    );
+
+    await sandboxExec.run(nodesForRun, edges, fullInput, validKeys, flowId);
   };
+
+  // Keep the ref in sync every render so the scheduler always has the latest closure.
+  handleRunRef.current = handleRun;
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(window.location.href);
@@ -211,11 +277,47 @@ export default function SandboxClient({
             )}
           </div>
 
+          {/* Chat History */}
+          {chatHistory.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 flex items-center gap-1.5">
+                  <MessageSquare size={10} /> Conversation
+                </span>
+                <button
+                  onClick={() => { setChatHistory([]); sandboxExec.clearResult(); }}
+                  className="text-[9px] text-slate-600 hover:text-rose-400 transition-colors flex items-center gap-1"
+                >
+                  <RotateCcw size={9} /> Clear
+                </button>
+              </div>
+              <div className="max-h-48 overflow-y-auto flex flex-col gap-2 pr-1">
+                {chatHistory.map((turn, i) => (
+                  <div
+                    key={i}
+                    className={cn(
+                      "rounded-lg px-3 py-2 text-[10px] leading-relaxed",
+                      turn.role === "user"
+                        ? "bg-indigo-500/10 border border-indigo-500/20 text-indigo-200 self-end ml-4"
+                        : "bg-slate-800 border border-slate-700 text-slate-300 self-start mr-4"
+                    )}
+                  >
+                    <span className={cn("text-[8px] font-bold uppercase tracking-wider block mb-1", turn.role === "user" ? "text-indigo-400" : "text-emerald-400")}>
+                      {turn.role === "user" ? "You" : "Agent"}
+                    </span>
+                    <span className="whitespace-pre-wrap break-words line-clamp-6">{turn.content}</span>
+                  </div>
+                ))}
+                <div ref={chatBottomRef} />
+              </div>
+            </div>
+          )}
+
           {/* Input */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
-                Prompt / Input
+                {chatHistory.length > 0 ? "New Message" : "Prompt / Input"}
               </label>
               <div className="flex items-center gap-1.5">
                 <button
@@ -294,24 +396,32 @@ export default function SandboxClient({
             <p className="text-[9px] text-slate-600">⌘ Enter to run</p>
           </div>
 
-          {/* Run button */}
-          <button
-            onClick={handleRun}
-            disabled={sandboxExec.running}
-            className={cn(
-              "w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all",
-              sandboxExec.running
-                ? "bg-indigo-600/40 text-white/50 cursor-not-allowed"
-                : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/20"
-            )}
-          >
-            {sandboxExec.running ? (
-              <Loader2 size={15} className="animate-spin" />
-            ) : (
+          {/* Run / Auto-Run / Stop button */}
+          {scheduler.isActive ? (
+            <button
+              onClick={() => scheduler.stop()}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all bg-rose-600 hover:bg-rose-700 text-white shadow-lg shadow-rose-500/20"
+            >
+              {sandboxExec.running ? <Loader2 size={15} className="animate-spin" /> : <Square size={15} className="fill-current" />}
+              {sandboxExec.running ? "Running..." : "Stop Auto-Run"}
+            </button>
+          ) : sandboxExec.running ? (
+            <button
+              onClick={() => sandboxExec.abort()}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all bg-rose-600 hover:bg-rose-700 text-white shadow-lg shadow-rose-500/20"
+            >
+              <Square size={15} className="fill-current" />
+              Stop
+            </button>
+          ) : (
+            <button
+              onClick={() => isSchedulerFlow ? scheduler.start(() => handleRunRef.current(), schedulerIntervalMs!) : handleRun()}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/20"
+            >
               <Play size={15} className="fill-current" />
-            )}
-            {sandboxExec.running ? "Running agent..." : "Run Agent"}
-          </button>
+              {isSchedulerFlow ? "Start Auto-Run" : "Run Agent"}
+            </button>
+          )}
         </div>
 
         {/* RIGHT: Gallery */}

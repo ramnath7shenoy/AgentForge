@@ -50,7 +50,7 @@ export default function OutputNode({ id, data, selected }: NodeProps) {
     <NodeCard nodeId={id} selected={selected}>
       <div className="flex items-center gap-2 font-bold text-pink-500 uppercase tracking-tighter mb-1">
         <MessageSquare size={14} fill="currentColor" />
-        <span>Final Result</span>
+        <span>Output</span>
       </div>
       {isImageOutput ? (
         <>

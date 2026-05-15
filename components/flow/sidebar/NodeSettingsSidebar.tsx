@@ -140,6 +140,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
   const tutorialStep = useFlowStore((state) => state.tutorialStep);
   const setTutorialStep = useFlowStore((state) => state.setTutorialStep);
   const updateNodeData = useFlowStore((state) => state.updateNodeData);
+  const activeProject = useFlowStore((state) => state.activeProject);
   const executionResult = (useFlowStore((state) => (state as any).executionResult) || {}) as Record<string, any>;
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
@@ -408,10 +409,10 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
   };
 
   const renderTriggerNodeSettings = () => {
+    const webhookFlowId = activeProject?.id;
     const handleCopyWebhook = () => {
-      const url = `https://agentforge.com/api/webhook/${selectedNode.id}`;
-      navigator.clipboard.writeText(url);
-      // Optional: Add a subtle toast or visual confirmation here if needed
+      if (!webhookFlowId) return;
+      navigator.clipboard.writeText(`${window.location.origin}/api/webhook/${webhookFlowId}`);
     };
 
     return (
@@ -439,6 +440,7 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
             <option value="Manual">Manual</option>
             <option value="Schedule">Schedule</option>
             <option value="Webhook">Webhook</option>
+            <option value="Event">On Event (Coming Soon)</option>
           </select>
 
           {(!selectedNode.data.schedule || selectedNode.data.schedule === "Manual") && (
@@ -459,14 +461,81 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                   value={selectedNode.data.cron || "Every Minute"}
                   onChange={(e) => updateNodeData(selectedNode.id, { cron: e.target.value })}
                 >
+                  <option value="Every N Seconds">Every N Seconds (Testing)</option>
                   <option value="Every Minute">Every Minute</option>
+                  <option value="Every N Minutes">Every N Minutes</option>
                   <option value="Hourly">Hourly</option>
                   <option value="Daily">Daily</option>
                   <option value="Weekly">Weekly</option>
+                  <option value="Monthly">Monthly</option>
+                  <option value="Custom">Custom Cron Expression</option>
                 </select>
               </div>
 
-              {(selectedNode.data.cron === "Daily" || selectedNode.data.cron === "Weekly") && (
+              {selectedNode.data.cron === "Every N Seconds" && (
+                <div className="flex flex-col gap-2 p-3 bg-muted rounded-xl border border-border">
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Run Every</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={5}
+                      max={59}
+                      className={cn(
+                        "rounded-lg p-2 text-sm focus:ring-2 focus:ring-amber-500/20 outline-none transition-all border w-20",
+                        "bg-background border-border text-foreground"
+                      )}
+                      value={selectedNode.data.intervalSeconds || 5}
+                      onChange={(e) => updateNodeData(selectedNode.id, { intervalSeconds: Math.max(5, Math.min(59, Number(e.target.value))) })}
+                    />
+                    <span className="text-xs text-muted-foreground">seconds (min 5s)</span>
+                  </div>
+                  <p className="text-[9px] text-amber-400/80 leading-relaxed">
+                    Short intervals are for testing only. Use minutes/hours for production.
+                  </p>
+                </div>
+              )}
+
+              {selectedNode.data.cron === "Every N Minutes" && (
+                <div className="flex flex-col gap-2 p-3 bg-muted rounded-xl border border-border">
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Run Every</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={59}
+                      className={cn(
+                        "rounded-lg p-2 text-sm focus:ring-2 focus:ring-amber-500/20 outline-none transition-all border w-20",
+                        "bg-background border-border text-foreground"
+                      )}
+                      value={selectedNode.data.intervalMinutes || 5}
+                      onChange={(e) => updateNodeData(selectedNode.id, { intervalMinutes: Math.max(1, Math.min(59, Number(e.target.value))) })}
+                    />
+                    <span className="text-xs text-muted-foreground">minutes</span>
+                  </div>
+                </div>
+              )}
+
+              {selectedNode.data.cron === "Hourly" && (
+                <div className="flex flex-col gap-2 p-3 bg-muted rounded-xl border border-border">
+                  <label className="text-[10px] font-bold uppercase text-slate-500">At Minute</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      max={59}
+                      className={cn(
+                        "rounded-lg p-2 text-sm focus:ring-2 focus:ring-amber-500/20 outline-none transition-all border w-20",
+                        "bg-background border-border text-foreground"
+                      )}
+                      value={selectedNode.data.minuteOffset ?? 0}
+                      onChange={(e) => updateNodeData(selectedNode.id, { minuteOffset: Math.max(0, Math.min(59, Number(e.target.value))) })}
+                    />
+                    <span className="text-xs text-muted-foreground">minutes past the hour</span>
+                  </div>
+                </div>
+              )}
+
+              {(selectedNode.data.cron === "Daily" || selectedNode.data.cron === "Weekly" || selectedNode.data.cron === "Monthly") && (
                 <div className="flex flex-col gap-2 p-3 bg-muted rounded-xl border border-border">
                   {selectedNode.data.cron === "Weekly" && (
                     <div className="flex flex-col gap-2 mb-2">
@@ -479,15 +548,15 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                             <button
                               key={day}
                               onClick={() => {
-                                const newDays = isSelected 
+                                const newDays = isSelected
                                   ? currentDays.filter((d: string) => d !== day)
                                   : [...currentDays, day];
                                 updateNodeData(selectedNode.id, { days: newDays });
                               }}
                               className={cn(
                                 "px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md border transition-all",
-                                isSelected 
-                                  ? "bg-amber-500 border-amber-500 text-white shadow-md shadow-amber-500/20" 
+                                isSelected
+                                  ? "bg-amber-500 border-amber-500 text-white shadow-md shadow-amber-500/20"
                                   : "bg-card border-border text-muted-foreground hover:text-foreground"
                               )}
                             >
@@ -498,7 +567,27 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                       </div>
                     </div>
                   )}
-                  
+
+                  {selectedNode.data.cron === "Monthly" && (
+                    <div className="flex flex-col gap-2 mb-2">
+                      <label className="text-[10px] font-bold uppercase text-slate-500">Day of Month</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          max={31}
+                          className={cn(
+                            "rounded-lg p-2 text-sm focus:ring-2 focus:ring-amber-500/20 outline-none transition-all border w-20",
+                            "bg-background border-border text-foreground"
+                          )}
+                          value={selectedNode.data.monthDay || 1}
+                          onChange={(e) => updateNodeData(selectedNode.id, { monthDay: Math.max(1, Math.min(31, Number(e.target.value))) })}
+                        />
+                        <span className="text-xs text-muted-foreground">of each month</span>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex flex-col gap-2">
                     <label className="text-[10px] font-bold uppercase text-slate-500">Run at Time ({selectedNode.data.timezone || 'Local Browser Time'})</label>
                     <input
@@ -514,6 +603,26 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                 </div>
               )}
 
+              {selectedNode.data.cron === "Custom" && (
+                <div className="flex flex-col gap-2 p-3 bg-muted rounded-xl border border-border">
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Cron Expression</label>
+                  <input
+                    type="text"
+                    placeholder="* * * * *"
+                    className={cn(
+                      "rounded-lg p-2 text-sm font-mono focus:ring-2 focus:ring-amber-500/20 outline-none transition-all border w-full",
+                      "bg-background border-border text-foreground"
+                    )}
+                    value={selectedNode.data.cronExpression || ""}
+                    onChange={(e) => updateNodeData(selectedNode.id, { cronExpression: e.target.value })}
+                  />
+                  <p className="text-[9px] text-muted-foreground leading-relaxed">
+                    Format: <span className="font-mono">minute hour day month weekday</span>
+                    <br />e.g. <span className="font-mono">0 9 * * 1-5</span> = weekdays at 9am
+                  </p>
+                </div>
+              )}
+
               <div className="flex flex-col gap-2">
                 <label className="text-[10px] font-bold uppercase text-slate-500">Timezone Context</label>
                 <select
@@ -526,17 +635,37 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                 >
                   <option value="Local Browser Time">Local Browser Time</option>
                   <option value="UTC">UTC (Coordinated Universal Time)</option>
+                  <option value="America/New_York">Eastern Time (ET)</option>
+                  <option value="America/Chicago">Central Time (CT)</option>
+                  <option value="America/Denver">Mountain Time (MT)</option>
+                  <option value="America/Los_Angeles">Pacific Time (PT)</option>
+                  <option value="Europe/London">London (GMT/BST)</option>
+                  <option value="Europe/Paris">Central European Time (CET)</option>
+                  <option value="Asia/Kolkata">India (IST)</option>
+                  <option value="Asia/Tokyo">Japan (JST)</option>
+                  <option value="Asia/Singapore">Singapore (SGT)</option>
+                  <option value="Australia/Sydney">Sydney (AEST)</option>
                 </select>
               </div>
             </div>
           )}
 
+          {selectedNode.data.schedule === "Event" && (
+            <p className="text-[10px] text-slate-400 italic leading-relaxed mt-1">
+              Event-based triggers (file uploads, form submissions, external signals) are coming soon.
+            </p>
+          )}
+
           {selectedNode.data.schedule === "Webhook" && (
             <div className="mt-2 p-3 bg-muted rounded-lg border border-border break-all text-xs font-mono text-muted-foreground flex flex-col gap-2 relative group">
               <span className="text-[10px] font-bold uppercase text-muted-foreground text-opacity-70">Webhook URL Generated:</span>
-              <span className="pr-6">https://agentforge.com/api/webhook/{selectedNode.id}</span>
-              <button 
+              {webhookFlowId
+                ? <span className="pr-6">{typeof window !== "undefined" ? window.location.origin : ""}/api/webhook/{webhookFlowId}</span>
+                : <span className="text-amber-400 text-[10px]">Save the flow first to generate your webhook URL.</span>
+              }
+              <button
                 onClick={handleCopyWebhook}
+                disabled={!webhookFlowId}
                 className="absolute right-3 top-1/2 mt-1 -translate-y-1/2 text-muted-foreground hover:text-amber-500 opacity-0 group-hover:opacity-100 transition-all font-sans text-[10px] bg-background px-2 py-1 rounded"
               >
                 Copy URL
@@ -549,9 +678,10 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
   };
 
   const renderWebhookNodeSettings = () => {
+    const webhookFlowId = activeProject?.id;
     const handleCopyWebhook = () => {
-      const url = `https://agentforge.com/api/webhook/${selectedNode.id}`;
-      navigator.clipboard.writeText(url);
+      if (!webhookFlowId) return;
+      navigator.clipboard.writeText(`${window.location.origin}/api/webhook/${webhookFlowId}`);
     };
 
     return (
@@ -567,9 +697,13 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
           </p>
           <div className="mt-2 p-3 bg-muted rounded-lg border border-border break-all text-xs font-mono text-muted-foreground flex flex-col gap-2 relative group">
             <span className="text-[10px] font-bold uppercase text-muted-foreground text-opacity-70">Webhook Endpoint Generated:</span>
-            <span className="pr-6">https://agentforge.com/api/webhook/{selectedNode.id}</span>
-            <button 
+            {webhookFlowId
+              ? <span className="pr-6">{typeof window !== "undefined" ? window.location.origin : ""}/api/webhook/{webhookFlowId}</span>
+              : <span className="text-amber-400 text-[10px]">Save the flow first to generate your webhook URL.</span>
+            }
+            <button
                 onClick={handleCopyWebhook}
+                disabled={!webhookFlowId}
                 className="absolute right-3 top-1/2 mt-1 -translate-y-1/2 text-muted-foreground hover:text-purple-500 opacity-0 group-hover:opacity-100 transition-all font-sans text-[10px] bg-background px-2 py-1 rounded"
               >
                 Copy URL

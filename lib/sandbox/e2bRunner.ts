@@ -553,11 +553,6 @@ export async function runBrowserActionInE2B(
 
   const fullOutput = rawLines.join("\n");
 
-  console.log("[E2B] output length:", fullOutput.length, "| has marker:", fullOutput.includes("---RESULT_START---"));
-  if (!fullOutput.includes("---RESULT_START---")) {
-    console.log("[E2B] Full output (first 500 chars):", fullOutput.slice(0, 500));
-  }
-
   const match = RESULT_RE.exec(fullOutput);
   if (!match) {
     // Self-correcting retry: search Tavily for a working alternative URL
