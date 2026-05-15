@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { Sandbox, OutputMessage } from "@e2b/code-interpreter";
+import "undici"; // force Vercel nft to include undici in deployment (required by e2b SDK)
 
 export const maxDuration = 60;
 
