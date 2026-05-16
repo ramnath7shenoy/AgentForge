@@ -21,6 +21,8 @@ import {
   FlaskConical,
   Sparkles,
   Bookmark,
+  Link2,
+  Cpu,
 } from "lucide-react";
 import {
   cloneFlow,
@@ -212,6 +214,8 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
   const [commentText, setCommentText] = useState("");
   const [posting, setPosting] = useState(false);
   const [deletingComment, setDeletingComment] = useState<string | null>(null);
+  const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [copiedMcp, setCopiedMcp] = useState(false);
 
   const isOwner = currentUserId && flow.userId === currentUserId;
 
@@ -539,6 +543,71 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
               Support Creator
             </button>
           )}
+        </div>
+      </div>
+
+      {/* API Access */}
+      <div className="flex flex-col gap-3 border-t border-border pt-6">
+        <h2 className="text-sm font-black uppercase tracking-[0.15em] text-foreground">API Access</h2>
+        <p className="text-[11px] text-muted-foreground">
+          Trigger this agent programmatically via webhook, or connect it to any MCP-compatible client like Claude Desktop or Cursor.
+        </p>
+
+        {/* Webhook */}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-muted-foreground">
+            <Link2 size={10} />
+            Webhook
+          </div>
+          <div className="flex items-center gap-2 px-3 py-2.5 bg-muted/50 border border-border rounded-xl">
+            <code className="flex-1 text-[11px] font-mono text-foreground truncate">
+              POST {typeof window !== "undefined" ? window.location.origin : ""}/api/webhook/{flow.id}
+            </code>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(`${window.location.origin}/api/webhook/${flow.id}`);
+                setCopiedWebhook(true);
+                setTimeout(() => setCopiedWebhook(false), 2000);
+              }}
+              className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg border border-border text-[10px] font-bold text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-all"
+            >
+              {copiedWebhook ? <CheckCircle size={10} className="text-emerald-500" /> : <Copy size={10} />}
+              {copiedWebhook ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <p className="text-[10px] text-muted-foreground pl-1">
+            Body: <code className="font-mono bg-muted px-1 rounded">{"{ input: string, apiKeys?: object }"}</code>
+          </p>
+        </div>
+
+        {/* MCP */}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-muted-foreground">
+            <Cpu size={10} />
+            MCP Endpoint
+          </div>
+          <div className="flex items-center gap-2 px-3 py-2.5 bg-muted/50 border border-border rounded-xl">
+            <code className="flex-1 text-[11px] font-mono text-foreground truncate">
+              POST {typeof window !== "undefined" ? window.location.origin : ""}/api/mcp
+            </code>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(`${window.location.origin}/api/mcp`);
+                setCopiedMcp(true);
+                setTimeout(() => setCopiedMcp(false), 2000);
+              }}
+              className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg border border-border text-[10px] font-bold text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-all"
+            >
+              {copiedMcp ? <CheckCircle size={10} className="text-emerald-500" /> : <Copy size={10} />}
+              {copiedMcp ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <p className="text-[10px] text-muted-foreground pl-1">
+            Add to Claude Desktop or Cursor — this agent appears as a callable tool named{" "}
+            <code className="font-mono bg-muted px-1 rounded">
+              {flow.name?.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") ?? flow.id}
+            </code>
+          </p>
         </div>
       </div>
 
