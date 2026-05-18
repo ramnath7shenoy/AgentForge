@@ -16,6 +16,7 @@ import {
   Rocket,
   Share2,
   BookOpen,
+  PlusCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +42,19 @@ const sections: Section[] = [
     ],
     accent: "indigo",
     highlights: [],
+  },
+  {
+    icon: <PlusCircle size={20} />,
+    title: "Create Your First Flow — 3 Steps",
+    subtitle: "From a blank canvas to a running AI agent in under a minute.",
+    bullets: [
+      "Step 1 — Drag an Input node from the left sidebar onto the canvas. This is where your flow starts.",
+      "Step 2 — Drag an Agent Brain node onto the canvas. Connect it to the Input node by dragging from the right handle of Input to the left handle of Agent Brain.",
+      "Step 3 — Drag an Output node and connect it to the Agent Brain. Click the Agent Brain, write a prompt in the right panel (e.g. 'Summarise the input in one sentence'), then hit Run Flow.",
+      "Shortcut: click AI Build (✦) in the toolbar, describe what you want in plain English, and your entire flow is generated automatically — no dragging required.",
+    ],
+    accent: "teal",
+    highlights: ["node-palette", "ai-build"],
   },
   {
     icon: <Layers size={20} />,

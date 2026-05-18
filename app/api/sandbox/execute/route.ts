@@ -30,7 +30,11 @@ export async function POST(req: NextRequest) {
   let flowId: string | undefined;
 
   try {
-    const body = await req.json();
+    const raw = await req.text();
+    if (raw.length > 500_000) {
+      return new Response(JSON.stringify({ error: "Request body too large" }), { status: 413 });
+    }
+    const body = JSON.parse(raw);
     nodes = body.nodes ?? [];
     edges = body.edges ?? [];
     input = body.input ?? "";

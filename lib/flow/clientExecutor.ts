@@ -210,7 +210,14 @@ async function dispatchLLM(
   abortSignal?: AbortSignal
 ): Promise<string> {
   const provider = providerKey || detectProvider(apiKey);
-  const turnCount = conversationHistory.length + 1;
+
+  // Keep the most recent 20 turns to avoid overflowing context windows on long sessions
+  const MAX_HISTORY = 20;
+  const trimmedHistory = conversationHistory.length > MAX_HISTORY
+    ? conversationHistory.slice(-MAX_HISTORY)
+    : conversationHistory;
+
+  const turnCount = trimmedHistory.length + 1;
   onLog(
     `📡 Dispatching to ${provider.toUpperCase()} — ${turnCount} message(s) in context...`,
     "INFO"
@@ -257,7 +264,7 @@ async function dispatchLLM(
       model: resolvedModel,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        ...conversationHistory.map((m) => ({ role: m.role, content: m.content })),
+        ...trimmedHistory.map((m) => ({ role: m.role, content: m.content })),
         { role: "user", content: userContent },
       ],
     };
@@ -277,7 +284,7 @@ async function dispatchLLM(
     body = {
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       contents: [
-        ...conversationHistory.map((m) => ({
+        ...trimmedHistory.map((m) => ({
           role: m.role === "assistant" ? "model" : "user",
           parts: [{ text: m.content }],
         })),
@@ -305,7 +312,7 @@ async function dispatchLLM(
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: [
-        ...conversationHistory.map((m) => ({ role: m.role, content: m.content })),
+        ...trimmedHistory.map((m) => ({ role: m.role, content: m.content })),
         { role: "user", content: userContent },
       ],
     };

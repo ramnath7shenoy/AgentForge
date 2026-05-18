@@ -8,24 +8,22 @@
 // from the other for approval purposes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-let _resolve: ((approved: boolean) => void) | null = null;
+const _resolveQueue: Array<(approved: boolean) => void> = [];
 
 /** Suspend current execution until resolveApproval() is called. */
 export function waitForApproval(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    _resolve = resolve;
+    _resolveQueue.push(resolve);
   });
 }
 
 /** Call this to resume a flow paused at an approval/gatekeeper node. */
 export function resolveApproval(approved: boolean): void {
-  if (_resolve) {
-    _resolve(approved);
-    _resolve = null;
-  }
+  const resolve = _resolveQueue.shift();
+  if (resolve) resolve(approved);
 }
 
-/** True while a flow is suspended waiting for human input. */
+/** True while at least one flow is suspended waiting for human input. */
 export function isApprovalPending(): boolean {
-  return _resolve !== null;
+  return _resolveQueue.length > 0;
 }

@@ -53,14 +53,17 @@ export function evaluateNaturalLanguageCondition(
     return JSON.stringify(data).toLowerCase().includes(searchTerm);
   }
 
-  // 4. Fallback: If it's a valid JS expression (for power users / legacy), try it
-  try {
-    if (/^[\d\s+\-*/().><=!&|]+$/.test(text)) {
-       
-      return !!eval(text);
-    }
-  } catch {
-    // ignore
+  // 4. Safe numeric comparison (e.g. "5 > 3", "10 == 10") — no eval
+  const numericExprMatch = text.match(/^(-?\d+(?:\.\d+)?)\s*(===?|!==?|>=?|<=?)\s*(-?\d+(?:\.\d+)?)$/);
+  if (numericExprMatch) {
+    const [, lhs, op, rhs] = numericExprMatch;
+    const a = parseFloat(lhs), b = parseFloat(rhs);
+    if (op === ">"  || op === "gt") return a > b;
+    if (op === ">=" || op === "gte") return a >= b;
+    if (op === "<"  || op === "lt") return a < b;
+    if (op === "<=" || op === "lte") return a <= b;
+    if (op === "==" || op === "===") return a === b;
+    if (op === "!=" || op === "!==") return a !== b;
   }
 
   // 5. Ultimate Fallback: Substring match against data

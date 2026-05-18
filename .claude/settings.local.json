@@ -13,7 +13,10 @@
       "Bash(npx tsc *)",
       "Bash(Remove-Item \"E:\\\\agentforge\\\\flowforge-ai\\\\components\\\\flow\\\\nodes\\\\EmbeddingsNode.tsx\" -Force)",
       "Bash(Remove-Item \"E:\\\\agentforge\\\\flowforge-ai\\\\components\\\\flow\\\\sidebar\\\\settings\\\\EmbeddingsSettings.tsx\" -Force)",
-      "Bash(Write-Host \"Deleted\")"
+      "Bash(Write-Host \"Deleted\")",
+      "Bash(Get-ChildItem -Path \"E:\\\\agentforge\\\\flowforge-ai\" -Recurse -Directory -Name)",
+      "Bash(Select-Object -First 30)",
+      "PowerShell(Get-ChildItem -Path \"E:\\\\agentforge\\\\flowforge-ai\" -File | Where-Object { $_.Extension -in '.md', '.env', '.env.example' } | Select-Object -ExpandProperty FullName)"
     ]
   }
 }
