@@ -7,7 +7,7 @@ Build, execute, and export AI agent pipelines through a drag-and-drop canvas. Co
 ## Features
 
 ### Canvas & Editor
-- **Drag-and-drop node graph** powered by React Flow — 17 node types plus subflow containers
+- **Drag-and-drop node graph** powered by React Flow — 19 node types plus subflow containers
 - **AI Architect** — describe a workflow in plain English; the AI generates a fully-connected, validated flow graph
 - **Auto-layout** — one-click Dagre-based TB/LR layout reflow
 - **Version snapshots** — save and restore named flow versions
@@ -22,6 +22,9 @@ Build, execute, and export AI agent pipelines through a drag-and-drop canvas. Co
 - **Subflows** — nest reusable agent graphs inside parent flows
 - **Exit signal** — AI nodes can return `"EXIT"` to short-circuit downstream execution
 - **Run history** — every execution logged with input, output, cost, and duration
+- **Agent Loop** — ReAct reasoning loop with 6 built-in tools: web_search, http_get, calculate, extract_json, think, get_datetime
+- **Parallel Map** — fan out a list to N concurrent LLM calls; configurable separator, concurrency (1–10), and output format
+- **Mobile Agent** — security isolation pipeline; each stage runs in a fully isolated E2B sandbox with only text output forwarded
 
 ### ML & Data Science Nodes
 Five dedicated ML nodes with type-aware output rendering (images render as `<img>`, audio as `<audio>`):
@@ -86,7 +89,12 @@ Discover and clone community-published agents:
 - **Clone** to your editor (guests → `localStorage` migration on login)
 - **Star**, **Bookmark**, **Follow**, **Deploy** — requires login
 - **Verified badge** — creators with 3+ deployed agents and 50+ total stars
-- **Collections** — curated category sections (Marketing, Starter Packs, Data & Analytics, Dev Tools)
+- **Collections** — curated lists at `/store/collections`; users can create and share public collections
+- **Agent Requests** — community request board at `/store/requests`; upvote and submit requests; fulfilled badge links to the agent
+- **Creator Following** — follow creators; follower count shown on detail and creator profile pages
+- **Remix Tracking** — cloned flows carry `sourceFlowId`; detail page shows "Remixed" badge
+- **Usage Badges** — Popular (100+ clones or 50+ stars), Rising (25+ clones or 10+ stars), Verified (✓ sky blue chip)
+- **Tag Subscriptions** — follow popular tags from the store page
 - **Changelog** — per-agent "What's New" banner
 
 ### Webhook API
@@ -242,6 +250,9 @@ Navigate to **Dashboard → Integrations** and connect your OAuth apps. App Acti
 | Integration | `action` | Generic outgoing HTTP call |
 | App Action | `appaction` | OAuth-connected platform action |
 | Final Result | `output` | Terminal node; feeds result to chat |
+| Agent Loop | `agentloop` | ReAct loop — LLM reasons and calls 6 tools iteratively until done |
+| Mobile Agent | `mobileagent` | Security isolation pipeline — each stage is a fresh isolated E2B sandbox |
+| Parallel Map | `parallelmap` | Maps a prompt over a list concurrently — up to 10 simultaneous LLM calls |
 
 ---
 

@@ -20,6 +20,7 @@ import {
   UserCircle,
   LogOut,
   RefreshCw,
+  BookOpen,
 } from "lucide-react";
 import Navbar from "@/components/ui/Navbar";
 import { useVaultStore } from "@/stores/vaultStore";
@@ -40,7 +41,7 @@ interface FlowRecord {
   groupName?: string | null;
 }
 
-type ActiveTab = "recent" | "templates" | "account";
+type ActiveTab = "recent" | "templates" | "docs" | "account";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -171,6 +172,12 @@ export default function DashboardPage() {
               onClick={() => setActiveTab("templates")}
             />
             <SidebarTab
+              icon={<BookOpen size={14} />}
+              label="Documentation"
+              active={activeTab === "docs"}
+              onClick={() => setActiveTab("docs")}
+            />
+            <SidebarTab
               icon={<UserCircle size={14} />}
               label="Account"
               active={activeTab === "account"}
@@ -198,17 +205,19 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold tracking-tight">
-                {activeTab === "recent" ? "Mission Control" : activeTab === "templates" ? "Agent Blueprints" : "Account"}
+                {activeTab === "recent" ? "Mission Control" : activeTab === "templates" ? "Agent Blueprints" : activeTab === "docs" ? "Documentation" : "Account"}
               </h1>
               <p className="text-sm text-muted-foreground mt-1">
                 {activeTab === "recent"
                   ? "Agent fleet overview & system diagnostics"
                   : activeTab === "templates"
                   ? "Starting points for advanced automation"
+                  : activeTab === "docs"
+                  ? "How FlowForge AI works — nodes, execution, APIs and more"
                   : "Manage your profile and session"}
               </p>
             </div>
-            {activeTab !== "account" && (
+            {activeTab !== "account" && activeTab !== "docs" && (
               <button
                 onClick={() => router.push("/editor")}
                 className="flex items-center gap-2 px-4 py-2 bg-gradient-to-br from-indigo-600 to-violet-700 hover:from-indigo-500 hover:to-violet-600 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-500/20 active:scale-95"
@@ -220,7 +229,7 @@ export default function DashboardPage() {
           </div>
 
           {/* STATS ROW — only on recent/templates */}
-          {activeTab !== "account" && (
+          {activeTab !== "account" && activeTab !== "docs" && (
             <div className="grid grid-cols-2 gap-4">
               <StatCard icon={<Cpu size={16} />} label="Total Flows" value={totalFlows} color="indigo" />
               <StatCard icon={<Lock size={16} />} label="Vault Keys" value={vaultEntries.length} color="cyan" />
@@ -389,6 +398,149 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {/* DOCUMENTATION TAB */}
+          {activeTab === "docs" && (
+            <div className="flex flex-col gap-6 max-w-3xl">
+
+              {/* What is FlowForge */}
+              <DocSection title="What is FlowForge AI?" accent="indigo">
+                <p>FlowForge AI is a <strong>visual AI workflow builder</strong>. You drag nodes onto a canvas, connect them, and run fully functional AI agent pipelines — no code required. When you&apos;re ready to ship, export the entire flow as Python, TypeScript, or JavaScript.</p>
+                <p className="mt-2">Think of it as the layer between &ldquo;I have an idea for an AI agent&rdquo; and &ldquo;it&apos;s running in production.&rdquo;</p>
+              </DocSection>
+
+              {/* Node Types */}
+              <DocSection title="Node Types" accent="violet">
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  {[
+                    { name: "Input", desc: "Entry point — accepts text, files, or JSON from the user" },
+                    { name: "Agent Brain", desc: "Calls an LLM (GPT, Claude, Gemini, Groq) with your instructions" },
+                    { name: "Router / Decision", desc: "N-way branch based on English conditions — routes data to different paths" },
+                    { name: "Approval Gate", desc: "Pauses the flow for human review via chat — resume with 'approve'" },
+                    { name: "Safety Gatekeeper", desc: "AI critic or human review before sensitive actions execute" },
+                    { name: "App Action", desc: "Posts to Slack, GitHub, X, Notion, LinkedIn, Discord and more" },
+                    { name: "Webhook", desc: "Accepts external HTTP triggers; exposes the flow as a REST endpoint" },
+                    { name: "Smart Trigger", desc: "Cron-scheduled execution — runs your agent on a set schedule" },
+                    { name: "ML Model", desc: "HuggingFace or Replicate inference — any model, text output" },
+                    { name: "Image Gen", desc: "DALL-E 3 or Replicate — generates images from prompt text" },
+                    { name: "RAG", desc: "Retrieval-augmented generation — searches a knowledge base with OpenAI embeddings" },
+                    { name: "Speech", desc: "Whisper (STT) or ElevenLabs/OpenAI (TTS) — audio in/out" },
+                    { name: "Data Analysis", desc: "Python + matplotlib in an E2B sandbox — produces charts as output" },
+                    { name: "Browser Agent", desc: "Headless Chromium via E2B — screenshot, scrape, or run Python/JS remotely" },
+                    { name: "Agent Loop", desc: "ReAct reasoning loop — LLM thinks, calls tools (web search, HTTP, calculate, JSON, datetime), iterates until done" },
+                    { name: "Mobile Agent", desc: "Security isolation pipeline — each stage runs in a fully isolated E2B sandbox; only output passes forward, no state or secrets carry over" },
+                    { name: "Parallel Map", desc: "Splits input into a list and runs your prompt on every item concurrently — configurable concurrency, separator, and output format" },
+                    { name: "Subflow", desc: "Nests a saved agent as a reusable sub-pipeline inside any flow" },
+                  ].map((n) => (
+                    <div key={n.name} className="bg-muted/50 rounded-xl p-3 border border-border">
+                      <p className="text-xs font-bold text-foreground">{n.name}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{n.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </DocSection>
+
+              {/* Template Variables */}
+              <DocSection title="Template Variables" accent="cyan">
+                <p>Connect node outputs to downstream prompts using <code className="text-cyan-400 bg-cyan-500/10 px-1 rounded text-[11px]">{"{{node-id}}"}</code> syntax.</p>
+                <div className="mt-2 flex flex-col gap-1.5">
+                  {[
+                    { ex: "{{input-1}}", desc: "Full output of the Input node" },
+                    { ex: "{{brain-2.output}}", desc: "Text output of Agent Brain node" },
+                    { ex: "{{router-1.path}}", desc: "The path taken by a Router node" },
+                  ].map((v) => (
+                    <div key={v.ex} className="flex items-center gap-3">
+                      <code className="text-[10px] font-mono text-cyan-400 bg-slate-900/60 px-2 py-0.5 rounded shrink-0">{v.ex}</code>
+                      <span className="text-[10px] text-muted-foreground">{v.desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </DocSection>
+
+              {/* LLM Providers */}
+              <DocSection title="LLM Providers" accent="purple">
+                <p>Add API keys to the <strong>Vault</strong> panel in the editor. The platform auto-detects provider from key prefix — no manual selection needed.</p>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {[
+                    { p: "Groq", k: "GROQ_API_KEY", prefix: "gsk_…" },
+                    { p: "OpenAI", k: "OPENAI_API_KEY", prefix: "sk-…" },
+                    { p: "Anthropic", k: "ANTHROPIC_API_KEY", prefix: "sk-ant-…" },
+                    { p: "Google Gemini", k: "GEMINI_API_KEY", prefix: "AIza…" },
+                  ].map((lp) => (
+                    <div key={lp.p} className="bg-muted/50 rounded-xl p-2.5 border border-border">
+                      <p className="text-xs font-bold text-foreground">{lp.p}</p>
+                      <code className="text-[9px] text-muted-foreground font-mono">{lp.k}</code>
+                      <p className="text-[9px] text-slate-500 mt-0.5">Key prefix: <span className="text-purple-400">{lp.prefix}</span></p>
+                    </div>
+                  ))}
+                </div>
+              </DocSection>
+
+              {/* Execution */}
+              <DocSection title="How Execution Works" accent="emerald">
+                <p>Clicking <strong>Run</strong> triggers a reactive topological executor. Independent branches run concurrently. Each node&apos;s output is stored in the execution context and can be referenced by any downstream node via template variables.</p>
+                <div className="mt-2 flex flex-col gap-1.5">
+                  <DocBullet>The executor resolves all upstream dependencies before running each node.</DocBullet>
+                  <DocBullet>Approval Gate nodes pause the flow mid-execution and wait for chat input.</DocBullet>
+                  <DocBullet>Router nodes evaluate English conditions and only activate the matching branch.</DocBullet>
+                  <DocBullet>If any node outputs <code className="text-emerald-400 text-[9px]">EXIT</code>, all downstream nodes are skipped.</DocBullet>
+                </div>
+              </DocSection>
+
+              {/* Deploying */}
+              <DocSection title="Deploying & Calling Your Agent" accent="indigo">
+                <p>Go to <strong>Publish</strong> → <strong>Deploy to Store</strong>. After deploy you get:</p>
+                <div className="mt-2 flex flex-col gap-2">
+                  <div className="bg-muted/50 rounded-xl p-3 border border-border">
+                    <p className="text-xs font-bold text-foreground mb-1">Webhook API</p>
+                    <code className="text-[9px] font-mono text-indigo-400">POST /api/webhook/{"{flowId}"}</code>
+                    <p className="text-[9px] text-muted-foreground mt-1">Body: <code className="text-indigo-300">{`{ "input": "your prompt" }`}</code></p>
+                    <p className="text-[9px] text-muted-foreground">Response: <code className="text-indigo-300">{`{ "success": true, "output": "...", "durationMs": 1200, "costUsd": 0.002 }`}</code></p>
+                  </div>
+                  <div className="bg-muted/50 rounded-xl p-3 border border-border">
+                    <p className="text-xs font-bold text-foreground mb-1">MCP Server</p>
+                    <code className="text-[9px] font-mono text-violet-400">GET /api/mcp</code>
+                    <p className="text-[9px] text-muted-foreground mt-1">Every deployed public flow is auto-exposed as an MCP tool. Add <code className="text-violet-300">/api/mcp</code> as an MCP server in Claude Desktop to call your agents from Claude directly.</p>
+                  </div>
+                  <div className="bg-muted/50 rounded-xl p-3 border border-border">
+                    <p className="text-xs font-bold text-foreground mb-1">Schedule with Cron</p>
+                    <p className="text-[9px] text-muted-foreground">Use <span className="text-indigo-400 font-semibold">cron-job.org</span> or <span className="text-indigo-400 font-semibold">EasyCron</span>: create a job, paste the webhook URL, set method POST, add JSON body, pick a schedule. No server needed.</p>
+                  </div>
+                </div>
+              </DocSection>
+
+              {/* App Integrations */}
+              <DocSection title="App Integrations" accent="violet">
+                <p>Connect apps in <strong>Dashboard → Integrations</strong>. Tokens are stored encrypted and never exposed to the browser after saving. The App Action node reads them automatically at runtime.</p>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {["X (Twitter)", "Slack", "Discord", "GitHub", "Notion", "Instagram", "LinkedIn", "Medium", "YouTube", "Reddit", "Email (SMTP)", "Browser Agent"].map((app) => (
+                    <span key={app} className="text-[9px] px-2 py-0.5 rounded-full border border-violet-500/20 bg-violet-500/5 text-violet-400 font-semibold">{app}</span>
+                  ))}
+                </div>
+              </DocSection>
+
+              {/* Advanced */}
+              <DocSection title="Advanced Features" accent="sky">
+                <div className="flex flex-col gap-2">
+                  {[
+                    { name: "AI Architect", desc: "Describe a workflow in plain English and the AI auto-generates a validated flow graph — click the wand icon in the toolbar." },
+                    { name: "Real-time Collaboration", desc: "Multiple users can edit the same flow simultaneously. Live cursors, presence indicators, and automatic sync via Liveblocks." },
+                    { name: "Version Snapshots", desc: "Save named versions of any flow. Up to 20 snapshots per flow — restore any previous state from the toolbar." },
+                    { name: "Mirror Mode", desc: "Compile your flow to code and run it in a preview sandbox. HTTP calls print draft payloads instead of sending real requests." },
+                    { name: "Agent Loop", desc: "ReAct reasoning loop with 6 built-in tools: web_search, http_get, calculate, extract_json, think, and get_datetime. The LLM reasons and calls tools iteratively until it reaches a final answer." },
+                    { name: "Mobile Agent", desc: "Security isolation pipeline across E2B sandboxes. Each stage is a fully isolated container — only the text output of one stage is passed to the next. No shared state, secrets, or side-effects between stages." },
+                    { name: "Parallel Map", desc: "Map a prompt over every item in a list concurrently. Splits input by newline, comma, JSON array, or sentence — runs up to 10 LLM calls simultaneously and collects results as a numbered list, JSON array, or concatenated text." },
+                  ].map((f) => (
+                    <div key={f.name} className="bg-muted/50 rounded-xl p-3 border border-border">
+                      <p className="text-xs font-bold text-foreground">{f.name}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{f.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </DocSection>
+
+            </div>
+          )}
+
           {/* ACCOUNT TAB */}
           {activeTab === "account" && (
             <div className="max-w-md flex flex-col gap-4">
@@ -504,6 +656,33 @@ function HealthItem({ label, status }: { label: string; status: "online" | "offl
         <span className="text-[9px] text-slate-400 font-medium capitalize">{status}</span>
         <div className={cn("w-1.5 h-1.5 rounded-full", status === "online" ? "bg-emerald-500" : "bg-rose-500")} />
       </div>
+    </div>
+  );
+}
+
+const accentMap: Record<string, string> = {
+  indigo: "border-indigo-500/20 bg-indigo-500/5 text-indigo-400",
+  violet: "border-violet-500/20 bg-violet-500/5 text-violet-400",
+  cyan: "border-cyan-500/20 bg-cyan-500/5 text-cyan-400",
+  purple: "border-purple-500/20 bg-purple-500/5 text-purple-400",
+  emerald: "border-emerald-500/20 bg-emerald-500/5 text-emerald-400",
+  sky: "border-sky-500/20 bg-sky-500/5 text-sky-400",
+};
+
+function DocSection({ title, accent, children }: { title: string; accent: string; children: React.ReactNode }) {
+  return (
+    <div className={cn("rounded-2xl border p-5", accentMap[accent] || accentMap.indigo)}>
+      <h2 className="text-sm font-black uppercase tracking-wider mb-3">{title}</h2>
+      <div className="text-[11px] text-muted-foreground leading-relaxed">{children}</div>
+    </div>
+  );
+}
+
+function DocBullet({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex gap-2">
+      <span className="text-emerald-500 mt-0.5 shrink-0">›</span>
+      <span>{children}</span>
     </div>
   );
 }

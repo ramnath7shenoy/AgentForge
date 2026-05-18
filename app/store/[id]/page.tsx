@@ -57,6 +57,7 @@ export default async function StoreDetailPage({ params }: { params: Promise<{ id
     isStarred: starredIds.includes(flow.id),
     isWishlisted: wishlistedIds.includes(flow.id),
     isVerified,
+    sourceFlowId: (flow as any).sourceFlowId ?? null,
   };
 
   const related = (relatedResult.flows ?? []).map((f: any) => ({

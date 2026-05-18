@@ -764,13 +764,12 @@ export default function PublishPage() {
 
             {/* Webhook URL — shown after deploy */}
             {isDeployed && deployedFlowId && (
-              <div className="flex flex-col gap-2 px-4 py-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
+              <div className="flex flex-col gap-3 px-4 py-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
                 <div className="flex items-center justify-between">
                   <span className="text-[9px] font-black uppercase tracking-[0.2em] text-indigo-400 flex items-center gap-1.5">
                     <Link2 size={10} />
                     Webhook URL
                   </span>
-                  <span className="text-[8px] text-slate-500">POST to trigger from cron-job.org or any scheduler</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[9px] font-mono text-slate-300 truncate flex-1 bg-slate-900/80 px-2 py-1.5 rounded-lg border border-slate-700">
@@ -789,9 +788,14 @@ export default function PublishPage() {
                     {webhookCopied ? "Copied!" : "Copy"}
                   </button>
                 </div>
-                <p className="text-[8px] text-slate-500">
-                  Body: <code className="text-indigo-400 font-mono">{`{ "input": "your prompt" }`}</code> — vault keys used automatically, no auth needed
-                </p>
+                <div className="flex flex-col gap-1 pt-1 border-t border-indigo-500/20">
+                  <p className="text-[8px] text-slate-400">
+                    Body: <code className="text-indigo-300 font-mono">{`{ "input": "your prompt" }`}</code>
+                  </p>
+                  <p className="text-[8px] text-slate-500">
+                    See the agent&apos;s store page for scheduling and MCP setup instructions.
+                  </p>
+                </div>
               </div>
             )}
 

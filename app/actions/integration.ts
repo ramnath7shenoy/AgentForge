@@ -211,9 +211,17 @@ export async function executeAppAction(
       if (action === "create_page") {
         const result = await notionService.createPage(
           token,
-          resolvedInputs.databaseId ?? "",
+          resolvedInputs.parentPageId ?? "",
           resolvedInputs.title ?? "",
           resolvedInputs.content
+        );
+        return { result };
+      }
+      if (action === "append_to_page") {
+        const result = await notionService.appendToPage(
+          token,
+          resolvedInputs.pageId ?? "",
+          resolvedInputs.content ?? ""
         );
         return { result };
       }
@@ -258,6 +266,56 @@ export async function executeAppAction(
           fmt
         );
         return { result };
+      }
+      break;
+    }
+
+    case "youtube": {
+      const maxResults = parseInt(resolvedInputs.maxResults || "5", 10) || 5;
+      if (action === "search_videos") {
+        const q = encodeURIComponent(resolvedInputs.query ?? "");
+        const res = await fetch(
+          `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${q}&maxResults=${maxResults}&type=video&key=${token}`
+        );
+        if (!res.ok) throw new Error(`YouTube API error: ${res.status}`);
+        const data = await res.json();
+        const items = (data.items ?? []).map((item: any) => {
+          const s = item.snippet;
+          return `• ${s.title} — https://youtube.com/watch?v=${item.id.videoId} (${s.channelTitle})`;
+        });
+        return { result: items.length > 0 ? items.join("\n") : "No results found." };
+      }
+      if (action === "get_video_details") {
+        const id = encodeURIComponent(resolvedInputs.videoId ?? "");
+        const res = await fetch(
+          `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${id}&key=${token}`
+        );
+        if (!res.ok) throw new Error(`YouTube API error: ${res.status}`);
+        const data = await res.json();
+        const item = data.items?.[0];
+        if (!item) return { result: "Video not found." };
+        const { title, description, channelTitle } = item.snippet;
+        const { viewCount, likeCount } = item.statistics ?? {};
+        return {
+          result: `Title: ${title}\nChannel: ${channelTitle}\nViews: ${Number(viewCount ?? 0).toLocaleString()}\nLikes: ${Number(likeCount ?? 0).toLocaleString()}\nDescription: ${(description ?? "").slice(0, 300)}${(description ?? "").length > 300 ? "…" : ""}`,
+        };
+      }
+      if (action === "post_comment") {
+        const res = await fetch(
+          `https://www.googleapis.com/youtube/v3/commentThreads?part=snippet`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              snippet: {
+                videoId: resolvedInputs.videoId ?? "",
+                topLevelComment: { snippet: { textOriginal: resolvedInputs.text ?? "" } },
+              },
+            }),
+          }
+        );
+        if (!res.ok) throw new Error(`YouTube comment error: ${res.status} — ensure you're using an OAuth token, not an API key.`);
+        return { result: "Comment posted successfully." };
       }
       break;
     }

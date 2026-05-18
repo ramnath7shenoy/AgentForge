@@ -46,6 +46,9 @@ import ImageGenNode from "../nodes/ImageGenNode";
 import RAGNode from "../nodes/RAGNode";
 import SpeechNode from "../nodes/SpeechNode";
 import DataAnalysisNode from "../nodes/DataAnalysisNode";
+import AgentLoopNode from "../nodes/AgentLoopNode";
+import MobileAgentNode from "../nodes/MobileAgentNode";
+import ParallelMapNode from "../nodes/ParallelMapNode";
 
 // Module-level map stores each node's position at drag-start for position-change detection.
 const preDragPositions = new Map<string, { x: number; y: number }>();
@@ -110,6 +113,9 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true, collabo
     rag: RAGNode,
     speech: SpeechNode,
     dataanalysis: DataAnalysisNode,
+    agentloop: AgentLoopNode,
+    mobileagent: MobileAgentNode,
+    parallelmap: ParallelMapNode,
   }), []);
 
   const onNodesChange = useCallback((c: NodeChange[]) => {

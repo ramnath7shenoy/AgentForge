@@ -23,6 +23,10 @@ import {
   Bookmark,
   Link2,
   Cpu,
+  UserPlus,
+  UserCheck,
+  FolderPlus,
+  X,
 } from "lucide-react";
 import {
   cloneFlow,
@@ -35,6 +39,12 @@ import {
   postFlowComment,
   deleteFlowComment,
 } from "@/app/actions/flow";
+import {
+  toggleFollowCreator,
+  getFollowStatus,
+  addToCollection,
+  getUserCollections,
+} from "@/app/actions/community";
 import { cn } from "@/lib/utils";
 import AgentVisual from "@/components/store/AgentVisual";
 import WorkflowLightbox from "@/app/store/WorkflowLightbox";
@@ -63,6 +73,7 @@ interface DetailFlow {
   isStarred?: boolean;
   isVerified?: boolean;
   isWishlisted?: boolean;
+  sourceFlowId?: string | null;
 }
 
 const AI_COLORS: Record<string, string> = {
@@ -217,6 +228,18 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
   const [copiedWebhook, setCopiedWebhook] = useState(false);
   const [copiedMcp, setCopiedMcp] = useState(false);
 
+  // Follow creator state
+  const [following, setFollowing] = useState(false);
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followLoading, setFollowLoading] = useState(false);
+
+  // Collection picker state
+  const [collectionPickerOpen, setCollectionPickerOpen] = useState(false);
+  const [userCollections, setUserCollections] = useState<any[]>([]);
+  const [collectionsLoading, setCollectionsLoading] = useState(false);
+  const [addingToCollection, setAddingToCollection] = useState<string | null>(null);
+  const [addedToCollection, setAddedToCollection] = useState<string | null>(null);
+
   const isOwner = currentUserId && flow.userId === currentUserId;
 
   const compat = detectCompat(flow.nodes);
@@ -230,7 +253,13 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
       if (r.success) setComments(r.comments as Comment[]);
       setCommentsLoading(false);
     });
-  }, [flow.id]);
+    if (flow.userId && currentUserId) {
+      getFollowStatus(flow.userId).then(r => {
+        setFollowing(r.following);
+        setFollowerCount(r.followerCount);
+      }).catch(() => {});
+    }
+  }, [flow.id, flow.userId, currentUserId]);
 
   const handleStar = async () => {
     if (!currentUserId) { router.push("/login"); return; }
@@ -306,6 +335,43 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
     setDeletingComment(null);
   };
 
+  const handleToggleFollow = async () => {
+    if (!currentUserId || !flow.userId || followLoading) return;
+    setFollowLoading(true);
+    const prev = following;
+    setFollowing(!prev);
+    setFollowerCount(n => n + (prev ? -1 : 1));
+    const result = await toggleFollowCreator(flow.userId);
+    setFollowing(result.following);
+    if (result.following !== !prev) {
+      setFollowerCount(n => n + (result.following ? 1 : -1) - (prev ? -1 : 1));
+    }
+    setFollowLoading(false);
+  };
+
+  const handleOpenCollectionPicker = async () => {
+    if (!currentUserId) return;
+    setCollectionPickerOpen(true);
+    if (userCollections.length === 0) {
+      setCollectionsLoading(true);
+      const result = await getUserCollections();
+      setUserCollections(result.collections);
+      setCollectionsLoading(false);
+    }
+  };
+
+  const handleAddToCollection = async (collectionId: string) => {
+    if (addingToCollection) return;
+    setAddingToCollection(collectionId);
+    await addToCollection(collectionId, flow.id);
+    setAddedToCollection(collectionId);
+    setAddingToCollection(null);
+    setTimeout(() => {
+      setAddedToCollection(null);
+      setCollectionPickerOpen(false);
+    }, 1000);
+  };
+
   const creatorHandle = flow.creatorName || "Anonymous";
   const isOtherCreator = flow.userId && flow.userId !== currentUserId;
 
@@ -339,9 +405,19 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
       {/* Title + stats */}
       <div className="flex flex-col gap-3">
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-2xl sm:text-3xl font-black text-foreground leading-tight">
-            {flow.name || "Untitled Agent"}
-          </h1>
+          <div className="flex flex-col gap-1.5">
+            <h1 className="text-2xl sm:text-3xl font-black text-foreground leading-tight">
+              {flow.name || "Untitled Agent"}
+            </h1>
+            {flow.sourceFlowId && (
+              <Link
+                href={`/store/${flow.sourceFlowId}`}
+                className="flex items-center gap-1 w-fit px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/30 rounded-full text-[9px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
+              >
+                🔀 Remixed from original
+              </Link>
+            )}
+          </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={handleStar}
@@ -402,15 +478,38 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
           <span className="text-muted-foreground">·</span>
           by{" "}
           {flow.userId ? (
-            <Link
-              href={`/store/creator/${flow.userId}`}
-              className="font-bold text-[11px] text-violet-500 hover:underline flex items-center gap-1"
-            >
-              {creatorHandle}
-              {flow.isVerified && (
-                <span title="Verified Creator" className="text-sky-400 text-[10px]">✓</span>
+            <span className="flex items-center gap-2">
+              <Link
+                href={`/store/creator/${flow.userId}`}
+                className="font-bold text-[11px] text-violet-500 hover:underline flex items-center gap-1"
+              >
+                {creatorHandle}
+                {flow.isVerified && (
+                  <span title="Verified Creator" className="text-sky-400 text-[10px]">✓</span>
+                )}
+              </Link>
+              {followerCount > 0 && (
+                <span className="text-[9px] text-muted-foreground">{followerCount} follower{followerCount !== 1 ? "s" : ""}</span>
               )}
-            </Link>
+              {isOtherCreator && currentUserId && (
+                <button
+                  onClick={handleToggleFollow}
+                  disabled={followLoading}
+                  className={cn(
+                    "flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border transition-all",
+                    following
+                      ? "bg-sky-500/10 border-sky-500/30 text-sky-400 hover:bg-sky-500/20"
+                      : "bg-muted border-border text-muted-foreground hover:border-sky-500/30 hover:text-sky-400"
+                  )}
+                >
+                  {followLoading
+                    ? <Loader2 size={8} className="animate-spin" />
+                    : following ? <UserCheck size={8} /> : <UserPlus size={8} />
+                  }
+                  {following ? "Following" : "Follow"}
+                </button>
+              )}
+            </span>
           ) : (
             <span className="font-bold text-[11px] text-foreground">{creatorHandle}</span>
           )}
@@ -543,6 +642,17 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
               Support Creator
             </button>
           )}
+
+          {currentUserId && (
+            <button
+              onClick={handleOpenCollectionPicker}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-violet-500/20 bg-violet-500/5 text-[11px] font-bold text-violet-500 hover:bg-violet-500/10 transition-all"
+              title="Add to collection"
+            >
+              <FolderPlus size={11} />
+              Add to Collection
+            </button>
+          )}
         </div>
       </div>
 
@@ -578,6 +688,14 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
           <p className="text-[10px] text-muted-foreground pl-1">
             Body: <code className="font-mono bg-muted px-1 rounded">{"{ input: string, apiKeys?: object }"}</code>
           </p>
+          <div className="flex flex-col gap-1.5 mt-1 px-3 py-2.5 bg-muted/30 border border-border rounded-xl">
+            <p className="text-[9px] font-black uppercase tracking-wider text-muted-foreground">Schedule with a cron service</p>
+            <div className="flex flex-col gap-1 text-[10px] text-muted-foreground">
+              <p><span className="font-bold text-foreground">cron-job.org</span> — free, no server needed. Create a job → paste URL → set method POST → add JSON body <code className="font-mono bg-muted px-1 rounded">{"{ \"input\": \"your prompt\" }"}</code> → pick schedule.</p>
+              <p><span className="font-bold text-foreground">GitHub Actions</span> — use a <code className="font-mono bg-muted px-1 rounded">schedule: cron:</code> trigger with a <code className="font-mono bg-muted px-1 rounded">curl -X POST</code> step pointing to this URL.</p>
+              <p><span className="font-bold text-foreground">n8n / Make</span> — add an HTTP Request node that calls this URL from any automation workflow.</p>
+            </div>
+          </div>
         </div>
 
         {/* MCP */}
@@ -603,11 +721,24 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
             </button>
           </div>
           <p className="text-[10px] text-muted-foreground pl-1">
-            Add to Claude Desktop or Cursor — this agent appears as a callable tool named{" "}
+            This agent is auto-exposed as an MCP tool named{" "}
             <code className="font-mono bg-muted px-1 rounded">
               {flow.name?.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") ?? flow.id}
             </code>
           </p>
+          <div className="flex flex-col gap-1.5 mt-1 px-3 py-2.5 bg-muted/30 border border-border rounded-xl">
+            <p className="text-[9px] font-black uppercase tracking-wider text-muted-foreground">Claude Desktop setup</p>
+            <p className="text-[10px] text-muted-foreground mb-1">Add to <code className="font-mono bg-muted px-1 rounded">claude_desktop_config.json</code>:</p>
+            <pre className="text-[9px] font-mono text-foreground bg-muted/60 px-3 py-2 rounded-lg overflow-x-auto">{`{
+  "mcpServers": {
+    "agentforge": {
+      "command": "curl",
+      "args": ["-X", "POST", "${typeof window !== "undefined" ? window.location.origin : "https://your-domain.com"}/api/mcp"]
+    }
+  }
+}`}</pre>
+            <p className="text-[10px] text-muted-foreground mt-1">Works with Claude Desktop, Cursor, and any MCP-compatible client. All your deployed public agents appear as callable tools.</p>
+          </div>
         </div>
       </div>
 
@@ -691,6 +822,69 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
             {related.map(r => (
               <RelatedMiniCard key={r.id} flow={r} currentUserId={currentUserId} />
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Collection Picker Modal */}
+      {collectionPickerOpen && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setCollectionPickerOpen(false); }}
+        >
+          <div className="w-full max-w-sm bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-border">
+              <p className="text-sm font-black text-foreground flex items-center gap-2">
+                <FolderPlus size={13} className="text-violet-500" />
+                Add to Collection
+              </p>
+              <button onClick={() => setCollectionPickerOpen(false)} className="w-6 h-6 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors">
+                <X size={13} />
+              </button>
+            </div>
+            <div className="p-4 flex flex-col gap-2 max-h-72 overflow-y-auto">
+              {collectionsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 size={18} className="animate-spin text-muted-foreground" />
+                </div>
+              ) : userCollections.length === 0 ? (
+                <div className="text-center py-6">
+                  <p className="text-[11px] text-muted-foreground">No collections yet.</p>
+                  <Link
+                    href="/store/collections"
+                    className="text-[10px] text-violet-500 hover:underline font-semibold"
+                    onClick={() => setCollectionPickerOpen(false)}
+                  >
+                    Create one first
+                  </Link>
+                </div>
+              ) : (
+                userCollections.map(col => (
+                  <button
+                    key={col.id}
+                    onClick={() => handleAddToCollection(col.id)}
+                    disabled={!!addingToCollection}
+                    className={cn(
+                      "flex items-center justify-between w-full px-3 py-2.5 rounded-xl border text-left transition-all",
+                      addedToCollection === col.id
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500"
+                        : "border-border hover:border-violet-500/30 hover:bg-violet-500/5"
+                    )}
+                  >
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[11px] font-bold text-foreground">{col.name}</span>
+                      <span className="text-[9px] text-muted-foreground">{col._count?.items ?? 0} agents</span>
+                    </div>
+                    {addingToCollection === col.id
+                      ? <Loader2 size={12} className="animate-spin text-violet-500" />
+                      : addedToCollection === col.id
+                        ? <CheckCircle size={12} className="text-emerald-500" />
+                        : null
+                    }
+                  </button>
+                ))
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -637,6 +637,7 @@ async function executeNode(
   isDryRun?: boolean,
   abortSignal?: AbortSignal
 ): Promise<FlowPacket> {
+  try {
   switch (current.type) {
     case "trigger": {
       return { type: "text", payload: `Triggered with: ${initialInput}` };
@@ -1467,9 +1468,314 @@ async function executeNode(
       return _spRes as FlowPacket;
     }
 
+    case "agentloop": {
+      const _alInEdge = edges.find((e) => e.target === current.id);
+      const _alUpstream = _alInEdge ? context.nodes[_alInEdge.source] : null;
+      const _alTask = _alUpstream ? getRawValue(_alUpstream) : initialInput;
+      const _alMaxIter = Math.min(parseInt(String(current.data?.maxIterations || "10"), 10), 15);
+      const _alEnableSearch = current.data?.enableWebSearch !== false;
+
+      const _alReactSystem = `${current.data?.systemPrompt || "You are a helpful AI agent. Complete the given task step by step."}
+
+You have these tools available:
+- web_search(query): Search the web for current information (requires TAVILY_API_KEY in vault)
+- http_get(url): Fetch content from any URL or REST API endpoint
+- calculate(expression): Evaluate a math expression, e.g. 15 * 4 + 100 / 2
+- extract_json(path): Extract a value from the previous tool result using dot notation, e.g. data.items.0.name
+- think(thought): Record your reasoning step (no external call)
+- get_datetime(): Get the current date and time
+
+Respond EXACTLY in one of these two formats:
+
+To use a tool:
+ACTION: <tool_name>
+INPUT: <tool_input>
+
+When done:
+FINAL_ANSWER: <your complete answer>`;
+
+      sendLog(`🔄 Agent Loop started — task: "${_alTask.slice(0, 80)}${_alTask.length > 80 ? "…" : ""}"`, "INFO", current.id);
+
+      let _alJitKey: string | null = null;
+      let _alProvider = "";
+      try {
+        const _alResolved = await resolveApiKey(current.data?.provider, current.data?.apiKey, sendLog, current.id);
+        _alJitKey = _alResolved.key;
+        _alProvider = _alResolved.provider;
+      } catch (e: any) {
+        throw new Error(`Agent Loop: ${e.message}`);
+      }
+
+      try {
+        const _alModel = resolveModelChain(_alProvider, current.data?.modelName, false)[0] || MODEL_DEFAULTS[_alProvider]?.[0] || "";
+        const _alHistory: ChatMessage[] = [];
+        let _alLastTool = "";
+
+        for (let _i = 0; _i < _alMaxIter; _i++) {
+          sendLog(`🧠 Iteration ${_i + 1}/${_alMaxIter}`, "INFO", current.id);
+          const _alMsg = _i === 0 ? _alTask : `Tool result: ${_alLastTool}\n\nContinue toward the goal.`;
+
+          const _alResp = await dispatchLLM(
+            _alProvider, _alModel, _alJitKey!, _alMsg, _alHistory,
+            (msg: string, t: any) => sendLog(msg, t, current.id),
+            undefined, undefined, _alReactSystem, abortSignal
+          );
+
+          _alHistory.push({ role: "user", content: _alMsg });
+          _alHistory.push({ role: "assistant", content: _alResp });
+
+          if (_alResp.includes("FINAL_ANSWER:")) {
+            const _alAnswer = _alResp.split("FINAL_ANSWER:").slice(1).join("").trim();
+            sendLog(`✅ Agent Loop complete in ${_i + 1} iteration(s)`, "SUCCESS", current.id);
+            return { type: "text", payload: _alAnswer };
+          }
+
+          const _alActionMatch = _alResp.match(/ACTION:\s*(\w+)/);
+          const _alInputMatch = _alResp.match(/INPUT:\s*([\s\S]*?)(?=\nACTION:|\nFINAL_ANSWER:|$)/);
+          const _alTool = _alActionMatch?.[1]?.toLowerCase().trim();
+          const _alInput = _alInputMatch?.[1]?.trim() || "";
+
+          if (!_alTool) {
+            sendLog(`✅ Agent Loop: treating as final answer`, "INFO", current.id);
+            return { type: "text", payload: _alResp };
+          }
+
+          sendLog(`🔧 Tool: ${_alTool}("${_alInput.slice(0, 60)}${_alInput.length > 60 ? "…" : ""}")`, "INFO", current.id);
+
+          if (_alTool === "think") {
+            _alLastTool = `Thought: ${_alInput}`;
+          } else if (_alTool === "get_datetime") {
+            _alLastTool = new Date().toISOString();
+            sendLog(`🕐 DateTime: ${_alLastTool}`, "INFO", current.id);
+          } else if (_alTool === "calculate") {
+            try {
+              const _alExpr = _alInput.replace(/[^0-9+\-*/()., \t%]/g, "");
+              // eslint-disable-next-line no-new-func
+              const _alCalcResult = Function(`"use strict"; return (${_alExpr})`)();
+              _alLastTool = String(_alCalcResult);
+              sendLog(`🔢 Calculate: ${_alInput} = ${_alLastTool}`, "SUCCESS", current.id);
+            } catch {
+              _alLastTool = "Could not evaluate expression.";
+            }
+          } else if (_alTool === "http_get") {
+            try {
+              const _alHttpRes = await fetch(_alInput.trim());
+              const _alHttpText = await _alHttpRes.text();
+              _alLastTool = _alHttpText.slice(0, 3000);
+              sendLog(`🌐 HTTP GET: ${_alInput.trim()} (${_alHttpText.length} chars)`, "SUCCESS", current.id);
+            } catch (err: any) {
+              _alLastTool = `HTTP request failed: ${err?.message ?? "unknown"}`;
+              sendLog(`❌ HTTP GET failed`, "ERROR", current.id);
+            }
+          } else if (_alTool === "extract_json") {
+            const _alColIdx = _alInput.indexOf("::");
+            const _alPath = (_alColIdx !== -1 ? _alInput.slice(0, _alColIdx) : _alInput).trim();
+            const _alJsonStr = _alColIdx !== -1 ? _alInput.slice(_alColIdx + 2).trim() : _alLastTool;
+            try {
+              let _alObj: any = JSON.parse(_alJsonStr);
+              for (const _alKey of _alPath.split(".")) {
+                if (_alObj == null) break;
+                _alObj = Array.isArray(_alObj) ? _alObj[parseInt(_alKey, 10)] : _alObj[_alKey];
+              }
+              _alLastTool = _alObj === undefined ? "Key not found." : typeof _alObj === "object" ? JSON.stringify(_alObj, null, 2) : String(_alObj);
+              sendLog(`📦 extract_json .${_alPath} → ${String(_alLastTool).slice(0, 60)}`, "SUCCESS", current.id);
+            } catch {
+              _alLastTool = "Invalid JSON or path.";
+            }
+          } else if (_alTool === "web_search" && _alEnableSearch) {
+            const { useVaultStore: _alVs } = await import("@/stores/vaultStore");
+            const _alTavily = _alVs.getState().entries.find((e) => e.key.toUpperCase() === "TAVILY_API_KEY")?.value;
+            if (_alTavily) {
+              try {
+                const _alSRes = await fetch("https://api.tavily.com/search", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ api_key: _alTavily, query: _alInput, max_results: 3 }),
+                });
+                const _alSData = await _alSRes.json();
+                _alLastTool = (_alSData.results ?? []).map((r: any) => `${r.title}: ${String(r.content || "").slice(0, 200)}`).join("\n\n") || "No results.";
+                sendLog(`🔍 Web search: ${_alSData.results?.length ?? 0} result(s)`, "SUCCESS", current.id);
+              } catch {
+                _alLastTool = "Search failed. Using available knowledge.";
+              }
+            } else {
+              _alLastTool = "No TAVILY_API_KEY in vault — add it to enable web search.";
+              sendLog("⚠️ TAVILY_API_KEY not found — web_search skipped", "WARN", current.id);
+            }
+          } else {
+            _alLastTool = `Tool "${_alTool}" not available.`;
+          }
+        }
+
+        sendLog(`⚠️ Agent Loop: max iterations (${_alMaxIter}) reached`, "WARN", current.id);
+        return { type: "text", payload: `Agent reached max iterations. Last result: ${_alLastTool || "No output."}` };
+      } finally {
+        _alJitKey = null;
+      }
+    }
+
+    case "mobileagent": {
+      const _maInEdge = edges.find((e) => e.target === current.id);
+      const _maUpstream = _maInEdge ? context.nodes[_maInEdge.source] : null;
+      const _maTask = _maUpstream ? getRawValue(_maUpstream) : initialInput;
+
+      const _maEnvs: Array<{ name: string; type: string; task: string }> =
+        current.data?.environments?.length
+          ? current.data.environments
+          : [
+              { name: "Stage 1", type: "e2b_python", task: "Analyze the given task and extract key insights" },
+              { name: "Stage 2", type: "e2b_python", task: "Synthesize the findings into a structured report" },
+            ];
+
+      sendLog(`🚀 Mobile Agent: ${_maEnvs.length} isolated stage(s) — only output forwards between stages`, "INFO", current.id);
+
+      let _maJitKey: string | null = null;
+      let _maApiKey = "";
+      try {
+        const _maResolved = await resolveApiKey(current.data?.provider, current.data?.apiKey, sendLog, current.id);
+        _maJitKey = _maResolved.key;
+        _maApiKey = _maResolved.key;
+      } catch {
+        sendLog("⚠️ No API key — Mobile Agent LLM calls will fail in sandbox", "WARN", current.id);
+      }
+
+      const _maState: Record<string, string> = {};
+
+      try {
+        const { MOBILE_AGENT_INTERPRETER } = await import("@/lib/sandbox/mobileAgentInterpreter");
+        const { executeMobileAgentStep } = await import("@/app/actions/ml");
+
+        for (let _mi = 0; _mi < _maEnvs.length; _mi++) {
+          const _env = _maEnvs[_mi];
+          // Only forward the previous stage's output — not the full state object.
+          // This is the isolation guarantee: each stage sees only what the last stage emitted.
+          const _prevOutput = _mi === 0 ? _maTask : (_maState[_maEnvs[_mi - 1].name] ?? _maTask);
+
+          sendLog(`✈️  Stage ${_mi + 1}/${_maEnvs.length}: "${_env.name}" (${_env.type}) — fresh isolated sandbox`, "INFO", current.id);
+          sendLog(`📥 Input from ${_mi === 0 ? "upstream node" : `"${_maEnvs[_mi - 1].name}"`}: ${_prevOutput.slice(0, 100)}${_prevOutput.length > 100 ? "…" : ""}`, "INFO", current.id);
+
+          const _envVars = [
+            `import os`,
+            `os.environ['MOBILE_AGENT_STATE'] = ${JSON.stringify(JSON.stringify({ results: { previous: _prevOutput } }))}`,
+            `os.environ['MOBILE_AGENT_TASK'] = ${JSON.stringify(_env.task + "\n\nInput data:\n" + _prevOutput)}`,
+            `os.environ['MOBILE_AGENT_API_KEY'] = ${JSON.stringify(_maApiKey)}`,
+            `os.environ['MOBILE_AGENT_ENV_NAME'] = ${JSON.stringify(_env.name)}`,
+            `os.environ['MOBILE_AGENT_FLOW'] = '{}'`,
+          ].join("\n");
+
+          const _script = _envVars + "\n\n" + MOBILE_AGENT_INTERPRETER;
+
+          try {
+            const { output: _rawOut } = await executeMobileAgentStep(_script, "python");
+            const _lastLine = _rawOut.trim().split("\n").pop() || "{}";
+            let _stageOutput = _rawOut.trim();
+            try {
+              const _parsed = JSON.parse(_lastLine);
+              if (_parsed.output) _stageOutput = _parsed.output;
+              else if (_parsed.state?.results?.previous) _stageOutput = _parsed.state.results.previous;
+            } catch { /* use raw output */ }
+            _maState[_env.name] = _stageOutput;
+            sendLog(`✅ "${_env.name}" complete — output isolated, forwarding to next stage`, "SUCCESS", current.id);
+          } catch (err: any) {
+            sendLog(`❌ "${_env.name}" failed: ${err.message}`, "ERROR", current.id);
+            _maState[_env.name] = `Error in stage "${_env.name}": ${err.message}`;
+          }
+        }
+
+        const _lastStage = _maEnvs[_maEnvs.length - 1];
+        const _maFinalOutput = _maState[_lastStage.name] ?? "No output produced.";
+        sendLog(`🏠 Mobile Agent complete — ${_maEnvs.length} isolated stage(s) executed`, "SUCCESS", current.id);
+        return { type: "text", payload: _maFinalOutput };
+
+      } finally {
+        _maJitKey = null;
+      }
+    }
+
+    case "parallelmap": {
+      const _pmInEdge = edges.find((e) => e.target === current.id);
+      const _pmUpstream = _pmInEdge ? context.nodes[_pmInEdge.source] : null;
+      const _pmRaw: string = _pmUpstream ? getRawValue(_pmUpstream) : initialInput;
+
+      const _pmSeparator: string = current.data?.separator || "newline";
+      const _pmPromptTemplate: string = current.data?.itemPrompt || "Process this item: {item}";
+      const _pmConcurrency: number = Math.min(Math.max(Number(current.data?.concurrency) || 3, 1), 10);
+      const _pmOutputFormat: string = current.data?.outputFormat || "numbered";
+
+      // Split input into items
+      let _pmItems: string[] = [];
+      if (_pmSeparator === "newline") {
+        _pmItems = _pmRaw.split("\n").map(s => s.trim()).filter(Boolean);
+      } else if (_pmSeparator === "comma") {
+        _pmItems = _pmRaw.split(",").map(s => s.trim()).filter(Boolean);
+      } else if (_pmSeparator === "json") {
+        try { _pmItems = JSON.parse(_pmRaw); } catch { _pmItems = [_pmRaw]; }
+      } else if (_pmSeparator === "sentence") {
+        _pmItems = _pmRaw.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+      }
+
+      if (_pmItems.length === 0) {
+        sendLog("⚠️ Parallel Map: no items found in input", "WARN", current.id);
+        return { type: "text", payload: "No items to process." };
+      }
+
+      sendLog(`🔀 Parallel Map: ${_pmItems.length} items, concurrency=${_pmConcurrency}`, "INFO", current.id);
+
+      // Resolve API key once
+      let _pmKey = "";
+      let _pmProvider = "";
+      try {
+        const _pmVault = await resolveApiKey(undefined, undefined, sendLog, current.id);
+        _pmKey = _pmVault.key;
+        _pmProvider = _pmVault.provider;
+      } catch (err: any) {
+        return { type: "text", payload: `Parallel Map failed: ${err.message}` };
+      }
+
+      const _pmResults: string[] = new Array(_pmItems.length).fill("");
+
+      // Process in batches of _pmConcurrency
+      for (let _pmBatch = 0; _pmBatch < _pmItems.length; _pmBatch += _pmConcurrency) {
+        const _pmSlice = _pmItems.slice(_pmBatch, _pmBatch + _pmConcurrency);
+        sendLog(`⚡ Batch ${Math.floor(_pmBatch / _pmConcurrency) + 1}: processing items ${_pmBatch + 1}–${_pmBatch + _pmSlice.length}`, "INFO", current.id);
+        await Promise.all(
+          _pmSlice.map(async (item, offset) => {
+            const idx = _pmBatch + offset;
+            const prompt = _pmPromptTemplate.replace(/\{item\}/g, item);
+            try {
+              const result = await dispatchLLM(_pmProvider, "", _pmKey, prompt, [], (msg: string, t: any) => sendLog(msg, t, current.id));
+              _pmResults[idx] = result.trim();
+              sendLog(`✅ Item ${idx + 1} done`, "SUCCESS", current.id);
+            } catch (err: any) {
+              _pmResults[idx] = `Error: ${err.message}`;
+              sendLog(`❌ Item ${idx + 1} failed: ${err.message}`, "ERROR", current.id);
+            }
+          })
+        );
+      }
+
+      let _pmFinal: string;
+      if (_pmOutputFormat === "json") {
+        _pmFinal = JSON.stringify(_pmResults, null, 2);
+      } else if (_pmOutputFormat === "concat") {
+        _pmFinal = _pmResults.join("\n\n");
+      } else {
+        _pmFinal = _pmResults.map((r, i) => `${i + 1}. ${r}`).join("\n\n");
+      }
+
+      sendLog(`✅ Parallel Map complete — ${_pmItems.length} items processed`, "SUCCESS", current.id);
+      return { type: "text", payload: _pmFinal };
+    }
+
     default: {
       return { type: "text", payload: `Executed ${current.type}` };
     }
+  }
+  } catch (err: any) {
+    const nodeLabel = (current.data as any)?.label || current.type || current.id;
+    const errMsg: string = err?.message || String(err);
+    sendLog(`❌ ${nodeLabel}: ${errMsg}`, "ERROR", current.id);
+    return { type: "text", payload: `[Error: ${errMsg}]`, error: errMsg };
   }
 }
 
@@ -1694,8 +2000,17 @@ export async function executeGraph(
       .then((packet) => {
         context.nodes[node.id] = packet;
         executed.add(node.id);
-        onNodeStatusChange?.(node.id, "success");
         onNodeComplete?.(node.id, packet);
+
+        if (packet.error) {
+          onNodeStatusChange?.(node.id, "error");
+          for (const childId of adj.get(node.id) || []) {
+            resolveParentForChild(node.id, childId, "skipped");
+          }
+          return;
+        }
+
+        onNodeStatusChange?.(node.id, "success");
         sendLog(`✅ Completed: ${resolveNodeLabel(node)}`, "SUCCESS", node.id);
 
         if (node.type === "router" || node.type === "decision") {

@@ -23,7 +23,10 @@ import {
   LayoutGrid,
   Pencil,
   PlugZap,
-  BarChart2
+  BarChart2,
+  RefreshCw,
+  Navigation,
+  GitFork
 } from "lucide-react";
 import { useFlowStore } from "@/stores/flowStore";
 import { useRouter } from "next/navigation";
@@ -74,6 +77,14 @@ const categories = [
       { type: "rag", label: "RAG", icon: <Database size={14} className="text-teal-400" /> },
       { type: "speech", label: "Speech", icon: <Briefcase size={14} className="text-rose-400" /> },
       { type: "dataanalysis", label: "Data Analysis", icon: <BarChart2 size={14} className="text-amber-400" /> },
+    ]
+  },
+  {
+    name: "Advanced Agents",
+    nodes: [
+      { type: "agentloop", label: "Agent Loop", icon: <RefreshCw size={14} className="text-emerald-400" /> },
+      { type: "mobileagent", label: "Mobile Agent", icon: <Navigation size={14} className="text-sky-400" /> },
+      { type: "parallelmap", label: "Parallel Map", icon: <GitFork size={14} className="text-fuchsia-400" /> },
     ]
   }
 ];

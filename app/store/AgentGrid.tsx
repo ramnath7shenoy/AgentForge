@@ -60,6 +60,7 @@ export interface StoreFlow {
   changelog?: string | null;
   isVerified?: boolean;
   isWishlisted?: boolean;
+  sourceFlowId?: string | null;
 }
 
 function formatViews(n: number): string {
@@ -551,6 +552,28 @@ function AgentCard({
               </span>
             )}
           </div>
+
+          {/* Usage milestone badges */}
+          {((flow.cloneCount ?? 0) >= 25 || (flow.starCount ?? 0) >= 10 || flow.isVerified) && (
+            <div className="flex flex-wrap gap-1">
+              {((flow.cloneCount ?? 0) >= 100 || (flow.starCount ?? 0) >= 50) && (
+                <span className="text-[8px] px-1.5 py-0.5 bg-amber-500/15 border border-amber-500/30 text-amber-300 rounded-full font-bold">
+                  🏆 Popular
+                </span>
+              )}
+              {((flow.cloneCount ?? 0) >= 25 || (flow.starCount ?? 0) >= 10) &&
+                !((flow.cloneCount ?? 0) >= 100 || (flow.starCount ?? 0) >= 50) && (
+                <span className="text-[8px] px-1.5 py-0.5 bg-slate-400/15 border border-slate-400/30 text-slate-300 rounded-full font-bold">
+                  ⭐ Rising
+                </span>
+              )}
+              {flow.isVerified && (
+                <span className="text-[8px] px-1.5 py-0.5 bg-sky-500/15 border border-sky-500/30 text-sky-300 rounded-full font-bold">
+                  ✓ Verified
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Freshness warning */}
           {isStale && (

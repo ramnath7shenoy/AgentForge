@@ -69,6 +69,7 @@ export default async function StorePage() {
     sandboxRunCount: f.sandboxRunCount ?? 0,
     changelog: f.changelog ?? null,
     isVerified: isVerifiedCreator(f.userId),
+    sourceFlowId: (f as any).sourceFlowId ?? null,
   }));
 
   return (

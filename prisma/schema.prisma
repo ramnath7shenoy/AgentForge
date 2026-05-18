@@ -53,6 +53,9 @@ model Flow {
   versions        FlowVersion[]
   wishlists       FlowWishlist[]
   runs            FlowRun[]
+  sourceFlowId      String?          @map("source_flow_id") @db.Uuid
+  isVerified        Boolean?         @default(false) @map("is_verified")
+  collectionItems   CollectionFlow[]
 
   @@index([projectId], map: "idx_flows_project_id")
   @@map("flows")
@@ -151,6 +154,100 @@ model FlowWishlist {
   @@unique([flowId, userId])
   @@index([userId])
   @@map("flow_wishlists")
+  @@schema("public")
+}
+
+model Collection {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  name        String
+  description String?
+  isPublic    Boolean          @default(true) @map("is_public")
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  items       CollectionFlow[]
+
+  @@index([userId])
+  @@map("collections")
+  @@schema("public")
+}
+
+model CollectionFlow {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  collectionId String     @map("collection_id") @db.Uuid
+  flowId       String     @map("flow_id") @db.Uuid
+  addedAt      DateTime   @default(now()) @map("added_at") @db.Timestamptz(6)
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  flow         Flow       @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, flowId])
+  @@map("collection_flows")
+  @@schema("public")
+}
+
+model CreatorFollow {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  followerId String   @map("follower_id") @db.Uuid
+  followeeId String   @map("followee_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([followerId, followeeId])
+  @@index([followeeId])
+  @@map("creator_follows")
+  @@schema("public")
+}
+
+model AgentRequest {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String?         @map("user_id") @db.Uuid
+  authorName        String          @default("Anonymous") @map("author_name")
+  title             String
+  description       String
+  tags              String[]        @default([])
+  upvotes           Int             @default(0)
+  fulfilledByFlowId String?         @map("fulfilled_by_flow_id") @db.Uuid
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  upvoteRecords     RequestUpvote[]
+
+  @@index([createdAt(sort: Desc)])
+  @@map("agent_requests")
+  @@schema("public")
+}
+
+model RequestUpvote {
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestId String       @map("request_id") @db.Uuid
+  userId    String       @map("user_id") @db.Uuid
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  request   AgentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, userId])
+  @@map("request_upvotes")
+  @@schema("public")
+}
+
+model Challenge {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title       String
+  description String
+  prize       String?
+  deadline    DateTime @db.Timestamptz(6)
+  isActive    Boolean  @default(true) @map("is_active")
+  tags        String[] @default([])
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("challenges")
+  @@schema("public")
+}
+
+model TagSubscription {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  tag       String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([userId, tag])
+  @@index([userId])
+  @@map("tag_subscriptions")
   @@schema("public")
 }
 

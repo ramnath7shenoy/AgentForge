@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from "react";
 import Link from "next/link";
-import { Search, Zap, ArrowRight, X, TrendingUp, Clock, Star, Copy, Loader2, CheckCircle, Bookmark, Tag } from "lucide-react";
+import { Search, Zap, ArrowRight, X, TrendingUp, Clock, Star, Copy, Loader2, CheckCircle, Bookmark, Tag, FolderOpen, MessageCircle } from "lucide-react";
 import AgentVisual from "@/components/store/AgentVisual";
 import { cn } from "@/lib/utils";
 import AgentGrid, { type StoreFlow } from "./AgentGrid";
@@ -269,6 +269,29 @@ export default function StoreClient({ flows, currentUserId, starredFlowIds, wish
           </div>
         </div>
       )}
+
+      {/* ── Community Nav ──────────────────────────────────────────────── */}
+      <div className="border-b border-border">
+        <div className="max-w-7xl mx-auto w-full px-6 py-4">
+          <p className="text-[9px] font-black uppercase tracking-[0.18em] text-muted-foreground mb-3">Community</p>
+          <div className="flex gap-2 flex-wrap">
+            <Link
+              href="/store/collections"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-500/5 border border-violet-500/20 text-[10px] font-bold text-violet-500 hover:bg-violet-500/10 transition-all"
+            >
+              <FolderOpen size={10} />
+              Collections
+            </Link>
+            <Link
+              href="/store/requests"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/5 border border-amber-500/20 text-[10px] font-bold text-amber-500 hover:bg-amber-500/10 transition-all"
+            >
+              <MessageCircle size={10} />
+              Agent Requests
+            </Link>
+          </div>
+        </div>
+      </div>
 
       {/* ── Filter bar ─────────────────────────────────────────────────── */}
       <div className="sticky top-[57px] z-20 bg-background/80 backdrop-blur-md border-b border-border">

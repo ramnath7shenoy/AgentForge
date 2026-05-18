@@ -16,7 +16,12 @@
       "Bash(Write-Host \"Deleted\")",
       "Bash(Get-ChildItem -Path \"E:\\\\agentforge\\\\flowforge-ai\" -Recurse -Directory -Name)",
       "Bash(Select-Object -First 30)",
-      "PowerShell(Get-ChildItem -Path \"E:\\\\agentforge\\\\flowforge-ai\" -File | Where-Object { $_.Extension -in '.md', '.env', '.env.example' } | Select-Object -ExpandProperty FullName)"
+      "PowerShell(Get-ChildItem -Path \"E:\\\\agentforge\\\\flowforge-ai\" -File | Where-Object { $_.Extension -in '.md', '.env', '.env.example' } | Select-Object -ExpandProperty FullName)",
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(node -e ' *)",
+      "Bash(npx vitest *)",
+      "Bash(npm list *)"
     ]
   }
 }

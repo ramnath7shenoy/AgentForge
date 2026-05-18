@@ -541,6 +541,7 @@ async function executeNode(
 ): Promise<SandboxFlowPacket> {
   const type = current.type;
 
+  try {
   switch (type) {
     case "trigger": {
       return { type: "text", payload: initialInput || "Triggered" };
@@ -1067,10 +1068,145 @@ async function executeNode(
       return _spRes as SandboxFlowPacket;
     }
 
+    case "mobileagent": {
+      const _maInEdge = edges.find((e) => e.target === current.id);
+      const _maUpstream = _maInEdge ? context.nodes[_maInEdge.source] : null;
+      const _maTask = _maUpstream ? getRawValue(_maUpstream) : initialInput;
+
+      const _maEnvs: Array<{ name: string; type: string; task: string }> =
+        current.data?.environments?.length
+          ? current.data.environments
+          : [
+              { name: "Stage 1", type: "e2b_python", task: "Analyze the given task and extract key insights" },
+              { name: "Stage 2", type: "e2b_python", task: "Synthesize the findings into a structured report" },
+            ];
+
+      sendLog(`🚀 Mobile Agent: ${_maEnvs.length} isolated stage(s)`, "INFO", current.id);
+
+      let _maApiKey = "";
+      try {
+        const _maResolved = resolveApiKeyFromList(current.data?.provider, current.data?.apiKey, apiKeys, sendLog, current.id);
+        _maApiKey = _maResolved.key;
+      } catch {
+        sendLog("⚠️ No API key — Mobile Agent LLM calls will fail in sandbox", "WARN", current.id);
+      }
+
+      const _maState: Record<string, string> = {};
+
+      const { MOBILE_AGENT_INTERPRETER } = await import("@/lib/sandbox/mobileAgentInterpreter");
+      const { executeMobileAgentStep } = await import("@/app/actions/ml");
+
+      for (let _mi = 0; _mi < _maEnvs.length; _mi++) {
+        const _env = _maEnvs[_mi];
+        const _prevOutput = _mi === 0 ? _maTask : (_maState[_maEnvs[_mi - 1].name] ?? _maTask);
+
+        sendLog(`✈️  Stage ${_mi + 1}/${_maEnvs.length}: "${_env.name}" — fresh isolated sandbox`, "INFO", current.id);
+
+        const _envVars = [
+          `import os`,
+          `os.environ['MOBILE_AGENT_STATE'] = ${JSON.stringify(JSON.stringify({ results: { previous: _prevOutput } }))}`,
+          `os.environ['MOBILE_AGENT_TASK'] = ${JSON.stringify(_env.task + "\n\nInput data:\n" + _prevOutput)}`,
+          `os.environ['MOBILE_AGENT_API_KEY'] = ${JSON.stringify(_maApiKey)}`,
+          `os.environ['MOBILE_AGENT_ENV_NAME'] = ${JSON.stringify(_env.name)}`,
+          `os.environ['MOBILE_AGENT_FLOW'] = '{}'`,
+        ].join("\n");
+
+        try {
+          const { output: _rawOut } = await executeMobileAgentStep(_envVars + "\n\n" + MOBILE_AGENT_INTERPRETER, "python");
+          let _stageOutput = _rawOut.trim();
+          try {
+            const _parsed = JSON.parse(_rawOut.trim().split("\n").pop() || "{}");
+            if (_parsed.output) _stageOutput = _parsed.output;
+          } catch { /* use raw */ }
+          _maState[_env.name] = _stageOutput;
+          sendLog(`✅ "${_env.name}" complete`, "SUCCESS", current.id);
+        } catch (err: any) {
+          _maState[_env.name] = `Error: ${err.message}`;
+          sendLog(`❌ "${_env.name}" failed: ${err.message}`, "ERROR", current.id);
+        }
+      }
+
+      const _lastOutput = _maState[_maEnvs[_maEnvs.length - 1].name] ?? "No output.";
+      sendLog(`🏠 Mobile Agent complete — ${_maEnvs.length} stage(s)`, "SUCCESS", current.id);
+      return { type: "text", payload: _lastOutput };
+    }
+
+    case "parallelmap": {
+      const _pmInEdge = edges.find((e) => e.target === current.id);
+      const _pmUpstream = _pmInEdge ? context.nodes[_pmInEdge.source] : null;
+      const _pmRaw: string = _pmUpstream ? getRawValue(_pmUpstream) : initialInput;
+
+      const _pmSeparator: string = current.data?.separator || "newline";
+      const _pmPromptTemplate: string = current.data?.itemPrompt || "Process this item: {item}";
+      const _pmConcurrency: number = Math.min(Math.max(Number(current.data?.concurrency) || 3, 1), 10);
+      const _pmOutputFormat: string = current.data?.outputFormat || "numbered";
+
+      let _pmItems: string[] = [];
+      if (_pmSeparator === "newline") {
+        _pmItems = _pmRaw.split("\n").map((s) => s.trim()).filter(Boolean);
+      } else if (_pmSeparator === "comma") {
+        _pmItems = _pmRaw.split(",").map((s) => s.trim()).filter(Boolean);
+      } else if (_pmSeparator === "json") {
+        try { _pmItems = JSON.parse(_pmRaw); } catch { _pmItems = [_pmRaw]; }
+      } else if (_pmSeparator === "sentence") {
+        _pmItems = _pmRaw.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+      }
+
+      if (_pmItems.length === 0) {
+        sendLog("⚠️ Parallel Map: no items found in input", "WARN", current.id);
+        return { type: "text", payload: "No items to process." };
+      }
+
+      sendLog(`🔀 Parallel Map: ${_pmItems.length} items, concurrency=${_pmConcurrency}`, "INFO", current.id);
+
+      const { key: _pmKey, provider: _pmProvider } = resolveApiKeyFromList(
+        current.data?.provider, current.data?.apiKey, apiKeys, sendLog, current.id
+      );
+
+      const _pmResults: string[] = new Array(_pmItems.length).fill("");
+
+      for (let _pmBatch = 0; _pmBatch < _pmItems.length; _pmBatch += _pmConcurrency) {
+        const _pmSlice = _pmItems.slice(_pmBatch, _pmBatch + _pmConcurrency);
+        sendLog(`⚡ Batch ${Math.floor(_pmBatch / _pmConcurrency) + 1}: items ${_pmBatch + 1}–${_pmBatch + _pmSlice.length}`, "INFO", current.id);
+        await Promise.all(
+          _pmSlice.map(async (item, offset) => {
+            const idx = _pmBatch + offset;
+            const prompt = _pmPromptTemplate.replace(/\{item\}/g, item);
+            try {
+              const result = await dispatchLLM(_pmProvider, "", _pmKey, prompt, (msg, t) => sendLog(msg, t, current.id));
+              _pmResults[idx] = result.trim();
+              sendLog(`✅ Item ${idx + 1} done`, "SUCCESS", current.id);
+            } catch (err: any) {
+              _pmResults[idx] = `Error: ${err.message}`;
+              sendLog(`❌ Item ${idx + 1} failed: ${err.message}`, "ERROR", current.id);
+            }
+          })
+        );
+      }
+
+      let _pmFinal: string;
+      if (_pmOutputFormat === "json") {
+        _pmFinal = JSON.stringify(_pmResults, null, 2);
+      } else if (_pmOutputFormat === "concat") {
+        _pmFinal = _pmResults.join("\n\n");
+      } else {
+        _pmFinal = _pmResults.map((r, i) => `${i + 1}. ${r}`).join("\n\n");
+      }
+
+      sendLog(`✅ Parallel Map complete — ${_pmItems.length} items`, "SUCCESS", current.id);
+      return { type: "text", payload: _pmFinal };
+    }
+
     default: {
       sendLog(`ℹ️ Node type "${type}" executed`, "INFO", current.id);
       return { type: "text", payload: `Executed: ${current.data?.label || type}` };
     }
+  }
+  } catch (err: any) {
+    const nodeLabel = current.data?.label || type || current.id;
+    const errMsg: string = err?.message || String(err);
+    sendLog(`❌ ${nodeLabel}: ${errMsg}`, "ERROR", current.id);
+    return { type: "text", payload: `[Error: ${errMsg}]`, error: errMsg };
   }
 }
 
@@ -1184,9 +1320,16 @@ export async function executeGraphServer(
 
       context.nodes[nodeId] = packet;
       onNodeComplete?.(nodeId, packet);
-      onNodeStatusChange?.(nodeId, "success");
       done.add(nodeId);
       inflight.delete(nodeId);
+
+      if (packet.error) {
+        onNodeStatusChange?.(nodeId, "error");
+        resolveNode(nodeId, "skipped");
+        return;
+      }
+
+      onNodeStatusChange?.(nodeId, "success");
 
       if ((current.type === "router" || current.type === "decision") && packet.meta?.selectedRoute) {
         routerRoute = packet.meta.selectedRoute;
@@ -1194,8 +1337,9 @@ export async function executeGraphServer(
 
       resolveNode(nodeId, "success", routerRoute);
     } catch (err: any) {
+      // Backup catch — should rarely fire now that executeNode has an internal try/catch.
       sendLog(`❌ ${current.data?.label || nodeId}: ${err.message}`, "ERROR", nodeId);
-      const errPacket: SandboxFlowPacket = { type: "text", payload: "", error: err.message };
+      const errPacket: SandboxFlowPacket = { type: "text", payload: `[Error: ${err.message}]`, error: err.message };
       context.nodes[nodeId] = errPacket;
       onNodeComplete?.(nodeId, errPacket);
       onNodeStatusChange?.(nodeId, "error");

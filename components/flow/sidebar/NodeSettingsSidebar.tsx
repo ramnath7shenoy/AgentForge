@@ -27,6 +27,9 @@ import {
   FolderOpen,
   FileText,
   AlertTriangle,
+  RefreshCw,
+  Navigation,
+  GitFork,
 } from "lucide-react";
 import { packFiles } from "@/lib/utils/contextPacker";
 
@@ -1232,6 +1235,223 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
     </div>
   );
 
+  const renderAgentLoopSettings = () => {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-2 text-emerald-400">
+          <RefreshCw size={16} />
+          <h3 className="text-sm font-bold uppercase tracking-tight">Agent Loop</h3>
+        </div>
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">System Prompt</label>
+          <textarea
+            rows={4}
+            placeholder="You are a research agent. Complete the task step by step using available tools."
+            value={selectedNode.data.systemPrompt || ""}
+            onChange={(e) => updateNodeData(selectedNode.id, { systemPrompt: e.target.value })}
+            className={cn(
+              "rounded-lg p-2 text-xs outline-none transition-all border focus:ring-2 resize-none",
+              "bg-background border-border text-foreground focus:ring-emerald-500/20 focus:border-emerald-500"
+            )}
+          />
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="flex flex-col gap-1 flex-1">
+            <label className="text-[10px] font-bold uppercase text-slate-500">Max Iterations</label>
+            <input
+              type="number"
+              min={1}
+              max={15}
+              value={selectedNode.data.maxIterations || 10}
+              onChange={(e) => updateNodeData(selectedNode.id, { maxIterations: parseInt(e.target.value) || 10 })}
+              className={cn(
+                "rounded-lg px-2 py-1.5 text-sm outline-none transition-all border focus:ring-2 w-full",
+                "bg-background border-border text-foreground focus:ring-emerald-500/20"
+              )}
+            />
+          </div>
+        </div>
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Available Tools</label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selectedNode.data.enableWebSearch !== false}
+              onChange={(e) => updateNodeData(selectedNode.id, { enableWebSearch: e.target.checked })}
+              className="accent-emerald-500"
+            />
+            <span className="text-xs text-foreground">Web Search</span>
+            <span className="text-[9px] text-muted-foreground">(requires TAVILY_API_KEY)</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked readOnly className="accent-emerald-500 opacity-50" />
+            <span className="text-xs text-muted-foreground">HTTP GET — fetch any URL / REST API</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked readOnly className="accent-emerald-500 opacity-50" />
+            <span className="text-xs text-muted-foreground">Calculate — evaluate math expressions</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked readOnly className="accent-emerald-500 opacity-50" />
+            <span className="text-xs text-muted-foreground">Extract JSON — parse API responses by path</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked readOnly className="accent-emerald-500 opacity-50" />
+            <span className="text-xs text-muted-foreground">Think — reasoning scratchpad</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked readOnly className="accent-emerald-500 opacity-50" />
+            <span className="text-xs text-muted-foreground">DateTime — current date and time</span>
+          </label>
+        </div>
+        <p className="text-[10px] text-slate-500 italic leading-relaxed">
+          Uses the ReAct pattern — LLM reasons and acts in a loop until it reaches a final answer or hits the iteration limit.
+        </p>
+      </div>
+    );
+  };
+
+  const renderMobileAgentSettings = () => {
+    const envs: Array<{ name: string; type: string; task: string }> =
+      selectedNode.data.environments?.length
+        ? selectedNode.data.environments
+        : [
+            { name: "Stage 1", type: "e2b_python", task: "Analyze the input and extract key findings" },
+            { name: "Stage 2", type: "e2b_python", task: "Synthesize findings into a structured report" },
+          ];
+    const setEnvs = (next: typeof envs) => updateNodeData(selectedNode.id, { environments: next });
+
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-2 text-sky-400">
+          <Navigation size={16} />
+          <h3 className="text-sm font-bold uppercase tracking-tight">Mobile Agent</h3>
+        </div>
+        <div className="p-3 rounded-xl bg-sky-500/5 border border-sky-500/20">
+          <p className="text-[9px] text-sky-300 font-bold uppercase tracking-wider mb-1">Security Isolation Pipeline</p>
+          <p className="text-[10px] text-slate-400 leading-relaxed">
+            Each stage runs in a fully isolated sandbox. Only the output forwards — no environment state, secrets, or side-effects carry over. Use this when stages should not trust each other.
+          </p>
+        </div>
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] font-bold uppercase text-slate-500">Stages</label>
+            <button
+              onClick={() => setEnvs([...envs, { name: `Stage ${envs.length + 1}`, type: "e2b_python", task: "" }])}
+              className="text-[10px] font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1 transition-colors"
+            >
+              <Plus size={10} /> Add Stage
+            </button>
+          </div>
+          {envs.map((env, i) => (
+            <div key={i} className="flex flex-col gap-2 p-3 rounded-xl border border-sky-500/20 bg-sky-500/5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[9px] font-black text-sky-400 uppercase tracking-widest">
+                  Stage {i + 1}
+                </span>
+                {envs.length > 1 && (
+                  <button
+                    onClick={() => setEnvs(envs.filter((_, j) => j !== i))}
+                    className="text-rose-400 hover:text-rose-300 transition-colors"
+                  >
+                    <Trash2 size={10} />
+                  </button>
+                )}
+              </div>
+              <input
+                type="text"
+                placeholder="Stage name (e.g. Data Sanitiser)"
+                value={env.name}
+                onChange={(e) => setEnvs(envs.map((v, j) => j === i ? { ...v, name: e.target.value } : v))}
+                className="rounded-md px-2 py-1.5 text-xs border bg-background border-border text-foreground outline-none focus:ring-1 focus:ring-sky-500/30"
+              />
+              <select
+                value={env.type}
+                onChange={(e) => setEnvs(envs.map((v, j) => j === i ? { ...v, type: e.target.value } : v))}
+                className="rounded-md px-2 py-1.5 text-xs border bg-background border-border text-foreground outline-none focus:ring-1 focus:ring-sky-500/30"
+              >
+                <option value="e2b_python">E2B Python Sandbox</option>
+                <option value="e2b_js">E2B JavaScript Sandbox</option>
+              </select>
+              <textarea
+                rows={2}
+                placeholder="What should this isolated stage compute?"
+                value={env.task}
+                onChange={(e) => setEnvs(envs.map((v, j) => j === i ? { ...v, task: e.target.value } : v))}
+                className="rounded-md px-2 py-1.5 text-xs border bg-background border-border text-foreground outline-none focus:ring-1 focus:ring-sky-500/30 resize-none"
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderParallelMapSettings = () => {
+    const itemPrompt: string = selectedNode.data.itemPrompt || "";
+    const separator: string = selectedNode.data.separator || "newline";
+    const concurrency: number = selectedNode.data.concurrency || 3;
+    const outputFormat: string = selectedNode.data.outputFormat || "numbered";
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-2 text-fuchsia-400">
+          <GitFork size={16} />
+          <h3 className="text-sm font-bold uppercase tracking-tight">Parallel Map</h3>
+        </div>
+        <p className="text-[10px] text-slate-400 italic leading-relaxed">
+          Splits the input into a list and runs your prompt on each item concurrently. Use <code className="bg-muted px-1 rounded text-fuchsia-400">{"{item}"}</code> to reference each element.
+        </p>
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Item Prompt</label>
+          <textarea
+            rows={4}
+            placeholder={`e.g. Summarize this in one sentence: {item}`}
+            value={itemPrompt}
+            onChange={(e) => updateNodeData(selectedNode.id, { itemPrompt: e.target.value })}
+            className="rounded-md px-2 py-1.5 text-xs border bg-background border-border text-foreground outline-none focus:ring-1 focus:ring-fuchsia-500/30 resize-none"
+          />
+        </div>
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Split Input By</label>
+          <select
+            value={separator}
+            onChange={(e) => updateNodeData(selectedNode.id, { separator: e.target.value })}
+            className="rounded-md px-2 py-1.5 text-xs border bg-background border-border text-foreground outline-none focus:ring-1 focus:ring-fuchsia-500/30"
+          >
+            <option value="newline">Newline (one item per line)</option>
+            <option value="comma">Comma-separated</option>
+            <option value="json">JSON array</option>
+            <option value="sentence">Sentences</option>
+          </select>
+        </div>
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Max Concurrency</label>
+          <input
+            type="number"
+            min={1}
+            max={10}
+            value={concurrency}
+            onChange={(e) => updateNodeData(selectedNode.id, { concurrency: Number(e.target.value) })}
+            className="rounded-md px-2 py-1.5 text-xs border bg-background border-border text-foreground outline-none focus:ring-1 focus:ring-fuchsia-500/30 w-20"
+          />
+          <p className="text-[9px] text-slate-500 italic">Run up to this many items at once (1–10).</p>
+        </div>
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase text-slate-500">Output Format</label>
+          <select
+            value={outputFormat}
+            onChange={(e) => updateNodeData(selectedNode.id, { outputFormat: e.target.value })}
+            className="rounded-md px-2 py-1.5 text-xs border bg-background border-border text-foreground outline-none focus:ring-1 focus:ring-fuchsia-500/30"
+          >
+            <option value="numbered">Numbered list (1. …)</option>
+            <option value="json">JSON array</option>
+            <option value="concat">Concatenated text</option>
+          </select>
+        </div>
+      </div>
+    );
+  };
+
   const renderSubflowNodeSettings = () => (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-2 text-indigo-400">
@@ -1573,6 +1793,9 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
               {selectedNode.type === "speech" && (
                 <SpeechSettings nodeId={selectedNode.id} data={selectedNode.data} updateData={(u) => updateNodeData(selectedNode.id, u)} />
               )}
+              {selectedNode.type === "agentloop" && renderAgentLoopSettings()}
+              {selectedNode.type === "mobileagent" && renderMobileAgentSettings()}
+              {selectedNode.type === "parallelmap" && renderParallelMapSettings()}
             </div>
 
             {/* LATEST OUTPUT SECTION */}

@@ -359,7 +359,7 @@ export async function getDeployedFlows() {
         userId: true, creatorName: true, updated_at: true, created_at: true,
         nodes: true, edges: true, viewCount: true, cloneCount: true,
         sandboxRunCount: true, changelog: true,
-        tags: true, isFeatured: true,
+        tags: true, isFeatured: true, sourceFlowId: true,
         _count: { select: { comments: true, stars: true } },
       },
       orderBy: { updated_at: 'desc' },
@@ -492,7 +492,7 @@ export async function getStoreFlowDetail(flowId: string) {
         userId: true, creatorName: true, updated_at: true, created_at: true,
         nodes: true, edges: true, viewCount: true, cloneCount: true,
         sandboxRunCount: true, changelog: true,
-        tags: true, isFeatured: true,
+        tags: true, isFeatured: true, sourceFlowId: true,
         _count: { select: { comments: true, stars: true } },
       },
     });
@@ -512,7 +512,7 @@ export async function getCreatorFlows(userId: string) {
         userId: true, creatorName: true, updated_at: true, created_at: true,
         nodes: true, edges: true, viewCount: true, cloneCount: true,
         sandboxRunCount: true, changelog: true,
-        tags: true, isFeatured: true,
+        tags: true, isFeatured: true, sourceFlowId: true,
         _count: { select: { comments: true, stars: true } },
       },
       orderBy: { viewCount: 'desc' },
@@ -693,7 +693,8 @@ export async function cloneFlow(flowId: string) {
         nodes: source.nodes ?? [],
         edges: source.edges ?? [],
         userId: user.id,
-      },
+        sourceFlowId: flowId,
+      } as any,
     });
 
     await prisma.flow.update({ where: { id: flowId }, data: { cloneCount: { increment: 1 } } }).catch(() => {});

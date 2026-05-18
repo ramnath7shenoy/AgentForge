@@ -15,10 +15,16 @@ app/
   actions/
     ai-architect.ts      # NL → validated flow JSON (12-node schema); Gemini/Groq/OpenAI/Anthropic
     ml.ts                # executeMLModel (HuggingFace/Replicate) · executeImageGen (DALL-E/Replicate→base64) · executeRAG (OpenAI embeddings + KnowledgeChunk DB) · executeSpeech (Whisper STT / OpenAI+ElevenLabs TTS→base64) · executeDataAnalysis (E2B Python + matplotlib→base64 PNG)
+                         # executeMobileAgentStep(code, "python"|"javascript") → { output } — used by Mobile Agent node
     integration.ts       # OAuth CRUD + executeAppAction (9 OAuth + browser/E2B) + getIntegrationEnvVars()
                          # Browser block now catches all errors and returns { result: errorMsg } instead of throwing (avoids "Server Components render" error in prod)
     flow.ts              # Flow CRUD: save/get/publish/deploy/delete/folders/templates + logFlowRun(flowId, input, output, status, costUsd, durationMs, source)
                          # Also: toggleStar/Wishlist/Follow, comments, versions, cloneFlow, deployToStore, reportFlow, analytics
+                         # cloneFlow sets sourceFlowId for remix tracking; getDeployedFlows/getStoreFlowDetail/getCreatorFlows select sourceFlowId
+    community.ts         # 'use server' — 16 community actions across Collections, Creator Following, Agent Requests, Tag Subscriptions
+                         # createCollection, getUserCollections, getPublicCollections, addToCollection, removeFromCollection,
+                         # getCollectionDetail, deleteCollection, toggleFollowCreator, getFollowStatus,
+                         # createRequest, getRequests, upvoteRequest, fulfillRequest, toggleTagSubscription, getUserTagSubscriptions
     project.ts           # Project CRUD + custom templates
     vault.ts             # saveVaultKeys(entries) / loadVaultKeys() → VaultKeyEntry[] (JSON stored in Vault row)
     auth.ts              # signOut() / getUser()
@@ -48,15 +54,19 @@ app/
   dashboard/page.tsx · integrations/page.tsx
   store/
     page.tsx          # Server: deployed flows + starredIds + wishlistedIds + isVerified per creator
-    StoreClient.tsx   # Category filter, Collections, Saved filter, search, Recent/Popular sort
-    AgentGrid.tsx     # AgentCard: star + bookmark buttons; ManagePanel for owners; guest clone flow
+    StoreClient.tsx   # Featured, New This Week, Top Creators, Community nav, Tag subscriptions, filter bar
+    AgentGrid.tsx     # AgentCard: star + bookmark + Popular/Rising/Verified badges; ManagePanel; guest clone
+                      # Badges: Popular (cloneCount≥100 OR starCount≥50), Rising (cloneCount≥25 OR starCount≥10), Verified (sky blue ✓)
     WorkflowLightbox.tsx · CodeModal.tsx · ManagePanel.tsx
-    [id]/DetailClient.tsx   # Star, Bookmark, Follow, Tip; changelog banner; comments
+    [id]/DetailClient.tsx   # Star, Bookmark, Follow, Add-to-Collection, Tip; changelog banner; comments
+                            # Remixed badge when sourceFlowId is set
     creator/[userId]/page.tsx · CreatorFollowButton.tsx
+    collections/page.tsx · CollectionsClient.tsx   # Public collection grid; Create Collection modal
+    requests/page.tsx · RequestsClient.tsx         # Agent request board; upvote; fulfilled badge
 
 components/flow/
-  nodes/                 # One file per node type + NodeCard.tsx (12 core + GroupNode + SubflowNode + TextNode + MLModelNode + ImageGenNode + RAGNode + SpeechNode + DataAnalysisNode)
-  canvas/                # FlowCanvas, ReadOnlyCanvas (nodeTypes includes ALL custom types incl. appaction + group)
+  nodes/                 # One file per node type + NodeCard.tsx (12 core + GroupNode + SubflowNode + TextNode + MLModelNode + ImageGenNode + RAGNode + SpeechNode + DataAnalysisNode + AgentLoopNode + MobileAgentNode + ParallelMapNode)
+  canvas/                # FlowCanvas, ReadOnlyCanvas (nodeTypes includes ALL custom types incl. appaction + group + parallelmap)
   chat/ChatHub.tsx
   collaboration/
     FlowCollaboration.tsx    # Manages enterRoom/leaveRoom lifecycle; enterRoom wrapped in try/catch (silent skip if LIVEBLOCKS_SECRET_KEY missing)
@@ -78,6 +88,9 @@ hooks/useScheduler.ts         # Client-side recursive scheduler for trigger node
 lib/
   flow/
     clientExecutor.ts    # Reactive engine; strips zombie nodes; strict upstream content injection
+                         # Agent Loop: 6 tools — web_search (toggleable), http_get, calculate, extract_json, think, get_datetime
+                         # Mobile Agent: sequential isolated E2B stages; only text output passes between stages
+                         # Parallel Map: batched concurrent LLM calls via Promise.all; configurable concurrency 1–10
     serverExecutor.ts    # Server reactive engine; same zombie strip + content injection
     modelRegistry.ts     # MODEL_DEFAULTS per provider; resolveModelChain()
     layoutEngine.ts      # applyDagreLayout(nodes, edges, direction) → auto-layout via Dagre
@@ -134,7 +147,13 @@ NodeData     { label, instructions, provider, modelName, apiKey,
                subflowId, subflowName, workflowOverride,
                gatekeeperMessage, timeoutMinutes, timeoutAction, batchLogic,
                schedule, cron, webhookID, time, days, timezone,
-               intervalSeconds, intervalMinutes, minuteOffset, monthDay, cronExpression }
+               intervalSeconds, intervalMinutes, minuteOffset, monthDay, cronExpression,
+               // Agent Loop
+               systemPrompt, maxIterations, enableWebSearch,
+               // Mobile Agent (security isolation pipeline)
+               environments: [{name, type, task}], mobileGoal?, mobileMaxHops?,
+               // Parallel Map
+               itemPrompt, separator, concurrency, outputFormat }
 ExecutionContext  { variables: Record<string,FlowPacket>, nodes: Record<string,FlowPacket>, __exit__? }
 ActionField  { key, label, type, placeholder?, isContent?: boolean }  // isContent = auto-filled from upstream
 FlowRun      { id, flowId, input?, output Json?, status, costUsd, durationMs?, source, createdAt }
@@ -392,6 +411,16 @@ app/store/
 `FlowComment` (`flowId`, `userId?`, `authorName String @default("Anonymous")`, `body String`) — community comments on store detail pages.
 
 `FlowReport` (`flowId`, `userId?`, `reason String`) — abuse reports for deployed flows.
+
+`Collection` (`id`, `userId`, `name`, `description?`, `isPublic Boolean @default(false)`, `createdAt`) · `CollectionFlow` (`collectionId`, `flowId`, `@@unique([collectionId, flowId])`) — user-curated agent collections.
+
+`CreatorFollow` (`followerId`, `followingId`, `@@unique([followerId, followingId])`) — creator follow graph (separate from FlowFollow which tracks flow-level following).
+
+`AgentRequest` (`id`, `userId?`, `title`, `description?`, `upvoteCount Int @default(0)`, `isFulfilled Boolean @default(false)`, `fulfilledByFlowId String?`, `createdAt`) · `RequestUpvote` (`requestId`, `userId`, `@@unique([requestId, userId])`) — community request board.
+
+`TagSubscription` (`userId`, `tag`, `@@unique([userId, tag])`) — user tag subscriptions for store notifications.
+
+**Flow model additions:** `sourceFlowId String? @map("source_flow_id") @db.Uuid` (remix tracking), `isVerified Boolean? @default(false) @map("is_verified")`, `collectionItems CollectionFlow[]`.
 
 `viewCount` — incremented on Sandbox/Workflow/Code interactions. `sandboxRunCount` — incremented when `/sandbox/[id]` page loads for a deployed flow. Both use atomic `{ increment: 1 }`.
 

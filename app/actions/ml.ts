@@ -458,3 +458,17 @@ export async function executeSpeech(
 
   throw new Error(`Speech TTS: provider "${provider}" not supported`);
 }
+
+
+// ── Mobile Agent Step Executor ────────────────────────────────────────────────
+// Runs a single migration step in an E2B sandbox.
+// Called from clientExecutor to avoid bundling e2bRunner into the client.
+export async function executeMobileAgentStep(
+  script: string,
+  language: "python" | "javascript"
+): Promise<{ output: string }> {
+  const { runCodeInE2B } = await import("@/lib/sandbox/e2bRunner");
+  const logs: string[] = [];
+  const result = await runCodeInE2B(script, language, (msg) => logs.push(msg));
+  return { output: result.output };
+}

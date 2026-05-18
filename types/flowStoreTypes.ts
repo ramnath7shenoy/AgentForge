@@ -140,6 +140,22 @@ export interface NodeData {
   speechVoice?: string;
   elevenLabsVoiceId?: string;
 
+  // Agent Loop node
+  systemPrompt?: string;
+  maxIterations?: number;
+  enableWebSearch?: boolean;
+
+  // Mobile Agent node
+  environments?: Array<{ name: string; type: string; task: string }>;
+  mobileGoal?: string;
+  mobileMaxHops?: number;
+
+  // Parallel Map node
+  itemPrompt?: string;
+  separator?: string;
+  concurrency?: number;
+  outputFormat?: string;
+
   // Local Edit Protection (Unwrapped Subagents)
   localOverride?: {
     nodes: Node<NodeData>[];

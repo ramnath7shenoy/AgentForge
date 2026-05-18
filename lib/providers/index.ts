@@ -1,4 +1,4 @@
-export type AppProvider = "x" | "slack" | "discord" | "github" | "notion" | "instagram" | "linkedin" | "medium" | "browser" | "reddit" | "mail";
+export type AppProvider = "x" | "slack" | "discord" | "github" | "notion" | "instagram" | "linkedin" | "medium" | "browser" | "reddit" | "mail" | "youtube";
 
 export interface ActionField {
   key: string;
@@ -169,12 +169,21 @@ export const APP_REGISTRY: AppDefinition[] = [
     actions: [
       {
         id: "create_page",
-        label: "Create Page",
-        description: "Create a new page in a database",
+        label: "Create Sub-Page",
+        description: "Create a new page nested under an existing Notion page",
         fields: [
-          { key: "databaseId", label: "Database ID", type: "text", placeholder: "Notion database ID", required: true },
+          { key: "parentPageId", label: "Parent Page ID", type: "text", placeholder: "Paste the ID from a Notion page URL", required: true },
           { key: "title", label: "Title", type: "text", placeholder: "Page title", required: true },
           { key: "content", label: "Content", type: "textarea", placeholder: "Page content...", isContent: true },
+        ],
+      },
+      {
+        id: "append_to_page",
+        label: "Append to Page",
+        description: "Add text to the bottom of an existing Notion page",
+        fields: [
+          { key: "pageId", label: "Page ID", type: "text", placeholder: "Paste the ID from the Notion page URL", required: true },
+          { key: "content", label: "Content", type: "textarea", placeholder: "Text to append...", required: true, isContent: true },
         ],
       },
     ],
@@ -319,6 +328,43 @@ export const APP_REGISTRY: AppDefinition[] = [
           { key: "subject", label: "Subject", type: "text", placeholder: "Re: original subject", required: true },
           { key: "inReplyTo", label: "In-Reply-To Message-ID", type: "text", placeholder: "<messageid@mail.example.com>", required: true },
           { key: "body", label: "Body", type: "textarea", placeholder: "Reply body…", required: true, isContent: true },
+        ],
+      },
+    ],
+  },
+  {
+    id: "youtube",
+    name: "YouTube",
+    icon: "▶️",
+    color: "#FF0000",
+    tokenLabel: "Data API Key",
+    tokenPlaceholder: "AIza…",
+    docsUrl: "https://console.cloud.google.com/apis/credentials",
+    actions: [
+      {
+        id: "search_videos",
+        label: "Search Videos",
+        description: "Search YouTube for videos matching a query",
+        fields: [
+          { key: "query", label: "Search Query", type: "text", placeholder: "AI agents tutorial", required: true, isContent: true },
+          { key: "maxResults", label: "Max Results", type: "text", placeholder: "5" },
+        ],
+      },
+      {
+        id: "get_video_details",
+        label: "Get Video Details",
+        description: "Fetch title, description, view count and channel for a video",
+        fields: [
+          { key: "videoId", label: "Video ID", type: "text", placeholder: "dQw4w9WgXcQ", required: true },
+        ],
+      },
+      {
+        id: "post_comment",
+        label: "Post Comment",
+        description: "Post a comment on a YouTube video (requires OAuth token)",
+        fields: [
+          { key: "videoId", label: "Video ID", type: "text", placeholder: "dQw4w9WgXcQ", required: true },
+          { key: "text", label: "Comment", type: "textarea", placeholder: "Great video!", required: true, isContent: true },
         ],
       },
     ],
