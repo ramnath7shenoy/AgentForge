@@ -60,6 +60,10 @@ export interface ExtendedFlowState extends FlowState {
   clearAutoSave: () => void;
   webhookPayloadWarning: { nodeId: string; label: string } | null;
   setWebhookPayloadWarning: (v: { nodeId: string; label: string } | null) => void;
+  activeFlowId: string | null;
+  setActiveFlowId: (id: string | null) => void;
+  currentFlowId: string | null;
+  setCurrentFlowId: (id: string | null) => void;
   layoutDirection: LayoutDirection;
   applyAutoLayout: (direction: LayoutDirection) => void;
   lastContext: ExecutionContext | null;
@@ -130,6 +134,10 @@ export const useFlowStore = create<WithLiveblocks<ExtendedFlowState, FlowPresenc
   webhookPayloadWarning: null as { nodeId: string; label: string } | null,
   setWebhookPayloadWarning: (v: { nodeId: string; label: string } | null) =>
     set({ webhookPayloadWarning: v } as any),
+  activeFlowId: null as string | null,
+  setActiveFlowId: (id: string | null) => set({ activeFlowId: id } as any),
+  currentFlowId: null as string | null,
+  setCurrentFlowId: (id: string | null) => set({ currentFlowId: id } as any),
   nodes: [],
   edges: [],
   theme: "dark", 
@@ -591,6 +599,15 @@ export const useFlowStore = create<WithLiveblocks<ExtendedFlowState, FlowPresenc
     });
 
     addLog("SUCCESS", `🏁 Flow Finished. Memory: ${get().chatHistory.length} messages.`);
+
+    // Log this run to the DB if we have a flow ID (fire-and-forget, non-blocking)
+    const logFlowId = get().currentFlowId || get().activeFlowId;
+    if (logFlowId) {
+      const { logFlowRun } = await import("@/app/actions/flow");
+      const outputPayload = finalPacket?.payload ?? null;
+      const outputStr = typeof outputPayload === "string" ? outputPayload : outputPayload ? JSON.stringify(outputPayload) : null;
+      logFlowRun(logFlowId, initialInput, outputStr as any, result.success ? "success" : "error", 0, 0, "editor").catch(() => {});
+    }
   },
 
   // --- FLOW EXECUTION LOGIC ---

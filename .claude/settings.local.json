@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx prisma *)",
+      "Bash(Get-ChildItem -Path \"E:\\\\agentforge\\\\flowforge-ai\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(powershell -Command 'Get-ChildItem lib/*.ts | ForEach-Object { Write-Output \\('\\\\''{0}: {1}'\\\\'' -f $_.Name, \\(Get-Content $_.FullName\\).Count\\) }')",
+      "Bash(grep -E \"\\\\.\\(yml|yaml|json\\)$|\\\\.github\")",
+      "Bash(xargs grep -l \"TODO\\\\|FIXME\\\\|XXX\\\\|HACK\")",
+      "Bash(Get-ChildItem -Path \"E:\\\\agentforge\\\\flowforge-ai\\\\app\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(Get-ChildItem -Path \"E:\\\\agentforge\\\\flowforge-ai\" -Directory)",
+      "Bash(npx tsc *)",
+      "Bash(Remove-Item \"E:\\\\agentforge\\\\flowforge-ai\\\\components\\\\flow\\\\nodes\\\\EmbeddingsNode.tsx\" -Force)",
+      "Bash(Remove-Item \"E:\\\\agentforge\\\\flowforge-ai\\\\components\\\\flow\\\\sidebar\\\\settings\\\\EmbeddingsSettings.tsx\" -Force)",
+      "Bash(Write-Host \"Deleted\")"
+    ]
+  }
+}

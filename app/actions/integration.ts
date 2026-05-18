@@ -111,22 +111,29 @@ export async function executeAppAction(
 
   // Browser Agent uses E2B — no OAuth integration row needed.
   if (provider === "browser") {
+    if (!process.env.E2B_API_KEY) {
+      return { result: "Browser Agent requires E2B_API_KEY — add it to your Vercel environment variables." };
+    }
     const { runBrowserActionInE2B, runCodeInE2B } = await import("@/lib/sandbox/e2bRunner");
     const logs: string[] = [];
     const e2bLog = (msg: string) => { logs.push(msg); };
 
-    let output: string;
-    if (action === "run_python") {
-      ({ output } = await runCodeInE2B(resolvedInputs.prompt ?? "", "python", e2bLog));
-    } else if (action === "run_javascript") {
-      ({ output } = await runCodeInE2B(resolvedInputs.prompt ?? "", "javascript", e2bLog));
-    } else {
-      const url = resolvedInputs.url ?? "";
-      if (!url) throw new Error(`Browser Agent [${action}] requires a URL.`);
-      const prompt = resolvedInputs.prompt ?? resolvedInputs.instructions ?? "";
-      ({ output } = await runBrowserActionInE2B(action, url, prompt, e2bLog, tavilyApiKey));
+    try {
+      let output: string;
+      if (action === "run_python") {
+        ({ output } = await runCodeInE2B(resolvedInputs.prompt ?? "", "python", e2bLog));
+      } else if (action === "run_javascript") {
+        ({ output } = await runCodeInE2B(resolvedInputs.prompt ?? "", "javascript", e2bLog));
+      } else {
+        const url = resolvedInputs.url ?? "";
+        if (!url) return { result: `Browser Agent [${action}] requires a URL.` };
+        const prompt = resolvedInputs.prompt ?? resolvedInputs.instructions ?? "";
+        ({ output } = await runBrowserActionInE2B(action, url, prompt, e2bLog, tavilyApiKey));
+      }
+      return { result: output };
+    } catch (err: any) {
+      return { result: `Browser Agent error: ${err?.message ?? "Unknown error"}` };
     }
-    return { result: output };
   }
 
   const integration = await prisma.integration.findUnique({

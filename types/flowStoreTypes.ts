@@ -59,6 +59,22 @@ export interface NodeData {
   persistence?: string;
   verification?: string;
   batchLogic?: string;
+
+  // Logic Processor modes
+  processorMode?: "template" | "switch" | "transform" | "iterate" | "delay" | "set";
+  template?: string;
+  switchMatchType?: "contains" | "equals" | "startsWith" | "regex";
+  switchCases?: Array<{ match: string; output: string }>;
+  switchDefault?: string;
+  transformOp?: "map" | "filter" | "split" | "join";
+  transformExpr?: string;
+  splitOn?: string;
+  joinWith?: string;
+  delayMs?: number;
+  assignments?: Array<{ key: string; value: string }>;
+  iterateInputFormat?: "lines" | "json" | "csv";
+  iterateTemplate?: string;
+  iterateJoin?: string;
   webhookID?: string;
   cron?: string;
   time?: string;
@@ -97,6 +113,32 @@ export interface NodeData {
   appProvider?: string;               // e.g. "x", "slack", "github", "notion"
   appAction?: string;                 // e.g. "create_tweet", "send_message"
   appInputs?: Record<string, string>; // field key → template string (supports {{node-id}})
+
+  // ML Model node
+  mlProvider?: string;
+  mlModelId?: string;
+
+  // Image Gen node
+  imageProvider?: string;
+  igProvider?: string;
+  customPrompt?: string;
+  igModel?: string;
+  igSize?: string;
+  igQuality?: string;
+
+  // Embeddings node
+  embProvider?: string;
+  embMode?: "search" | "embed";
+  embModel?: string;
+  knowledgeBase?: string;
+  topK?: number;
+
+  // Speech node
+  speechProvider?: string;
+  speechMode?: "tts" | "stt";
+  speechModel?: string;
+  speechVoice?: string;
+  elevenLabsVoiceId?: string;
 
   // Local Edit Protection (Unwrapped Subagents)
   localOverride?: {

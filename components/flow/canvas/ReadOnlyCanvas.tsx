@@ -19,6 +19,11 @@ import SubflowNode from "@/components/flow/nodes/SubflowNode";
 import ApprovalNode from "@/components/flow/nodes/ApprovalNode";
 import AppActionNode from "@/components/flow/nodes/AppActionNode";
 import GroupNode from "@/components/flow/nodes/GroupNode";
+import MLModelNode from "@/components/flow/nodes/MLModelNode";
+import ImageGenNode from "@/components/flow/nodes/ImageGenNode";
+import RAGNode from "@/components/flow/nodes/RAGNode";
+import SpeechNode from "@/components/flow/nodes/SpeechNode";
+import DataAnalysisNode from "@/components/flow/nodes/DataAnalysisNode";
 import { ReactFlowProvider } from "reactflow";
 import { saveSharedFlow } from "@/app/actions/flow";
 
@@ -52,6 +57,11 @@ function Canvas({ nodes: initialNodes, edges: initialEdges, editable = false, fl
     approval: ApprovalNode,
     appaction: AppActionNode,
     group: GroupNode,
+    mlmodel: MLModelNode,
+    imagegen: ImageGenNode,
+    rag: RAGNode,
+    speech: SpeechNode,
+    dataanalysis: DataAnalysisNode,
   }), []);
 
   // Debounced auto-save for editable shared views

@@ -1,9 +1,11 @@
 # PROJECT_CONTEXT.md
 
 ## Stack
-Next.js 15 App Router · React 19 · Tailwind 4 · shadcn/ui · Framer Motion 12 · ReactFlow 11 · Zustand 5 · Supabase + Prisma 7 · TypeScript 5 strict · E2B `@e2b/code-interpreter` v2 · Liveblocks v3 (`@liveblocks/client`, `@liveblocks/node`, `@liveblocks/zustand`)
+Next.js 16.1.6 App Router · React 19.1.0 · Tailwind 4 · shadcn/ui · Framer Motion 12 · ReactFlow 11 · Zustand 5 · Supabase + Prisma 7 · TypeScript 5 strict · E2B `@e2b/code-interpreter` v2 · Liveblocks v3 (`@liveblocks/client`, `@liveblocks/node`, `@liveblocks/zustand`)
 
 AI providers: Gemini · Groq · OpenAI · Anthropic (auto-detected via vault key prefix)
+
+Other notable deps: `dagre` 0.8.5 (auto-layout) · `sonner` 2 (toasts) · `undici` 7.25.0 · `react-confetti` · `jspdf` · `html-to-image`
 
 ---
 
@@ -11,17 +13,27 @@ AI providers: Gemini · Groq · OpenAI · Anthropic (auto-detected via vault key
 ```
 app/
   actions/
-    ai-architect.ts      # NL → validated flow JSON (12-node schema)
+    ai-architect.ts      # NL → validated flow JSON (12-node schema); Gemini/Groq/OpenAI/Anthropic
+    ml.ts                # executeMLModel (HuggingFace/Replicate) · executeImageGen (DALL-E/Replicate→base64) · executeRAG (OpenAI embeddings + KnowledgeChunk DB) · executeSpeech (Whisper STT / OpenAI+ElevenLabs TTS→base64) · executeDataAnalysis (E2B Python + matplotlib→base64 PNG)
     integration.ts       # OAuth CRUD + executeAppAction (9 OAuth + browser/E2B) + getIntegrationEnvVars()
+                         # Browser block now catches all errors and returns { result: errorMsg } instead of throwing (avoids "Server Components render" error in prod)
     flow.ts              # Flow CRUD: save/get/publish/deploy/delete/folders/templates + logFlowRun(flowId, input, output, status, costUsd, durationMs, source)
-    project.ts           # Project CRUD + templates
+                         # Also: toggleStar/Wishlist/Follow, comments, versions, cloneFlow, deployToStore, reportFlow, analytics
+    project.ts           # Project CRUD + custom templates
+    vault.ts             # saveVaultKeys(entries) / loadVaultKeys() → VaultKeyEntry[] (JSON stored in Vault row)
+    auth.ts              # signOut() / getUser()
   api/
     sandbox/
       execute/route.ts        # POST → SSE: runs serverExecutor; maxDuration=60
       execute-code/route.ts   # POST → SSE: raw E2B code execution; maxDuration=60
+    browser/
+      execute/route.ts        # POST: browser/screenshot actions via E2B; maxDuration=60; replaces server action to avoid Vercel's 10s default timeout
     webhook/
-      [id]/route.ts           # POST: execute deployed flow by flowId; returns JSON {success, output, durationMs, costUsd}; falls back to owner vault keys if no apiKeys supplied; logs via logFlowRun
-    vector-search/route.ts
+      [id]/route.ts           # POST: execute deployed flow by flowId; returns JSON {success, output, durationMs, costUsd}; falls back to owner vault keys; logs via logFlowRun(source:"webhook")
+    mcp/route.ts              # POST: JSON-RPC 2.0 MCP server; exposes deployed public flows as callable tools to Claude; methods: ping, initialize, tools/list, tools/call; logs via logFlowRun(source:"mcp"); maxDuration=60
+    vector-search/route.ts    # POST: BM25 lexical search over provided chunks; returns top-K results
+    liveblocks-auth/route.ts  # POST: Supabase session + Prisma ownership check → Liveblocks session token
+    execute/route.ts          # POST: legacy mock streaming execution (vault key substitution)
   auth/
     confirm/route.ts    # Handles token_hash email flow (verifyOtp → /update-password for recovery)
     callback/route.ts   # Handles PKCE code flow (exchangeCodeForSession → detects recovery via recovery_sent_at)
@@ -30,7 +42,9 @@ app/
   editor/page.tsx        # Main canvas (~1700 lines): FlowCanvas, sidebars, toolbar, AI Architect, chat, terminal
   publish/page.tsx       # Publish & Export: Mirror Mode sandbox, polyglot codegen, flowId-keyed localStorage
   sandbox/[id]/
-    page.tsx / SandboxClient.tsx   # Server-rendered sandbox with API key config
+    page.tsx / SandboxClient.tsx   # Server-rendered sandbox with API key config; increments sandboxRunCount on load
+  view/[id]/
+    page.tsx             # Shared read-only flow view (public share link target); uses ReadOnlyCanvas
   dashboard/page.tsx · integrations/page.tsx
   store/
     page.tsx          # Server: deployed flows + starredIds + wishlistedIds + isVerified per creator
@@ -41,7 +55,7 @@ app/
     creator/[userId]/page.tsx · CreatorFollowButton.tsx
 
 components/flow/
-  nodes/                 # One file per node type + NodeCard.tsx
+  nodes/                 # One file per node type + NodeCard.tsx (12 core + GroupNode + SubflowNode + TextNode + MLModelNode + ImageGenNode + RAGNode + SpeechNode + DataAnalysisNode)
   canvas/                # FlowCanvas, ReadOnlyCanvas (nodeTypes includes ALL custom types incl. appaction + group)
   chat/ChatHub.tsx
   collaboration/
@@ -49,7 +63,9 @@ components/flow/
     CollaborationStatus.tsx  # "Live"/"Syncing…" badge + avatar row for other users
   sidebar/
     NodeSettingsSidebar.tsx  # AppAction label auto-syncs to action.label on mount via useEffect
+                             # Output panel: type="file" + data:image/ → <img>; type="file" + data:audio/ → <audio controls>; else → <pre>
     NodeSidebar.tsx          # Vault tab: preferred provider dropdown; root div has data-tutorial="node-palette"
+    settings/                # MLModelSettings · ImageGenSettings · RAGSettings · SpeechSettings · DataAnalysisSettings · ProcessorSettings
   ResponseGallery.tsx / SandboxGallery.tsx / ImageLightbox.tsx
 
 components/ui/tutorial/
@@ -63,19 +79,47 @@ lib/
   flow/
     clientExecutor.ts    # Reactive engine; strips zombie nodes; strict upstream content injection
     serverExecutor.ts    # Server reactive engine; same zombie strip + content injection
+    modelRegistry.ts     # MODEL_DEFAULTS per provider; resolveModelChain()
+    layoutEngine.ts      # applyDagreLayout(nodes, edges, direction) → auto-layout via Dagre
+    validators.ts        # Flow/node/edge validation utilities
   sandbox/e2bRunner.ts
-  providers/index.ts     # APP_REGISTRY (9 providers); CONTENT_FIELD_KEYS; isContent flag on fields
+  providers/
+    index.ts             # APP_REGISTRY (9 providers); CONTENT_FIELD_KEYS; isContent flag on fields
+    xService.ts · slackService.ts · discordService.ts · githubService.ts
+    notionService.ts · instagramService.ts · linkedinService.ts · mediumService.ts
   codegen/templates.ts   # Polyglot codegen helpers; APP_PROVIDER_ENV_KEYS
   flowCompiler.ts        # topoSort skips isolated nodes; upstream ctx used for content fields
+  approvalGate.ts        # waitForApproval() / resolveApproval() / isApprovalPending() — shared approval pause/resume
+  expressionEvaluator.ts # English-like boolean expression evaluator for router node conditions
+  flowPersistence.ts     # Flow save/load from localStorage
+  versionSnapshots.ts    # Flow version history management
+  template.ts            # resolveTemplates(text, context) — resolves {{node-id}} refs; getSavedAgents()
+  savedAgents.ts         # Agent registry management
+  executionEngine.ts     # Legacy client execution engine; NodeExecutor type; getNextNodeId()
+  utils.ts               # General utilities
+  utils/
+    tokenCost.ts         # Token counting + cost calc (OpenAI, Anthropic, Groq, Gemini)
+    contextPacker.ts     # File context packing for LLM prompts
+    export.ts            # Export flow to Python/JS code
+    resolveTargetUrl.ts  # Resolve target URLs in browser actions
+    toastEvents.ts       # Toast notification event bus
   liveblocks/
     client.ts            # createClient({ authEndpoint: "/api/liveblocks-auth" })
     rooms.ts             # getFlowRoomId(flowId) → "flow:<uuid>"; getFlowIdFromRoom(roomId)
+  constants/templates.ts # Built-in flow templates (FLOW_TEMPLATES)
+  prisma.ts              # Prisma client singleton
+  supabase/client.ts · server.ts
   generated/prisma/      # Regenerate with `npx prisma generate` if schema changes
 
 stores/
   flowStore.ts           # deleteNode purges nodeStatuses/nodeOutputs/executedNodeIds/executionResult
-  vaultStore.ts          # preferredProvider: string|null persisted; setPreferredProvider()
+  vaultStore.ts          # preferredProvider: string|null persisted; setPreferredProvider(); resolveSmartKey()
   useLogStore.ts / useCostStore.ts / registryStore.ts
+  themeStore.ts          # theme: "light"|"dark"; setTheme() / toggleTheme()
+  simulationStore.ts     # Minimal/empty simulation state
+
+types/
+  flowStoreTypes.ts      # FlowPacket, NodeData, ExecutionContext, NodeExecutionStatus, ExecutionStatus
 ```
 
 ---
@@ -94,6 +138,7 @@ NodeData     { label, instructions, provider, modelName, apiKey,
 ExecutionContext  { variables: Record<string,FlowPacket>, nodes: Record<string,FlowPacket>, __exit__? }
 ActionField  { key, label, type, placeholder?, isContent?: boolean }  // isContent = auto-filled from upstream
 FlowRun      { id, flowId, input?, output Json?, status, costUsd, durationMs?, source, createdAt }
+VaultKeyEntry  { key: string, value: string }
 ```
 
 ---
@@ -105,7 +150,13 @@ FlowRun      { id, flowId, input?, output Json?, status, costUsd, durationMs?, s
 runClientFlow(input) → executeGraph(_nodes, edges, ...)
   Zombie filter: nodes with no edges stripped when graph has edges
   appaction → content field always overridden from upstream output if incoming edge exists
-            → executeAppAction() [server action] → Prisma Integration → provider service
+            → browser: POST /api/browser/execute (maxDuration=60, avoids server action timeout)
+            → other: executeAppAction() [server action] → Prisma Integration → provider service
+  mlmodel   → executeMLModel() [server action]
+  imagegen  → executeImageGen() → returns type:"file" payload:"data:image/..."
+  rag       → executeRAG() always ragMode:"query"; ingest done via "Ingest Now" button in settings UI
+  speech    → executeSpeech() → STT returns type:"text"; TTS returns type:"file" payload:"data:audio/..."
+  dataanalysis → executeDataAnalysis() → E2B Python + matplotlib → type:"file" payload:"data:image/..."
 ```
 
 ### Sandbox — `serverExecutor.ts` → `/api/sandbox/execute`
@@ -121,6 +172,17 @@ POST {input, apiKeys?} → JSON {success, output, durationMs, costUsd}
   Deployed/public flows only (isPublic || isDeployed)
   Falls back to flow owner's vault keys if apiKeys not supplied
   Logs run via logFlowRun(... source:"webhook")
+  maxDuration=60
+```
+
+### MCP Execution — `/api/mcp`
+```
+POST JSON-RPC 2.0 → JSON {jsonrpc, id, result|error}
+  Implements MCP protocol version 2024-11-05
+  methods: ping · initialize · tools/list · tools/call · notifications/* (202, fire-and-forget)
+  tools/list: returns top-50 deployed+public flows as tools (name slugified, description from flow.description + tags)
+  tools/call: executes matching flow via executeGraphServer() using owner's vault keys
+  Logs run via logFlowRun(... source:"mcp")
   maxDuration=60
 ```
 
@@ -203,7 +265,7 @@ Entry points use the Input node's `packet.payload` as the default for `AGENTFORG
 - Guest mode: localStorage; auto-migrated on login
 - Auto-save: debounced 2s
 - `getLatestFlow()` filters `isDeployed: { not: true }` — excludes Store snapshots so `/editor` never loads a deployed agent as the default working flow
-- **Prisma schema change → must run `npx prisma generate`** to update `lib/generated/prisma/`
+- **Prisma schema change → must run `npx prisma db push` then `npx prisma generate`** to update `lib/generated/prisma/`
 
 ### Password Reset Flow
 Two paths depending on Supabase email template format:
@@ -319,11 +381,13 @@ app/store/
 ```
 
 ## Prisma Models
-`Flow` (nodes/edges JSON, isPublic, isDeployed, viewCount, **sandboxRunCount Int? @default(0)**, **changelog String?**, **cloneCount Int? @default(0)**, **tags String[]**, **isFeatured Boolean?**, creatorName, description, thumbnail, groupName, folderId) · `Project` · `Folder` · `Vault` · `Integration`
+`Flow` (nodes/edges JSON, isPublic, publicEditable, isDeployed, viewCount, **sandboxRunCount Int? @default(0)**, **changelog String?**, **cloneCount Int? @default(0)**, **tags String[]**, **isFeatured Boolean?**, creatorName, description, thumbnail, groupName, folderId) · `Project` · `Folder` · `Vault` (encrypted_keys String — JSON array of VaultKeyEntry) · `Integration` (userId, provider, accessToken, refreshToken, metadata, expiresAt)
 
 `FlowStar` (`flowId`, `userId`, `@@unique([flowId, userId])`) · `FlowWishlist` (`flowId`, `userId`, `@@unique([flowId, userId])`) · `FlowFollow` (`followerId`, `followingId` as plain UUIDs — no FK to auth.users, `@@unique([followerId, followingId])`) · `FlowVersion` (`flowId`, nodes JSON, edges JSON, note?, `@@index([flowId])`)
 
-`FlowRun` (`flowId`, `input String?`, `output Json?`, `status String @default("success")`, `costUsd Float @default(0)`, `durationMs Int?`, `source String @default("sandbox")`, `createdAt`) — logged on every sandbox/webhook execution via `logFlowRun()`.
+`FlowRun` (`flowId`, `input String?`, `output Json?`, `status String @default("success")`, `costUsd Float @default(0)`, `durationMs Int?`, `source String @default("sandbox")`, `createdAt`) — logged on every sandbox/webhook/mcp execution via `logFlowRun()`.
+
+`KnowledgeChunk` (`id`, `userId`, `kbId`, `text`, `embedding Json`, `createdAt`) — stores RAG knowledge base chunks per user+kbId. Populated via "Ingest Now" button in RAGSettings (calls `executeRAG` with `ragMode:"ingest"`). Queried at flow runtime by RAG node (cosine similarity). `@@index([userId, kbId])`. **Schema change: run `npx prisma db push` + `npx prisma generate`.**
 
 `FlowComment` (`flowId`, `userId?`, `authorName String @default("Anonymous")`, `body String`) — community comments on store detail pages.
 
@@ -349,3 +413,18 @@ app/store/
 1. `data:image/` → `<img>` + lightbox
 2. `{...}` non-array object → key-value cards
 3. else → `<pre>`
+
+## Node Output Panel (`NodeSettingsSidebar`)
+Per-node output shown after execution. Type-aware rendering:
+- `type:"file"` + `data:image/` → `<img>`
+- `type:"file"` + `data:audio/` → `<audio controls>`
+- else → `<pre>` (monospace green text)
+
+## ML / Data Science Nodes
+| Node | Provider | Output | Requires |
+|---|---|---|---|
+| ML Model | HuggingFace · Replicate | text | HUGGINGFACE_API_KEY or REPLICATE_API_TOKEN |
+| Image Gen | DALL-E · Replicate | file (image) | OPENAI_API_KEY or REPLICATE_API_TOKEN |
+| RAG | OpenAI Embeddings | text (top-K chunks) | OPENAI_API_KEY; ingest via settings button |
+| Speech | OpenAI Whisper · ElevenLabs | text (STT) or file/audio (TTS) | OPENAI_API_KEY or ELEVENLABS_API_KEY |
+| Data Analysis | E2B + Python + matplotlib | file (PNG chart) | E2B_API_KEY; supports bar/pie/scatter/line/hist/heatmap |

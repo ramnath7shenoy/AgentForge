@@ -22,7 +22,8 @@ import {
   Layers,
   LayoutGrid,
   Pencil,
-  PlugZap
+  PlugZap,
+  BarChart2
 } from "lucide-react";
 import { useFlowStore } from "@/stores/flowStore";
 import { useRouter } from "next/navigation";
@@ -64,6 +65,16 @@ const categories = [
       { type: "action", label: "Integration", icon: <Zap size={14} className="text-emerald-500" /> },
       { type: "output", label: "Output", icon: <MessageSquare size={14} className="text-pink-500" /> },
     ]
+  },
+  {
+    name: "ML & Media",
+    nodes: [
+      { type: "mlmodel", label: "ML Model", icon: <Layers size={14} className="text-sky-400" /> },
+      { type: "imagegen", label: "Image Gen", icon: <LayoutGrid size={14} className="text-fuchsia-400" /> },
+      { type: "rag", label: "RAG", icon: <Database size={14} className="text-teal-400" /> },
+      { type: "speech", label: "Speech", icon: <Briefcase size={14} className="text-rose-400" /> },
+      { type: "dataanalysis", label: "Data Analysis", icon: <BarChart2 size={14} className="text-amber-400" /> },
+    ]
   }
 ];
 
@@ -72,9 +83,10 @@ interface NodeSidebarProps {
   isOwner?: boolean;
   flowName?: string;
   onFlowNameChange?: (name: string) => void;
+  onNewFlow?: () => void;
 }
 
-const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas, isOwner = true, flowName = "Untitled Agent", onFlowNameChange }) => {
+const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas, isOwner = true, flowName = "Untitled Agent", onFlowNameChange, onNewFlow }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"nodes" | "vault">("nodes");
   const [editingName, setEditingName] = useState(false);
@@ -156,7 +168,7 @@ const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas, isOwner = true
           Dashboard
         </button>
 
-        {/* Flow Name */}
+        {/* Flow Name + New button */}
         <div className="flex items-center gap-1.5 px-2 py-1">
           {editingName ? (
             <input
@@ -175,6 +187,16 @@ const NodeSidebar: React.FC<NodeSidebarProps> = ({ onClearCanvas, isOwner = true
             >
               <span className="text-xs font-semibold text-foreground truncate flex-1">{flowName}</span>
               <Pencil size={11} className="text-muted-foreground opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity" />
+            </button>
+          )}
+          {onNewFlow && (
+            <button
+              onClick={onNewFlow}
+              title="New flow — starts a fresh canvas"
+              className="flex items-center gap-0.5 flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-500 hover:text-indigo-400 hover:bg-indigo-500/10 transition-all"
+            >
+              <Plus size={10} />
+              New
             </button>
           )}
         </div>

@@ -912,12 +912,102 @@ async function executeNode(
     }
 
     case "processor": {
-      const inputNodeId = edges.find((e) => e.target === current.id)?.source;
-      const inputData = inputNodeId ? context.nodes[inputNodeId] : null;
-      return {
-        type: "text",
-        payload: `Processed: ${JSON.stringify(inputData?.payload || "")}`,
-      };
+      const _pEdge = edges.find((e) => e.target === current.id);
+      const _pUpstream = _pEdge ? context.nodes[_pEdge.source] : null;
+      const _pRaw = _pUpstream ? getRawValue(_pUpstream) : initialInput;
+      const _pMode = current.data?.processorMode || "template";
+
+      const _pResolve = (tpl: string) =>
+        tpl.replace(/\{\{(.*?)\}\}/g, (_: string, path: string) => {
+          const val = resolveTemplatePath(path, context);
+          return val != null ? getRawValue(val) : "";
+        });
+
+      if (_pMode === "template") {
+        const tpl = (current.data?.template as string | undefined)?.trim() || "";
+        return { type: "text", payload: tpl ? _pResolve(tpl) : _pRaw };
+      }
+
+      if (_pMode === "switch") {
+        const matchType: string = current.data?.switchMatchType || "contains";
+        const cases: { match: string; output: string }[] = current.data?.switchCases || [];
+        const input = _pRaw.toLowerCase();
+        for (const c of cases) {
+          const m = c.match.toLowerCase();
+          let hit = false;
+          if (matchType === "equals") hit = input === m;
+          else if (matchType === "startsWith") hit = input.startsWith(m);
+          else if (matchType === "regex") { try { hit = new RegExp(c.match, "i").test(_pRaw); } catch { hit = false; } }
+          else hit = input.includes(m);
+          if (hit) return { type: "text", payload: _pResolve(c.output) };
+        }
+        const def = (current.data?.switchDefault as string | undefined) || "";
+        return { type: "text", payload: def ? _pResolve(def) : _pRaw };
+      }
+
+      if (_pMode === "transform") {
+        const op: string = current.data?.transformOp || "map";
+        const expr: string = current.data?.transformExpr || "{{item}}";
+        const applyExpr = (item: string) => expr.replace(/\{\{item\}\}/g, item);
+
+        if (op === "split") {
+          const rawSep = (current.data?.splitOn as string | undefined) ?? "\\n";
+          const sep = rawSep === "\\n" ? "\n" : rawSep === "\\t" ? "\t" : rawSep;
+          const arr = _pRaw.split(sep).map((s) => s.trim()).filter(Boolean);
+          return { type: "data", payload: arr };
+        }
+        if (op === "join") {
+          const rawJoin = (current.data?.joinWith as string | undefined) ?? "\\n";
+          const join = rawJoin === "\\n" ? "\n" : rawJoin === "\\t" ? "\t" : rawJoin;
+          let arr: string[] = [];
+          try { arr = JSON.parse(_pRaw); } catch { arr = _pRaw.split("\n").map((s) => s.trim()).filter(Boolean); }
+          return { type: "text", payload: Array.isArray(arr) ? arr.join(join) : _pRaw };
+        }
+        let items: string[] = [];
+        try { const parsed = JSON.parse(_pRaw); items = Array.isArray(parsed) ? parsed.map(String) : [_pRaw]; }
+        catch { items = _pRaw.split("\n").map((s) => s.trim()).filter(Boolean); }
+        if (op === "filter") {
+          const filtered = items.filter((item) => applyExpr(item).trim().length > 0);
+          return { type: "data", payload: filtered };
+        }
+        return { type: "data", payload: items.map((item) => applyExpr(item)) };
+      }
+
+      if (_pMode === "iterate") {
+        const fmt: string = current.data?.iterateInputFormat || "lines";
+        const tpl: string = current.data?.iterateTemplate || "{{item}}";
+        const rawJoin = (current.data?.iterateJoin as string | undefined) ?? "\\n";
+        const joinStr = rawJoin === "\\n" ? "\n" : rawJoin === "\\t" ? "\t" : rawJoin;
+        let items: string[] = [];
+        if (fmt === "json") {
+          try { const p = JSON.parse(_pRaw); items = Array.isArray(p) ? p.map(String) : [_pRaw]; } catch { items = [_pRaw]; }
+        } else if (fmt === "csv") {
+          items = _pRaw.split(",").map((s) => s.trim()).filter(Boolean);
+        } else {
+          items = _pRaw.split("\n").map((s) => s.trim()).filter(Boolean);
+        }
+        const results = items.map((item, index) =>
+          tpl.replace(/\{\{item\}\}/g, item).replace(/\{\{index\}\}/g, String(index))
+        );
+        return { type: "text", payload: results.join(joinStr) };
+      }
+
+      if (_pMode === "delay") {
+        const ms = Math.min(Number(current.data?.delayMs ?? 1000), 10000);
+        await new Promise((resolve) => setTimeout(resolve, ms));
+        return { type: "text", payload: _pRaw };
+      }
+
+      if (_pMode === "set") {
+        const assigns: { key: string; value: string }[] = current.data?.assignments || [];
+        const obj: Record<string, string> = {};
+        for (const a of assigns) {
+          if (a.key.trim()) obj[a.key.trim()] = _pResolve(a.value);
+        }
+        return { type: "data", payload: obj };
+      }
+
+      return { type: "text", payload: _pRaw };
     }
 
     case "action": {
@@ -1086,7 +1176,7 @@ async function executeNode(
       }
 
       sendLog(
-        `🔌 App Action [${appProvider}/${appAction}] — dispatching via server action`,
+        `🔌 App Action [${appProvider}/${appAction}] — dispatching`,
         "INFO",
         current.id
       );
@@ -1099,7 +1189,26 @@ async function executeNode(
         };
       }
 
-      // Token lives server-side only — delegated to the server action
+      // Browser actions go through the API route (maxDuration=60) to avoid server action timeout limits.
+      if (appProvider === "browser") {
+        const _brRes = await fetch("/api/browser/execute", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: appAction, url: resolvedInputs.url, prompt: resolvedInputs.prompt ?? resolvedInputs.instructions ?? "", tavilyApiKey: tavilyKey }),
+        });
+        if (!_brRes.ok) {
+          const _brErr = await _brRes.json().catch(() => ({})) as any;
+          throw new Error(_brErr.error ?? `Browser Agent failed (${_brRes.status})`);
+        }
+        const _brJson = await _brRes.json().catch(() => ({} as any));
+        const _brResult: string = _brJson.result ?? "";
+        sendLog(`✅ Browser Agent [${appAction}] complete`, "SUCCESS", current.id);
+        return _brResult.startsWith("data:image/")
+          ? { type: "file", payload: _brResult }
+          : { type: "text", payload: _brResult };
+      }
+
+      // All other app actions — server action (OAuth-backed, short-lived)
       const { executeAppAction } = await import("@/app/actions/integration");
       const { result } = await executeAppAction(appProvider, appAction, resolvedInputs, tavilyKey);
 
@@ -1275,6 +1384,80 @@ async function executeNode(
       }
 
       return { type: "text", payload: "Sub-agent: No data found" };
+    }
+
+    case "mlmodel": {
+      const { useVaultStore: _mlVs } = await import("@/stores/vaultStore");
+      const _mlEntries = _mlVs.getState().entries;
+      const _mlProv = current.data?.mlProvider || "huggingface";
+      const _mlKeyName = _mlProv === "huggingface" ? "HUGGINGFACE_API_KEY" : "REPLICATE_API_TOKEN";
+      const _mlKey = current.data?.apiKey?.trim() || _mlEntries.find((e) => e.key.toUpperCase() === _mlKeyName)?.value || "";
+      if (!_mlKey) throw new Error(`ML Model: add ${_mlKeyName} to vault.`);
+      const _mlEdge = edges.find((e) => e.target === current.id);
+      const _mlText = _mlEdge ? getRawValue(context.nodes[_mlEdge.source]) : initialInput;
+      sendLog(`🤖 ML Model [${_mlProv}] — running inference...`, "INFO", current.id);
+      const { executeMLModel } = await import("@/app/actions/ml");
+      const _mlRes = await executeMLModel(current.data, _mlText, _mlKey);
+      sendLog(`✅ ML Model complete`, "SUCCESS", current.id);
+      return _mlRes as FlowPacket;
+    }
+
+    case "imagegen": {
+      const { useVaultStore: _igVs } = await import("@/stores/vaultStore");
+      const _igEntries = _igVs.getState().entries;
+      const _igProv = current.data?.imageProvider || "openai";
+      const _igKeyName = _igProv === "openai" ? "OPENAI_API_KEY" : "REPLICATE_API_TOKEN";
+      const _igKey = current.data?.apiKey?.trim() || _igEntries.find((e) => e.key.toUpperCase() === _igKeyName)?.value || "";
+      if (!_igKey) throw new Error(`Image Gen: add ${_igKeyName} to vault.`);
+      const _igEdge = edges.find((e) => e.target === current.id);
+      const _igText = _igEdge ? getRawValue(context.nodes[_igEdge.source]) : initialInput;
+      sendLog(`🎨 Image Gen [${_igProv}] — generating...`, "INFO", current.id);
+      const { executeImageGen } = await import("@/app/actions/ml");
+      const _igRes = await executeImageGen(current.data, _igText, _igKey);
+      sendLog(`✅ Image generated`, "SUCCESS", current.id);
+      return _igRes as FlowPacket;
+    }
+
+    case "rag": {
+      const { useVaultStore: _ragVs } = await import("@/stores/vaultStore");
+      const _ragEntries = _ragVs.getState().entries;
+      const _ragKey = current.data?.apiKey?.trim() || _ragEntries.find((e) => e.key.toUpperCase() === "OPENAI_API_KEY")?.value || "";
+      if (!_ragKey) throw new Error("RAG: add OPENAI_API_KEY to vault.");
+      const _ragEdge = edges.find((e) => e.target === current.id);
+      const _ragText = _ragEdge ? getRawValue(context.nodes[_ragEdge.source]) : initialInput;
+      sendLog(`🗂️ RAG — querying knowledge base...`, "INFO", current.id);
+      const { executeRAG } = await import("@/app/actions/ml");
+      const _ragRes = await executeRAG({ ...current.data, ragMode: "query" }, _ragText, _ragKey);
+      sendLog(`✅ RAG complete`, "SUCCESS", current.id);
+      return _ragRes as FlowPacket;
+    }
+
+    case "dataanalysis": {
+      const _daEdge = edges.find((e) => e.target === current.id);
+      const _daText = _daEdge ? getRawValue(context.nodes[_daEdge.source]) : initialInput;
+      sendLog(`📊 Data Analysis — running Python in E2B sandbox...`, "INFO", current.id);
+      const { executeDataAnalysis } = await import("@/app/actions/ml");
+      const _daRes = await executeDataAnalysis(current.data, _daText);
+      sendLog(`✅ Chart generated`, "SUCCESS", current.id);
+      return _daRes as FlowPacket;
+    }
+
+    case "speech": {
+      const { useVaultStore: _spVs } = await import("@/stores/vaultStore");
+      const _spEntries = _spVs.getState().entries;
+      const _spProv = current.data?.speechProvider || "openai";
+      const _spKeyName = _spProv === "openai" ? "OPENAI_API_KEY" : "ELEVENLABS_API_KEY";
+      const _spKey = current.data?.apiKey?.trim() || _spEntries.find((e) => e.key.toUpperCase() === _spKeyName)?.value || "";
+      if (!_spKey) throw new Error(`Speech: add ${_spKeyName} to vault.`);
+      const _spEdge = edges.find((e) => e.target === current.id);
+      const _spPacket = _spEdge ? context.nodes[_spEdge.source] : (context.variables.input || null);
+      const _spText = _spPacket ? getRawValue(_spPacket) : initialInput;
+      const _spAudio = (_spPacket as any)?.attachments?.find((a: any) => a.mimeType?.startsWith("audio/"));
+      sendLog(`🔊 Speech [${_spProv}/${current.data?.speechMode || "tts"}] — processing...`, "INFO", current.id);
+      const { executeSpeech } = await import("@/app/actions/ml");
+      const _spRes = await executeSpeech(current.data, _spText, _spKey, _spAudio?.data, _spAudio?.mimeType);
+      sendLog(`✅ Speech complete`, "SUCCESS", current.id);
+      return _spRes as FlowPacket;
     }
 
     default: {

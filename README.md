@@ -1,13 +1,13 @@
 # AgentForge — Visual AI Workflow Builder
 
-Build, execute, and export AI agent pipelines through a drag-and-drop canvas. Connect LLMs, HTTP endpoints, OAuth-connected apps, approval gates, and decision routers into runnable workflows — then compile them to production-ready Python, TypeScript, or JavaScript.
+Build, execute, and export AI agent pipelines through a drag-and-drop canvas. Connect LLMs, HTTP endpoints, OAuth-connected apps, ML models, approval gates, and decision routers into runnable workflows — then compile them to production-ready Python, TypeScript, or JavaScript.
 
 ---
 
 ## Features
 
 ### Canvas & Editor
-- **Drag-and-drop node graph** powered by React Flow — 12 canonical node types plus subflow containers
+- **Drag-and-drop node graph** powered by React Flow — 17 node types plus subflow containers
 - **AI Architect** — describe a workflow in plain English; the AI generates a fully-connected, validated flow graph
 - **Auto-layout** — one-click Dagre-based TB/LR layout reflow
 - **Version snapshots** — save and restore named flow versions
@@ -23,6 +23,19 @@ Build, execute, and export AI agent pipelines through a drag-and-drop canvas. Co
 - **Exit signal** — AI nodes can return `"EXIT"` to short-circuit downstream execution
 - **Run history** — every execution logged with input, output, cost, and duration
 
+### ML & Data Science Nodes
+Five dedicated ML nodes with type-aware output rendering (images render as `<img>`, audio as `<audio>`):
+
+| Node | Type | Providers | Output |
+|---|---|---|---|
+| ML Model | `mlmodel` | HuggingFace, Replicate | Text (inference) |
+| Image Gen | `imagegen` | DALL-E 3, Replicate | Image (base64 PNG) |
+| RAG | `rag` | OpenAI Embeddings | Text (top-K chunks) |
+| Speech | `speech` | OpenAI Whisper, ElevenLabs | Text (STT) or Audio (TTS) |
+| Data Analysis | `dataanalysis` | E2B + Python + matplotlib | Chart image (PNG) |
+
+**RAG** stores knowledge base chunks in PostgreSQL (`KnowledgeChunk` table) with OpenAI embeddings. Paste documents and click **Ingest Now** in the node settings — the canvas node always queries at runtime. Supports bar, pie, scatter, line, histogram, and heatmap/correlation charts in Data Analysis.
+
 ### App Integrations (OAuth)
 9 connected platforms with official brand icons in the integrations dashboard:
 
@@ -36,7 +49,7 @@ Build, execute, and export AI agent pipelines through a drag-and-drop canvas. Co
 | Instagram | Create post (2-step: container → publish) |
 | LinkedIn | Create post (2-step: resolve member ID → ugcPosts) |
 | Medium | Publish article (2-step: resolve user ID → create post) |
-| Browser | Web automation via E2B sandbox |
+| Browser | Screenshot, scrape, summarize, run Python/JS — via E2B sandbox |
 
 ### Code Export & Mirror Mode (Publish)
 Compile any flow to a standalone, runnable script:
@@ -50,7 +63,6 @@ Compile any flow to a standalone, runnable script:
 Every exported file includes:
 - `pip install` / `npm install` comment listing all required packages
 - `_s()` + `_get()` helpers for safe FlowPacket unwrapping and JSON sub-key access
-- `vaultLookup()` stub (swap with Pinecone/Chroma/Weaviate)
 - Real LLM API calls for all four providers
 - Multi-step implementations for Instagram, LinkedIn, and Medium
 - CLI `readline` / `input()` pause for approval gates
@@ -58,6 +70,14 @@ Every exported file includes:
 - `AGENTFORGE_MODE=PREVIEW` guard — HTTP calls print a `DRAFT PAYLOAD` block instead of sending real requests
 
 **Mirror Mode** runs compiled code live in an E2B sandbox with your vault keys injected. The terminal shows streaming output; the Flow Result card shows parsed draft payloads for app action nodes.
+
+### MCP Server
+Every deployed public flow is automatically exposed as a tool for Claude and other MCP clients:
+```
+POST /api/mcp
+JSON-RPC 2.0 — tools/list, tools/call
+```
+Compatible with `claude_desktop_config.json`. Flow names are slugified as tool names; descriptions come from the store listing.
 
 ### Agent Store
 Discover and clone community-published agents:
@@ -91,7 +111,7 @@ Four built-in templates to get started:
 
 | Layer | Technology |
 |---|---|
-| Framework | Next.js 15 (App Router) |
+| Framework | Next.js 16 (App Router) |
 | UI | React 19, Tailwind CSS 4, Framer Motion 12 |
 | Graph | React Flow 11 |
 | State | Zustand 5 |
@@ -109,7 +129,7 @@ Four built-in templates to get started:
 
 ```
 app/
-  editor/             # Main canvas + toolbar + all panels (~1700 lines)
+  editor/             # Main canvas + toolbar + all panels
   publish/            # Polyglot code export + Mirror Mode sandbox
   sandbox/[id]/       # Public agent sandbox with API key config
   dashboard/
@@ -119,24 +139,34 @@ app/
     creator/[userId]/ # Creator profile + analytics dashboard
   api/
     sandbox/
-      execute/        # SSE: server-side graph execution
-      execute-code/   # SSE: raw E2B code execution (Mirror Mode)
+      execute/        # SSE: server-side graph execution (maxDuration=60)
+      execute-code/   # SSE: raw E2B code execution — Mirror Mode (maxDuration=60)
+    browser/
+      execute/        # POST: browser/screenshot actions via E2B (maxDuration=60)
     webhook/[id]/     # REST: execute deployed flow by ID
+    mcp/              # JSON-RPC 2.0 MCP server (maxDuration=60)
     liveblocks-auth/  # Liveblocks room auth (owner/public/private)
+    vector-search/    # BM25 lexical search over provided chunks
 
 components/flow/
-  nodes/              # One component per node type + NodeCard
+  nodes/              # One component per node type + NodeCard (17 types)
   canvas/             # FlowCanvas (editable), ReadOnlyCanvas
   chat/               # ChatHub — conversation + approval routing
-  sidebar/            # NodeSettingsSidebar, NodeSidebar (Vault tab)
-  ResponseGallery.tsx # Terminal + Final Result tabs (live execution)
-  SandboxGallery.tsx  # Terminal + Flow Result tabs (Mirror Mode)
-  collaboration/      # FlowCollaboration, CollaborationStatus
+  sidebar/
+    NodeSettingsSidebar.tsx  # Per-node settings; output panel renders image/audio/text
+    NodeSidebar.tsx          # Node palette + Vault tab
+    settings/                # MLModelSettings, ImageGenSettings, RAGSettings,
+                             # SpeechSettings, DataAnalysisSettings, ProcessorSettings
+  ResponseGallery.tsx  # Terminal + Final Result tabs (live execution)
+  SandboxGallery.tsx   # Terminal + Flow Result tabs (Mirror Mode)
+  RunHistoryPanel.tsx  # Execution run history
+  collaboration/       # FlowCollaboration, CollaborationStatus
 
 lib/
   flow/
     clientExecutor.ts  # Reactive topological execution engine (canvas Run)
-    serverExecutor.ts  # Server-side execution engine (sandbox + webhook)
+    serverExecutor.ts  # Server-side execution engine (sandbox + webhook + MCP)
+  sandbox/e2bRunner.ts # E2B browser automation, screenshots, code execution
   flowCompiler.ts      # Polyglot compiler (Python/TS/JS × 7 libraries)
   codegen/templates.ts # Per-library HTTP/LLM codegen helpers
   providers/index.ts   # APP_REGISTRY (9 providers), CONTENT_FIELD_KEYS
@@ -164,7 +194,7 @@ npm install
 # Set up environment variables
 cp .env.example .env.local
 # Required: DATABASE_URL, NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY
-# Optional: LIVEBLOCKS_SECRET_KEY (collaboration), E2B_API_KEY (Mirror Mode)
+# Optional: LIVEBLOCKS_SECRET_KEY (collaboration), E2B_API_KEY (browser agent + Mirror Mode + Data Analysis)
 
 # Run database migrations
 npx prisma db push
@@ -179,6 +209,13 @@ Open [http://localhost:3000](http://localhost:3000).
 ### Adding API Keys
 Open the **Vault** panel in the editor and add your LLM API keys. The engine auto-detects the provider from the key prefix — no manual selection needed. For `provider: "auto"` nodes the first matching vault key is used.
 
+Vault keys used by ML nodes:
+- `OPENAI_API_KEY` — Image Gen (DALL-E), RAG, Speech (Whisper / TTS)
+- `HUGGINGFACE_API_KEY` — ML Model (HuggingFace)
+- `REPLICATE_API_TOKEN` — ML Model + Image Gen (Replicate)
+- `ELEVENLABS_API_KEY` — Speech (ElevenLabs TTS)
+- `TAVILY_API_KEY` — Browser Agent (content extraction for blocked domains)
+
 ### Connecting Apps
 Navigate to **Dashboard → Integrations** and connect your OAuth apps. App Action nodes automatically pick up stored tokens at runtime — no key configuration on individual nodes.
 
@@ -192,7 +229,12 @@ Navigate to **Dashboard → Integrations** and connect your OAuth apps. App Acti
 | Smart Trigger | `trigger` | Scheduled/webhook entry (no user input) |
 | Webhook | `webhook` | Incoming HTTP trigger |
 | AI Brain | `ai` | LLM call (Groq / OpenAI / Gemini / Anthropic) |
-| Knowledge Vault | `vault` | RAG document lookup |
+| Knowledge Vault | `vault` | Template-based context injection |
+| RAG | `rag` | Persistent vector knowledge base (query mode) |
+| ML Model | `mlmodel` | HuggingFace / Replicate inference |
+| Image Gen | `imagegen` | DALL-E 3 / Replicate image generation |
+| Speech | `speech` | OpenAI Whisper STT or TTS / ElevenLabs TTS |
+| Data Analysis | `dataanalysis` | Python + matplotlib charts via E2B |
 | Decision | `router` | N-way conditional branching |
 | Safety Gatekeeper | `gatekeeper` | AI critic or human review |
 | Approval Gate | `approval` | Human-in-the-loop pause |
@@ -223,10 +265,12 @@ Reference any upstream node's output in prompts, result formats, and app inputs:
 
 **Approval Gates**: A module-level Promise resolver (`lib/approvalGate.ts`) suspends the reactive engine mid-execution. ChatHub polls `isApprovalPending()` every 150ms and routes the user's next message to `resolveApproval()` rather than starting a new execution.
 
+**Liveblocks Sync**: `flowStore.ts` is wrapped with `liveblocks()` middleware. `storageMapping: { nodes: true, edges: true }` syncs all node/edge mutations to the Liveblocks room in real time. `leaveRoom()` is called explicitly before any destructive canvas operation (New Flow, Clear Canvas) to prevent empty state from being written to room storage and corrupting persisted flows.
+
+**Browser Agent**: Screenshot and scrape actions run inside an E2B sandbox via `/api/browser/execute` (not a server action) to get a proper `maxDuration=60` — Vercel's default server action timeout is 10s, which is too short for Playwright + Chromium install.
+
+**RAG**: Knowledge chunks are stored in PostgreSQL with OpenAI embedding vectors as JSON arrays. At query time, all chunks for the given `kbId` are loaded and ranked by cosine similarity in JS. Ingest is triggered manually from the node settings panel rather than on every flow run.
+
 **Codegen Helpers**: Every compiled file gets `_get(entry, key)` — a function that unwraps a FlowPacket's payload, falls back to `JSON.parse(payload)[key]` for structured outputs, and always returns a string. This prevents `[object Object]` in generated code when upstream nodes produce JSON.
 
-**SeqAttn**: Before each LLM call, `applySeqAttn()` prunes the execution context to only the variables actually referenced by `{{...}}` in that node's prompt, reducing token usage.
-
-**Liveblocks Sync**: `flowStore.ts` is wrapped with `liveblocks()` middleware. `storageMapping: { nodes: true, edges: true }` syncs all node/edge mutations to the Liveblocks room in real time. `cloneForRealtime<T>()` strips non-serializable ReactFlow internals before pushing to storage.
-
-**Mirror Mode PREVIEW Guard**: Compiled code checks `AGENTFORGE_MODE` at runtime. HTTP action blocks (`genHttpBlock`) and app action nodes print `DRAFT PAYLOAD` JSON instead of making real requests when the mode is `PREVIEW`, so Mirror Mode never sends live data.
+**Mirror Mode PREVIEW Guard**: Compiled code checks `AGENTFORGE_MODE` at runtime. HTTP action blocks and app action nodes print `DRAFT PAYLOAD` JSON instead of making real requests when the mode is `PREVIEW`, so Mirror Mode never sends live data.

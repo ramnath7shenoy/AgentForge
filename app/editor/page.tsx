@@ -43,6 +43,7 @@ import NodeSidebar from "@/components/flow/sidebar/NodeSidebar";
 import NodeSettingsSidebar from "@/components/flow/sidebar/NodeSettingsSidebar";
 import MissionBriefing from "@/components/ui/tutorial/MissionBriefing";
 import ResponseGallery from "@/components/flow/ResponseGallery";
+import RunHistoryPanel from "@/components/flow/RunHistoryPanel";
 import ApprovalBanner from "@/components/flow/ApprovalBanner";
 import ChatHub from "@/components/flow/chat/ChatHub";
 import ModelFallbackToast from "@/components/ui/ModelFallbackToast";
@@ -138,6 +139,9 @@ function EditorContent() {
     setWebhookPayloadWarning,
     isDryRun,
     setIsDryRun,
+    setActiveFlowId,
+    currentFlowId: storeCurrentFlowId,
+    setCurrentFlowId: setStoreCurrentFlowId,
   } = useFlowStore();
 
   const [mounted, setMounted] = useState(false);
@@ -150,12 +154,13 @@ function EditorContent() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showRunMenu, setShowRunMenu] = useState(false);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
+  const [showRunHistory, setShowRunHistory] = useState(false);
   const versionRef = useRef<HTMLDivElement>(null);
   const shareMenuRef = useRef<HTMLDivElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const runMenuRef = useRef<HTMLDivElement>(null);
   const downloadRef = useRef<HTMLDivElement>(null);
-
+  const runHistoryRef = useRef<HTMLDivElement>(null);
   const [snapshots, setSnapshots] = useState<FlowSnapshot[]>([]);
   const [showTerminal, setShowTerminal] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error" | "">("");
@@ -169,7 +174,13 @@ function EditorContent() {
   // Auth & Sharing States
   const [user, setUser] = useState<any>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [currentFlowId, setCurrentFlowId] = useState<string | undefined>(undefined);
+  // currentFlowId lives in the Zustand store so it stays in sync with nodes/edges
+  // (both update synchronously), eliminating React-batching race conditions in autosave.
+  const currentFlowId = storeCurrentFlowId ?? undefined;
+  const setCurrentFlowId = (id: string | undefined) => {
+    setStoreCurrentFlowId(id ?? null);
+    setActiveFlowId(id ?? null);
+  };
   const [shareStatus, setShareStatus] = useState<"idle" | "sharing" | "copied" | "private_copied">("idle");
   const [isPublic, setIsPublic] = useState(false);
   const [publicEditable, setPublicEditable] = useState(false);
@@ -228,15 +239,35 @@ function EditorContent() {
   // Initial Fetch on Load
   useEffect(() => {
     async function fetchInitialFlow() {
-      // If navigating via New Agent (has projectId but no flow id), start blank canvas
-      if (projectIdParam && !flowIdParam) {
+      // Suspend autosave for the entire fetch. setHasHydrated(false) commits before the
+      // first await (React batches all pre-await setState in one render), so the
+      // autosave guard `if (!hasHydrated) return` fires before any nodes are written.
+      // After the fetch all state commits in one batch, then autosave fires once with
+      // fully-settled values — no partial-state races.
+      setHasHydrated(false);
+
+      // ?new=1 means the user clicked "New Flow" — start a blank canvas, don't load anything
+      const newFlowParam = new URLSearchParams(window.location.search).get("new");
+      if (newFlowParam === "1") {
+        setCurrentFlowId(undefined);
+        setFlowName("Untitled Agent");
+        setIsPublic(false);
+        setPublicEditable(false);
         setNodes([]);
         setEdges([]);
+        setHasHydrated(true);
+        return;
+      }
+
+      // If navigating via New Agent (has projectId but no flow id), start blank canvas
+      if (projectIdParam && !flowIdParam) {
         setCurrentFlowId(undefined);
         setIsPublic(false);
         setPublicEditable(false);
         setFlowName("Untitled Agent");
         setActiveProject({ id: projectIdParam, name: "" });
+        setNodes([]);
+        setEdges([]);
         setHasHydrated(true);
         return;
       }
@@ -244,16 +275,18 @@ function EditorContent() {
       const result = flowIdParam ? await getFlow(flowIdParam) : await getLatestFlow();
 
       if (result.success && result.flow) {
-        // Hydrate from DB
+        // Hydrate from DB. Always call setNodes/setEdges even when empty — skipping
+        // them leaves stale canvas state from a previous flow, which the autosave
+        // then writes back to the wrong flow record.
         const dbNodes = typeof result.flow.nodes === "string" ? JSON.parse(result.flow.nodes) : result.flow.nodes;
         const dbEdges = typeof result.flow.edges === "string" ? JSON.parse(result.flow.edges) : result.flow.edges;
-        if (Array.isArray(dbNodes) && dbNodes.length > 0) setNodes(dbNodes);
-        if (Array.isArray(dbEdges) && dbEdges.length > 0) setEdges(dbEdges);
         setCurrentFlowId(result.flow.id);
         setIsPublic(result.flow.isPublic ?? false);
         setPublicEditable(result.flow.publicEditable ?? false);
         setFlowName(result.flow.name || "Untitled Agent");
         if (result.flow.projectId) setActiveProject({ id: result.flow.projectId, name: result.flow.name || "" });
+        setNodes(Array.isArray(dbNodes) ? dbNodes : []);
+        setEdges(Array.isArray(dbEdges) ? dbEdges : []);
       } else {
         // Guest: load from localStorage (guest key first, autosave as fallback)
         let restored = false;
@@ -269,7 +302,6 @@ function EditorContent() {
           }
         } catch { /* ignore */ }
         if (!restored) {
-          // Fall back to auto-save snapshot (handles mid-session refresh)
           restoreAutoSave();
         }
       }
@@ -308,21 +340,35 @@ function EditorContent() {
     } catch { /* ignore */ }
   }, [userId, hasHydrated, setNodes, setEdges]);
 
-  // Auto-save logic
+  // Auto-save logic — hasHydrated acts as the sole hydration guard.
+  // fetchInitialFlow calls setHasHydrated(false) at its start (before the first await)
+  // so this effect returns early during the entire fetch. After the fetch all state
+  // commits in one batch and hasHydrated becomes true, triggering one clean autosave.
   useEffect(() => {
     if (!mounted || !hasHydrated) return;
+    // Don't create an empty flow record — wait until the user adds at least one node
+    if (nodes.length === 0 && edges.length === 0 && !currentFlowId) return;
 
     setSaveStatus("saving");
     const timeoutId = setTimeout(async () => {
+      // Read LIVE values from the Zustand store at execution time.
+      // nodes, edges, and currentFlowId are all Zustand state — always consistent.
+      const { nodes: liveNodes, edges: liveEdges, currentFlowId: liveFlowIdRaw } = useFlowStore.getState();
+      const liveFlowId = liveFlowIdRaw ?? undefined;
+
+      // Never persist an empty canvas — preserves the DB record if the user
+      // cleared canvas or navigated away before adding any nodes.
+      if (liveNodes.length === 0 && liveEdges.length === 0) return;
+
       try {
         if (userId) {
-          const serializedNodes = JSON.stringify(nodes);
-          const serializedEdges = JSON.stringify(edges);
-          const result = await saveFlow(userId, flowName, serializedNodes, serializedEdges, currentFlowId, isPublic, publicEditable, activeProject?.id);
+          const serializedNodes = JSON.stringify(liveNodes);
+          const serializedEdges = JSON.stringify(liveEdges);
+          const result = await saveFlow(userId, flowName, serializedNodes, serializedEdges, liveFlowId, isPublic, publicEditable, activeProject?.id);
           if (result.success) {
             setSaveStatus("saved");
             setSaveError(null);
-            if (result.flow && !currentFlowId) {
+            if (result.flow && !liveFlowId) {
               setCurrentFlowId(result.flow.id);
               router.replace(`/editor?id=${result.flow.id}`, { scroll: false });
             }
@@ -332,7 +378,7 @@ function EditorContent() {
             setSaveError(result.error || "Failed to save flow");
           }
         } else {
-          localStorage.setItem(LS_GUEST_FLOW_KEY, JSON.stringify({ nodes, edges }));
+          localStorage.setItem(LS_GUEST_FLOW_KEY, JSON.stringify({ nodes: liveNodes, edges: liveEdges }));
           setSaveStatus("saved");
         }
       } catch (e: any) {
@@ -455,18 +501,17 @@ function EditorContent() {
     }
   };
 
-  const handleClearCanvas = async () => {
-    if (confirm("Are you sure you want to clear the entire canvas? This cannot be undone.")) {
+  const handleClearCanvas = () => {
+    if (confirm("Are you sure you want to clear the entire canvas?")) {
+      // Leave the Liveblocks room BEFORE clearing — same reason as handleNewFlow.
+      // The middleware syncs store mutations synchronously; clearing while connected
+      // would write nodes=[] to room storage and corrupt the flow for other sessions.
+      const lbState = (useFlowStore.getState() as any).liveblocks;
+      if (lbState?.leaveRoom) lbState.leaveRoom();
       clearCanvas();
-      if (userId && currentFlowId) {
-        setSaveStatus("saving");
-        const result = await saveFlow(userId, flowName, "[]", "[]", currentFlowId, isPublic, publicEditable, activeProject?.id);
-        if (result.success) setSaveStatus("saved");
-        else setSaveStatus("error");
-      } else if (!userId) {
-        localStorage.setItem(LS_GUEST_FLOW_KEY, JSON.stringify({ nodes: [], edges: [] }));
-        setSaveStatus("saved");
-      }
+      // Intentionally NOT saving empty state to DB — the flow's DB record is preserved.
+      // If the user adds new nodes, autosave will write those to the same flow.
+      // If they navigate away first, coming back reloads the original nodes from DB.
     }
   };
 
@@ -542,6 +587,28 @@ function EditorContent() {
     return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
   };
 
+  const handleNewFlow = () => {
+    if (nodes.length > 0) {
+      if (!confirm("Start a new flow? The current flow is already saved — you can find it in the Dashboard.")) return;
+    }
+    // Leave the Liveblocks room BEFORE clearing nodes/edges.
+    // The liveblocks Zustand middleware syncs every store mutation to the active room
+    // immediately (synchronously, before React re-renders). If we clear nodes while
+    // still connected, nodes=[] gets written into the old flow's room storage, so
+    // the next enterRoom() call overwrites the DB-loaded nodes and the flow appears empty.
+    const lbState = (useFlowStore.getState() as any).liveblocks;
+    if (lbState?.leaveRoom) lbState.leaveRoom();
+
+    // Set currentFlowId BEFORE clearing nodes/edges so the autosave closure never
+    // sees empty nodes paired with the old flow ID (which would wipe that flow).
+    setCurrentFlowId(undefined);
+    setFlowName("Untitled Agent");
+    setNodes([]);
+    setEdges([]);
+    // ?new=1 tells fetchInitialFlow to skip getLatestFlow() and start fresh
+    router.replace("/editor?new=1", { scroll: false });
+  };
+
   const handleExport = async (format: "png" | "jpeg" | "pdf") => {
     setShowDownloadMenu(false);
     try {
@@ -614,6 +681,7 @@ function EditorContent() {
             </div>
             <span className="font-bold tracking-tighter text-indigo-500 text-sm">AGENTFORGE</span>
           </button>
+
         </div>
 
         {/* ── RIGHT SECTION ── */}
@@ -747,6 +815,28 @@ function EditorContent() {
                 </div>
               )}
             </div>
+
+            {/* Run History */}
+            {currentFlowId && (
+              <div className="relative" ref={runHistoryRef}>
+                <button
+                  onClick={() => setShowRunHistory((v) => !v)}
+                  className={cn(
+                    "p-1.5 rounded-full transition-colors",
+                    showRunHistory ? "text-indigo-400" : "text-slate-400 hover:text-indigo-400"
+                  )}
+                  title="Run History"
+                >
+                  <Terminal size={15} />
+                </button>
+
+                {showRunHistory && (
+                  <div className="absolute right-0 top-full mt-2 w-80 bg-popover border border-border rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150 max-h-[480px] flex flex-col">
+                    <RunHistoryPanel flowId={currentFlowId} />
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Download dropdown */}
             <div className="relative" ref={downloadRef}>
@@ -1192,7 +1282,7 @@ function EditorContent() {
               className="overflow-hidden border-r border-border bg-card flex-shrink-0"
             >
               <div className="w-64 h-full">
-                <NodeSidebar onClearCanvas={handleClearCanvas} flowName={flowName} onFlowNameChange={setFlowName} />
+                <NodeSidebar onClearCanvas={handleClearCanvas} flowName={flowName} onFlowNameChange={setFlowName} onNewFlow={handleNewFlow} />
               </div>
             </motion.aside>
           )}

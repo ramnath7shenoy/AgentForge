@@ -716,20 +716,116 @@ async function executeNode(
     }
 
     case "processor": {
-      const batchLogic = current.data?.batchLogic?.trim() || "";
-      const incomingEdge = edges.find((e) => e.target === current.id);
-      const inputData = incomingEdge ? context.nodes[incomingEdge.source] : null;
-      const rawInput = inputData ? getRawValue(inputData) : initialInput;
+      const _pEdge = edges.find((e) => e.target === current.id);
+      const _pUpstream = _pEdge ? context.nodes[_pEdge.source] : null;
+      const _pRaw = _pUpstream ? getRawValue(_pUpstream) : initialInput;
+      const _pMode: string = current.data?.processorMode || "template";
 
-      if (batchLogic) {
-        const resolvedLogic = batchLogic.replace(/\{\{(.*?)\}\}/g, (_: string, path: string) => {
+      const _pResolve = (tpl: string) =>
+        tpl.replace(/\{\{(.*?)\}\}/g, (_: string, path: string) => {
           const val = resolveTemplatePath(path, context);
           return val != null ? getRawValue(val) : "";
         });
-        return { type: "text", payload: resolvedLogic };
+
+      if (_pMode === "template") {
+        const tpl = (current.data?.template as string | undefined)?.trim() || "";
+        sendLog(`🔧 Processor [template]`, "INFO", current.id);
+        return { type: "text", payload: tpl ? _pResolve(tpl) : _pRaw };
       }
 
-      return { type: "text", payload: rawInput };
+      if (_pMode === "switch") {
+        const matchType: string = current.data?.switchMatchType || "contains";
+        const cases: { match: string; output: string }[] = current.data?.switchCases || [];
+        const input = _pRaw.toLowerCase();
+        for (const c of cases) {
+          const m = c.match.toLowerCase();
+          let hit = false;
+          if (matchType === "equals") hit = input === m;
+          else if (matchType === "startsWith") hit = input.startsWith(m);
+          else if (matchType === "regex") { try { hit = new RegExp(c.match, "i").test(_pRaw); } catch { hit = false; } }
+          else hit = input.includes(m);
+          if (hit) {
+            sendLog(`🔧 Processor [switch] matched: "${c.match}"`, "INFO", current.id);
+            return { type: "text", payload: _pResolve(c.output) };
+          }
+        }
+        const def = (current.data?.switchDefault as string | undefined) || "";
+        sendLog(`🔧 Processor [switch] default`, "INFO", current.id);
+        return { type: "text", payload: def ? _pResolve(def) : _pRaw };
+      }
+
+      if (_pMode === "transform") {
+        const op: string = current.data?.transformOp || "map";
+        const expr: string = current.data?.transformExpr || "{{item}}";
+        const applyExpr = (item: string) => expr.replace(/\{\{item\}\}/g, item);
+
+        if (op === "split") {
+          const rawSep = (current.data?.splitOn as string | undefined) ?? "\\n";
+          const sep = rawSep === "\\n" ? "\n" : rawSep === "\\t" ? "\t" : rawSep;
+          const arr = _pRaw.split(sep).map((s) => s.trim()).filter(Boolean);
+          sendLog(`🔧 Processor [split] → ${arr.length} items`, "INFO", current.id);
+          return { type: "data", payload: arr };
+        }
+        if (op === "join") {
+          const rawJoin = (current.data?.joinWith as string | undefined) ?? "\\n";
+          const join = rawJoin === "\\n" ? "\n" : rawJoin === "\\t" ? "\t" : rawJoin;
+          let arr: string[] = [];
+          try { const parsed = JSON.parse(_pRaw); arr = Array.isArray(parsed) ? parsed.map(String) : [_pRaw]; }
+          catch { arr = _pRaw.split("\n").map((s) => s.trim()).filter(Boolean); }
+          sendLog(`🔧 Processor [join] ${arr.length} items`, "INFO", current.id);
+          return { type: "text", payload: arr.join(join) };
+        }
+        let items: string[] = [];
+        try { const parsed = JSON.parse(_pRaw); items = Array.isArray(parsed) ? parsed.map(String) : [_pRaw]; }
+        catch { items = _pRaw.split("\n").map((s) => s.trim()).filter(Boolean); }
+        if (op === "filter") {
+          const filtered = items.filter((item) => applyExpr(item).trim().length > 0);
+          sendLog(`🔧 Processor [filter] ${items.length} → ${filtered.length} items`, "INFO", current.id);
+          return { type: "data", payload: filtered };
+        }
+        const mapped = items.map((item) => applyExpr(item));
+        sendLog(`🔧 Processor [map] ${mapped.length} items`, "INFO", current.id);
+        return { type: "data", payload: mapped };
+      }
+
+      if (_pMode === "iterate") {
+        const fmt: string = (current.data?.iterateInputFormat as string | undefined) || "lines";
+        const tpl: string = (current.data?.iterateTemplate as string | undefined) || "{{item}}";
+        const rawJoin = (current.data?.iterateJoin as string | undefined) ?? "\\n";
+        const joinStr = rawJoin === "\\n" ? "\n" : rawJoin === "\\t" ? "\t" : rawJoin;
+        let items: string[] = [];
+        if (fmt === "json") {
+          try { const p = JSON.parse(_pRaw); items = Array.isArray(p) ? p.map(String) : [_pRaw]; } catch { items = [_pRaw]; }
+        } else if (fmt === "csv") {
+          items = _pRaw.split(",").map((s) => s.trim()).filter(Boolean);
+        } else {
+          items = _pRaw.split("\n").map((s) => s.trim()).filter(Boolean);
+        }
+        const results = items.map((item, index) =>
+          tpl.replace(/\{\{item\}\}/g, item).replace(/\{\{index\}\}/g, String(index))
+        );
+        sendLog(`🔁 Processor [iterate] ${items.length} items`, "INFO", current.id);
+        return { type: "text", payload: results.join(joinStr) };
+      }
+
+      if (_pMode === "delay") {
+        const ms = Math.min(Number(current.data?.delayMs ?? 1000), 10000);
+        sendLog(`🔧 Processor [delay] ${ms}ms`, "INFO", current.id);
+        await new Promise((resolve) => setTimeout(resolve, ms));
+        return { type: "text", payload: _pRaw };
+      }
+
+      if (_pMode === "set") {
+        const assigns: { key: string; value: string }[] = current.data?.assignments || [];
+        const obj: Record<string, string> = {};
+        for (const a of assigns) {
+          if (a.key.trim()) obj[a.key.trim()] = _pResolve(a.value);
+        }
+        sendLog(`🔧 Processor [set] ${Object.keys(obj).length} variables`, "INFO", current.id);
+        return { type: "data", payload: obj };
+      }
+
+      return { type: "text", payload: _pRaw };
     }
 
     case "action": {
@@ -870,7 +966,9 @@ async function executeNode(
         }
 
         sendLog(`✅ Browser Agent [${appAction}] complete.`, "SUCCESS", current.id);
-        return { type: "text", payload: result };
+        return result.startsWith("data:image/")
+          ? { type: "file", payload: result }
+          : { type: "text", payload: result };
       }
 
       // Standard OAuth-backed app actions (unchanged path)
@@ -903,6 +1001,70 @@ async function executeNode(
         return val != null ? getRawValue(val) : "";
       });
       return { type: "text", payload: `[Vault] ${query || "No query"}` };
+    }
+
+    case "mlmodel": {
+      const _mlProv = current.data?.mlProvider || "huggingface";
+      const _mlKeyName = _mlProv === "huggingface" ? "HUGGINGFACE_API_KEY" : "REPLICATE_API_TOKEN";
+      const _mlKey = (current.data?.apiKey as string | undefined)?.trim() || apiKeys.find((k) => k.key.toUpperCase() === _mlKeyName)?.value || "";
+      if (!_mlKey) throw new Error(`ML Model: add ${_mlKeyName} to vault.`);
+      const _mlEdge = edges.find((e) => e.target === current.id);
+      const _mlText = _mlEdge ? getRawValue(context.nodes[_mlEdge.source]) : initialInput;
+      sendLog(`🤖 ML Model [${_mlProv}] — running inference...`, "INFO", current.id);
+      const { executeMLModel } = await import("@/app/actions/ml");
+      const _mlRes = await executeMLModel(current.data as Record<string, any>, _mlText, _mlKey);
+      sendLog(`✅ ML Model complete`, "SUCCESS", current.id);
+      return _mlRes as SandboxFlowPacket;
+    }
+
+    case "imagegen": {
+      const _igProv = current.data?.igProvider || "openai";
+      const _igKeyName = _igProv === "replicate" ? "REPLICATE_API_TOKEN" : "OPENAI_API_KEY";
+      const _igKey = (current.data?.apiKey as string | undefined)?.trim() || apiKeys.find((k) => k.key.toUpperCase() === _igKeyName)?.value || "";
+      if (!_igKey) throw new Error(`Image Gen: add ${_igKeyName} to vault.`);
+      const _igEdge = edges.find((e) => e.target === current.id);
+      const _igPrompt = (current.data?.customPrompt as string | undefined)?.trim() || (_igEdge ? getRawValue(context.nodes[_igEdge.source]) : initialInput);
+      sendLog(`🎨 Image Gen [${_igProv}] — generating image...`, "INFO", current.id);
+      const { executeImageGen } = await import("@/app/actions/ml");
+      const _igRes = await executeImageGen(current.data as Record<string, any>, _igPrompt, _igKey);
+      sendLog(`✅ Image Gen complete`, "SUCCESS", current.id);
+      return _igRes as SandboxFlowPacket;
+    }
+
+    case "rag": {
+      const _ragKey = (current.data?.apiKey as string | undefined)?.trim() || apiKeys.find((k) => k.key.toUpperCase() === "OPENAI_API_KEY")?.value || "";
+      if (!_ragKey) throw new Error("RAG: add OPENAI_API_KEY to vault.");
+      const _ragEdge = edges.find((e) => e.target === current.id);
+      const _ragText = _ragEdge ? getRawValue(context.nodes[_ragEdge.source]) : initialInput;
+      sendLog(`🗂️ RAG — querying knowledge base...`, "INFO", current.id);
+      const { executeRAG } = await import("@/app/actions/ml");
+      const _ragRes = await executeRAG({ ...(current.data as Record<string, any>), ragMode: "query" }, _ragText, _ragKey);
+      sendLog(`✅ RAG complete`, "SUCCESS", current.id);
+      return _ragRes as SandboxFlowPacket;
+    }
+
+    case "dataanalysis": {
+      const _daEdge = edges.find((e) => e.target === current.id);
+      const _daText = _daEdge ? getRawValue(context.nodes[_daEdge.source]) : initialInput;
+      sendLog(`📊 Data Analysis — running Python in E2B sandbox...`, "INFO", current.id);
+      const { executeDataAnalysis } = await import("@/app/actions/ml");
+      const _daRes = await executeDataAnalysis(current.data as Record<string, any>, _daText);
+      sendLog(`✅ Chart generated`, "SUCCESS", current.id);
+      return _daRes as SandboxFlowPacket;
+    }
+
+    case "speech": {
+      const _spProv = current.data?.speechProvider || "openai";
+      const _spKeyName = _spProv === "elevenlabs" ? "ELEVENLABS_API_KEY" : "OPENAI_API_KEY";
+      const _spKey = (current.data?.apiKey as string | undefined)?.trim() || apiKeys.find((k) => k.key.toUpperCase() === _spKeyName)?.value || "";
+      if (!_spKey) throw new Error(`Speech: add ${_spKeyName} to vault.`);
+      const _spEdge = edges.find((e) => e.target === current.id);
+      const _spText = _spEdge ? getRawValue(context.nodes[_spEdge.source]) : initialInput;
+      sendLog(`🎙️ Speech [${_spProv}] — processing...`, "INFO", current.id);
+      const { executeSpeech } = await import("@/app/actions/ml");
+      const _spRes = await executeSpeech(current.data as Record<string, any>, _spText, _spKey);
+      sendLog(`✅ Speech complete`, "SUCCESS", current.id);
+      return _spRes as SandboxFlowPacket;
     }
 
     default: {

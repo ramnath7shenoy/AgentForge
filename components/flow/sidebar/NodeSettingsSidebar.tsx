@@ -123,6 +123,12 @@ import VaultInput from "@/components/ui/VaultInput";
 import { APP_REGISTRY, getApp, getAction, CONTENT_FIELD_KEYS } from "@/lib/providers";
 import { AppBrandIcon } from "@/lib/providers/brandIcons";
 import { ChevronDown } from "lucide-react";
+import { MLModelSettings } from "./settings/MLModelSettings";
+import { ImageGenSettings } from "./settings/ImageGenSettings";
+import { RAGSettings } from "./settings/RAGSettings";
+import { DataAnalysisSettings } from "./settings/DataAnalysisSettings";
+import { SpeechSettings } from "./settings/SpeechSettings";
+import { ProcessorSettings } from "./settings/ProcessorSettings";
 
 interface NodeSettingsSidebarProps {
   isOwner?: boolean;
@@ -840,38 +846,11 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
   );
 
   const renderProcessorNodeSettings = () => (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2 text-slate-400">
-        <Code size={16} />
-        <h3 className="text-sm font-bold uppercase tracking-tight">Logic Processor</h3>
-      </div>
-      <div className="flex flex-col gap-2">
-        <label className="text-[10px] font-bold uppercase text-slate-500">Task Type</label>
-        <select
-          className={cn(
-            "rounded-lg p-2 text-sm focus:ring-2 focus:ring-slate-500/20 outline-none transition-all border",
-            "bg-background border-border text-foreground"
-          )}
-          value={selectedNode.data.batchLogic || "Loop through List"}
-          onChange={(e) => updateNodeData(selectedNode.id, { batchLogic: e.target.value })}
-        >
-          <option value="Loop through List">Loop through List</option>
-          <option value="Run Script">Run Script</option>
-        </select>
-
-        <label className="text-[10px] font-bold uppercase text-slate-500 mt-2">Plain English Logic</label>
-        <textarea
-          rows={5}
-          placeholder="e.g. Extract the email address from each item..."
-          className={cn(
-            "rounded-lg p-3 text-sm focus:ring-2 focus:ring-slate-500/20 outline-none transition-all border resize-none font-mono",
-            "bg-background border-border text-foreground focus:border-slate-500"
-          )}
-          value={selectedNode.data.instructions || ""}
-          onChange={(e) => updateNodeData(selectedNode.id, { instructions: e.target.value })}
-        />
-      </div>
-    </div>
+    <ProcessorSettings
+      nodeId={selectedNode.id}
+      data={selectedNode.data}
+      updateData={(u) => updateNodeData(selectedNode.id, u)}
+    />
   );
 
   const renderActionNodeSettings = () => {
@@ -1579,6 +1558,21 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
               {selectedNode.type === "output" && renderOutputNodeSettings()}
               {selectedNode.type === "subflow" && renderSubflowNodeSettings()}
               {selectedNode.type === "approval" && renderApprovalNodeSettings()}
+              {selectedNode.type === "mlmodel" && (
+                <MLModelSettings nodeId={selectedNode.id} data={selectedNode.data} updateData={(u) => updateNodeData(selectedNode.id, u)} />
+              )}
+              {selectedNode.type === "imagegen" && (
+                <ImageGenSettings nodeId={selectedNode.id} data={selectedNode.data} updateData={(u) => updateNodeData(selectedNode.id, u)} />
+              )}
+              {selectedNode.type === "rag" && (
+                <RAGSettings nodeId={selectedNode.id} data={selectedNode.data} updateData={(u) => updateNodeData(selectedNode.id, u)} />
+              )}
+              {selectedNode.type === "dataanalysis" && (
+                <DataAnalysisSettings nodeId={selectedNode.id} data={selectedNode.data} updateData={(u) => updateNodeData(selectedNode.id, u)} />
+              )}
+              {selectedNode.type === "speech" && (
+                <SpeechSettings nodeId={selectedNode.id} data={selectedNode.data} updateData={(u) => updateNodeData(selectedNode.id, u)} />
+              )}
             </div>
 
             {/* LATEST OUTPUT SECTION */}
@@ -1602,11 +1596,23 @@ const NodeSettingsSidebar: React.FC<NodeSettingsSidebarProps> = ({ isOwner = tru
                   </button>
                 </div>
                 <div className="bg-zinc-200 dark:bg-zinc-900 rounded-xl p-4 border border-zinc-300 dark:border-zinc-800 shadow-inner group relative max-h-64 overflow-y-auto block">
-                  <pre className="text-[11px] font-mono text-green-700 dark:text-green-400 whitespace-pre-wrap break-all leading-relaxed min-h-[20px]">
-                    {typeof executionResult[selectedNodeId]?.payload === 'string' 
-                      ? executionResult[selectedNodeId].payload 
-                      : JSON.stringify(executionResult[selectedNodeId]?.payload || executionResult[selectedNodeId], null, 2)}
-                  </pre>
+                  {(() => {
+                    const result = executionResult[selectedNodeId];
+                    const payload = result?.payload;
+                    if (result?.type === "file" && typeof payload === "string") {
+                      if (payload.startsWith("data:image/")) {
+                        return <img src={payload} alt="Generated output" className="w-full rounded-lg object-contain" />;
+                      }
+                      if (payload.startsWith("data:audio/")) {
+                        return <audio controls src={payload} className="w-full mt-1" />;
+                      }
+                    }
+                    return (
+                      <pre className="text-[11px] font-mono text-green-700 dark:text-green-400 whitespace-pre-wrap break-all leading-relaxed min-h-[20px]">
+                        {typeof payload === "string" ? payload : JSON.stringify(payload || result, null, 2)}
+                      </pre>
+                    );
+                  })()}
                   <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                     <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
                   </div>

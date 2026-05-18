@@ -298,11 +298,13 @@ function ExecutionManifest({
     | { type: "synthetic"; payload: SyntheticPayload }
     | { type: "json"; entries: [string, unknown][] }
     | { type: "image"; src: string }
+    | { type: "audio"; src: string }
     | { type: "text"; value: string };
   const prettifiedOutput: PrettifiedOutput | null = React.useMemo(() => {
     if (!rawOutput) return null;
     const trimmed = rawOutput.trim();
     if (trimmed.startsWith("data:image/")) return { type: "image", src: trimmed };
+    if (trimmed.startsWith("data:audio/")) return { type: "audio", src: trimmed };
     if (trimmed.startsWith("{")) {
       try {
         const synthetic = parseSyntheticPayload(trimmed);
@@ -426,6 +428,8 @@ function ExecutionManifest({
             <SyntheticContentCard payload={prettifiedOutput.payload} />
           ) : prettifiedOutput.type === "image" ? (
             <img src={prettifiedOutput.src} alt="Agent screenshot" className="rounded-lg shadow-xl max-w-full" />
+          ) : prettifiedOutput.type === "audio" ? (
+            <audio controls src={prettifiedOutput.src} className="w-full mt-1" />
           ) : prettifiedOutput.type === "json" ? (
             <div className="space-y-2">
               {prettifiedOutput.entries.map(([key, val]) => (

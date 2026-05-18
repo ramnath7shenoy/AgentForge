@@ -195,6 +195,19 @@ model Integration {
   @@schema("public")
 }
 
+model KnowledgeChunk {
+  id        String   @id @default(cuid())
+  userId    String   @db.Uuid
+  kbId      String
+  text      String
+  embedding Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId, kbId])
+  @@map("knowledge_chunks")
+  @@schema("public")
+}
+
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model users {
   instance_id                 String?                @db.Uuid

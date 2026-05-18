@@ -41,6 +41,11 @@ import SubflowNode from "../nodes/SubflowNode";
 import ApprovalNode from "../nodes/ApprovalNode";
 import GroupNode from "../nodes/GroupNode";
 import AppActionNode from "../nodes/AppActionNode";
+import MLModelNode from "../nodes/MLModelNode";
+import ImageGenNode from "../nodes/ImageGenNode";
+import RAGNode from "../nodes/RAGNode";
+import SpeechNode from "../nodes/SpeechNode";
+import DataAnalysisNode from "../nodes/DataAnalysisNode";
 
 // Module-level map stores each node's position at drag-start for position-change detection.
 const preDragPositions = new Map<string, { x: number; y: number }>();
@@ -100,6 +105,11 @@ export default function FlowCanvas({ setSelectedNodeId, editable = true, collabo
     approval: ApprovalNode,
     group: GroupNode,
     appaction: AppActionNode,
+    mlmodel: MLModelNode,
+    imagegen: ImageGenNode,
+    rag: RAGNode,
+    speech: SpeechNode,
+    dataanalysis: DataAnalysisNode,
   }), []);
 
   const onNodesChange = useCallback((c: NodeChange[]) => {
