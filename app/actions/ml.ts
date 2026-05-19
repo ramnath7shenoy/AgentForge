@@ -148,7 +148,8 @@ export async function executeImageGen(
 function cosineSim(a: number[], b: number[]): number {
   let dot = 0, nA = 0, nB = 0;
   for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; nA += a[i] * a[i]; nB += b[i] * b[i]; }
-  return dot / (Math.sqrt(nA) * Math.sqrt(nB));
+  const denom = Math.sqrt(nA) * Math.sqrt(nB);
+  return denom === 0 ? 0 : dot / denom;
 }
 
 async function openaiEmbed(text: string, model: string, apiKey: string): Promise<number[]> {
