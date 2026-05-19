@@ -17,14 +17,11 @@ import {
   Send,
   Trash2,
   Flag,
-  Heart,
   FlaskConical,
   Sparkles,
   Bookmark,
   Link2,
   Cpu,
-  UserPlus,
-  UserCheck,
   FolderPlus,
   X,
 } from "lucide-react";
@@ -40,8 +37,6 @@ import {
   deleteFlowComment,
 } from "@/app/actions/flow";
 import {
-  toggleFollowCreator,
-  getFollowStatus,
   addToCollection,
   getUserCollections,
 } from "@/app/actions/community";
@@ -216,8 +211,6 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
   const [reportReason, setReportReason] = useState(REPORT_REASONS[0]);
   const [reporting, setReporting] = useState(false);
   const [reportDone, setReportDone] = useState(false);
-  const [tipOpen, setTipOpen] = useState(false);
-
   // Comments
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentCount, setCommentCount] = useState(flow.commentCount ?? 0);
@@ -227,11 +220,6 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
   const [deletingComment, setDeletingComment] = useState<string | null>(null);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
   const [copiedMcp, setCopiedMcp] = useState(false);
-
-  // Follow creator state
-  const [following, setFollowing] = useState(false);
-  const [followerCount, setFollowerCount] = useState(0);
-  const [followLoading, setFollowLoading] = useState(false);
 
   // Collection picker state
   const [collectionPickerOpen, setCollectionPickerOpen] = useState(false);
@@ -253,12 +241,6 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
       if (r.success) setComments(r.comments as Comment[]);
       setCommentsLoading(false);
     });
-    if (flow.userId && currentUserId) {
-      getFollowStatus(flow.userId).then(r => {
-        setFollowing(r.following);
-        setFollowerCount(r.followerCount);
-      }).catch(() => {});
-    }
   }, [flow.id, flow.userId, currentUserId]);
 
   const handleStar = async () => {
@@ -333,20 +315,6 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
       setCommentCount(n => n - 1);
     }
     setDeletingComment(null);
-  };
-
-  const handleToggleFollow = async () => {
-    if (!currentUserId || !flow.userId || followLoading) return;
-    setFollowLoading(true);
-    const prev = following;
-    setFollowing(!prev);
-    setFollowerCount(n => n + (prev ? -1 : 1));
-    const result = await toggleFollowCreator(flow.userId);
-    setFollowing(result.following);
-    if (result.following !== !prev) {
-      setFollowerCount(n => n + (result.following ? 1 : -1) - (prev ? -1 : 1));
-    }
-    setFollowLoading(false);
   };
 
   const handleOpenCollectionPicker = async () => {
@@ -444,13 +412,6 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
               <Bookmark size={13} className={wishlisted ? "fill-current" : ""} />
             </button>
             <button
-              onClick={() => setTipOpen(true)}
-              className="flex items-center justify-center h-9 w-9 rounded-xl border border-border text-muted-foreground hover:text-rose-500 hover:border-rose-500/30 transition-all"
-              title="Support Creator"
-            >
-              <Heart size={13} />
-            </button>
-            <button
               onClick={() => setReportOpen(true)}
               className="flex items-center justify-center h-9 w-9 rounded-xl border border-border text-muted-foreground hover:text-amber-500 hover:border-amber-500/30 transition-all"
               title="Report"
@@ -488,27 +449,6 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
                   <span title="Verified Creator" className="text-sky-400 text-[10px]">✓</span>
                 )}
               </Link>
-              {followerCount > 0 && (
-                <span className="text-[9px] text-muted-foreground">{followerCount} follower{followerCount !== 1 ? "s" : ""}</span>
-              )}
-              {isOtherCreator && currentUserId && (
-                <button
-                  onClick={handleToggleFollow}
-                  disabled={followLoading}
-                  className={cn(
-                    "flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border transition-all",
-                    following
-                      ? "bg-sky-500/10 border-sky-500/30 text-sky-400 hover:bg-sky-500/20"
-                      : "bg-muted border-border text-muted-foreground hover:border-sky-500/30 hover:text-sky-400"
-                  )}
-                >
-                  {followLoading
-                    ? <Loader2 size={8} className="animate-spin" />
-                    : following ? <UserCheck size={8} /> : <UserPlus size={8} />
-                  }
-                  {following ? "Following" : "Follow"}
-                </button>
-              )}
             </span>
           ) : (
             <span className="font-bold text-[11px] text-foreground">{creatorHandle}</span>
@@ -632,16 +572,6 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
             <Code2 size={11} />
             View Code
           </button>
-
-          {isOtherCreator && (
-            <button
-              onClick={() => setTipOpen(true)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-rose-500/20 bg-rose-500/5 text-[11px] font-bold text-rose-500 hover:bg-rose-500/10 transition-all"
-            >
-              <Heart size={11} />
-              Support Creator
-            </button>
-          )}
 
           {currentUserId && (
             <button
@@ -904,44 +834,6 @@ export default function DetailClient({ flow, related, currentUserId }: DetailCli
         nodes={flow.nodes}
         edges={flow.edges}
       />
-
-      {/* Tip / Support Creator modal */}
-      {tipOpen && (
-        <div
-          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          onClick={(e) => { if (e.target === e.currentTarget) setTipOpen(false); }}
-        >
-          <div className="w-full max-w-sm bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-border">
-              <p className="text-sm font-black text-foreground flex items-center gap-2">
-                <Heart size={13} className="text-rose-500" />
-                Support Creator
-              </p>
-              <button onClick={() => setTipOpen(false)} className="w-6 h-6 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors text-lg leading-none">
-                ×
-              </button>
-            </div>
-            <div className="p-6 flex flex-col items-center gap-4 text-center">
-              <div className="w-14 h-14 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center">
-                <Heart size={24} className="text-rose-500" />
-              </div>
-              <div>
-                <p className="text-sm font-black text-foreground mb-1">Creator Support Coming Soon</p>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  We&apos;re building a way to tip and support creators directly on AgentForge. Star the agent to show your appreciation for now!
-                </p>
-              </div>
-              <button
-                onClick={() => { setTipOpen(false); handleStar(); }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-sm font-bold text-amber-500 hover:bg-amber-500/20 transition-all"
-              >
-                <Star size={13} className={starred ? "fill-current" : ""} />
-                {starred ? "Already Starred!" : "Star this Agent"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Report modal */}
       {reportOpen && (

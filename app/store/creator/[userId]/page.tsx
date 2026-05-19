@@ -1,12 +1,10 @@
 import React from "react";
 import { getCreatorFlows } from "@/app/actions/flow";
-import { getFollowStatus } from "@/app/actions/community";
 import { createClient } from "@/lib/supabase/server";
 import Navbar from "@/components/ui/Navbar";
 import Link from "next/link";
 import { ArrowLeft, Star, Eye, Package, FlaskConical } from "lucide-react";
 import AgentGrid, { type StoreFlow } from "@/app/store/AgentGrid";
-import FollowButton from "./FollowButton";
 
 const MULTIMODAL_PROVIDERS = new Set(["gemini", "openai", "anthropic", "auto"]);
 
@@ -25,10 +23,9 @@ function formatNum(n: number): string {
 
 export default async function CreatorPage({ params }: { params: Promise<{ userId: string }> }) {
   const { userId } = await params;
-  const [{ flows: raw }, supabase, followData] = await Promise.all([
+  const [{ flows: raw }, supabase] = await Promise.all([
     getCreatorFlows(userId),
     createClient(),
-    getFollowStatus(userId),
   ]);
   const { data: { user } } = await supabase.auth.getUser();
   const currentUserId = user?.id ?? null;
@@ -121,19 +118,6 @@ export default async function CreatorPage({ params }: { params: Promise<{ userId
               )}
             </div>
           </div>
-          {!isOwnProfile && currentUserId && (
-            <FollowButton
-              creatorId={userId}
-              initialFollowing={followData.following}
-              initialCount={followData.followerCount}
-              currentUserId={currentUserId}
-            />
-          )}
-          {followData.followerCount > 0 && isOwnProfile && (
-            <span className="text-[10px] text-muted-foreground ml-auto">
-              {followData.followerCount} follower{followData.followerCount !== 1 ? "s" : ""}
-            </span>
-          )}
         </div>
 
         {/* Analytics (own profile only) */}
